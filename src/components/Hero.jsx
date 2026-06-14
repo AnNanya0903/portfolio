@@ -2,6 +2,8 @@ import React from 'react';
 import { useTypingEffect } from '../hooks/useTypingEffect';
 
 const Hero = () => {
+  const headingText = useTypingEffect(["Hello, I'm "]);
+
   const handleSmoothScroll = (e, targetId) => {
     e.preventDefault();
     const target = document.querySelector(targetId);
@@ -11,10 +13,10 @@ const Hero = () => {
   };
 
   const typingText = useTypingEffect([
-    "I build software solutions.",
-    "I create AI-based tools.",
-    "I develop web applications.",
-    "I design database-driven systems."
+    "Building intelligent software that turns ideas into impact.",
+    "AI-powered solutions for smarter digital experiences.",
+    "Designing scalable web apps with clean, creative code.",
+    "Transforming complex problems into elegant software solutions."
   ]);
 
   return (
@@ -27,7 +29,7 @@ const Hero = () => {
       <div className="hero-container">
         <div className="hero-content">
           <div className="hero-badge">Web Developer & AI Enthusiast</div>
-          <h1>Hello, I'm <span>Ananya Y A</span></h1>
+          <h1>{headingText}<span>Ananya Y A</span></h1>
           <p className="hero-title">{typingText}</p>
           <div className="hero-buttons">
             <div className="btn-group">
@@ -55,7 +57,7 @@ const Hero = () => {
           <div className="hero-3d">
             <div className="avatar-container">
               <div className="avatar-circle">
-                <i className="fas fa-laptop-code"></i>
+                <i className="fas fa-robot"></i>
               </div>
               <div className="avatar-glow"></div>
               <div className="floating-element element-1">
