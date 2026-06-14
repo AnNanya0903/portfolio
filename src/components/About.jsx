@@ -1,20 +1,21 @@
 import React from 'react';
+import { useTypingEffect } from '../hooks/useTypingEffect';
 import { useScrollAnimation } from '../hooks/useScrollAnimation';
 
 const About = () => {
+  const headingText = useTypingEffect(['About ']);
   const [ref, isVisible] = useScrollAnimation(0.1);
 
   return (
     <section 
       id="about" 
-      className={`section about ${isVisible ? 'scroll-visible' : 'scroll-hidden'}`}
+      className={`section about animated-section ${isVisible ? 'scroll-visible' : 'scroll-hidden'}`}
       ref={ref}
     >
-      <h2>About <span>Me</span></h2>
+      <h2>{headingText}<span>Me</span></h2>
       <div className="about-container">
         <div className="about-image">
           <img src="/profile-pic.jpg" alt="Profile" className="about-illustration" />
-          <div className="about-image-decoration"></div>
         </div>
         <div className="about-content">
           <p className="about-text">I am a passionate developer focused on creating efficient, practical, and user-centered software solutions. With hands-on experience in programming, databases, and automation tools, I enjoy transforming ideas into real applications.</p>

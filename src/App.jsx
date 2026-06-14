@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import Skills from './components/Skills';
@@ -10,34 +10,17 @@ import Contact from './components/Contact';
 import Footer from './components/Footer';
 
 function App() {
-  // Get initial theme from localStorage
-  const [isDark, setIsDark] = useState(() => {
-    const savedTheme = localStorage.getItem('theme');
-    return savedTheme === 'dark';
-  });
-
-  // Toggle theme
-  const toggleTheme = () => {
-    setIsDark(prev => !prev);
-  };
-
-  // Apply theme to body
+  // Always dark mode
   useEffect(() => {
-    if (isDark) {
-      document.body.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.body.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [isDark]);
+    document.body.classList.add('dark');
+  }, []);
 
   return (
     <div className="App">
-      <Navbar isDark={isDark} toggleTheme={toggleTheme} />
+      <Navbar />
       <Hero />
-      <Skills />
       <About />
+      <Skills />
       <Internship />
       <Projects />
       <Certificates />

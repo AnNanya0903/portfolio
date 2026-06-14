@@ -1,76 +1,118 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useTypingEffect } from '../hooks/useTypingEffect';
 import { useScrollAnimation } from '../hooks/useScrollAnimation';
 
 const Contact = () => {
-  const [formData, setFormData] = useState({ name: '', email: '', message: '' });
+  const headingText = useTypingEffect(['Establish ']);
   const [ref, isVisible] = useScrollAnimation(0.1);
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // For now, just log the data. Later, you can add a backend or email service integration
-    alert(`Thank you, ${formData.name}! Your message has been received!`);
-    setFormData({ name: '', email: '', message: '' });
-  };
 
   return (
     <section 
       id="contact" 
-      className={`section contact ${isVisible ? 'scroll-visible' : 'scroll-hidden'}`}
+      className={`section contact animated-section ${isVisible ? 'scroll-visible' : 'scroll-hidden'}`}
       ref={ref}
     >
-      <h2>Get in <span>Touch</span></h2>
-      <p className="contact-subtitle">Feel free to reach out for collaborations or just a friendly hello</p>
-      <form className="contact-form" onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="name">Name</label>
-          <input
-            type="text"
-            id="name"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            required
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="email">Email</label>
-          <input
-            type="email"
-            id="email"
-            name="email"
-            value={formData.email}
-            onChange={handleChange}
-            required
-          />
-        </div>
-        <div className="form-group">
-          <label htmlFor="message">Message</label>
-          <textarea
-            id="message"
-            name="message"
-            rows="5"
-            value={formData.message}
-            onChange={handleChange}
-            required
-          ></textarea>
-        </div>
-        <button type="submit" className="btn">Send Message</button>
-      </form>
-      <div className="social-icons" style={{ marginTop: '2rem', display: 'flex', justifyContent: 'center', gap: '1.5rem', animation: 'fadeInUp 0.8s ease-out 0.9s forwards', opacity: 0 }}>
-        <a href="https://github.com/AnNanya0903" target="_blank" rel="noopener noreferrer" className="social-link">
-          <i className="fab fa-github"></i>
+      <h2>{headingText}<span>Connection</span></h2>
+      <p style={{ marginBottom: '2rem' }}>Ready to collaborate or just say hello!</p>
+      
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'center', maxWidth: '800px', margin: '0 auto' }}>
+        <a 
+          href="mailto:ananyagowda0903@gmail.com" 
+          className="contact-card"
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.5rem', 
+            textDecoration: 'none', 
+            color: 'var(--text-color)', 
+            padding: '0.8rem 1.5rem', 
+            border: '2px solid var(--accent-color)', 
+            borderRadius: '50px', 
+            transition: 'all 0.3s',
+            boxShadow: '0 10px 30px rgba(99,102,241,0.2)'
+          }} 
+          onMouseEnter={(e) => { 
+            e.target.style.background = 'linear-gradient(135deg, var(--accent-color), #8b5cf6)'; 
+            e.target.style.color = 'white'; 
+          }} 
+          onMouseLeave={(e) => { 
+            e.target.style.background = 'transparent'; 
+            e.target.style.color = 'var(--text-color)'; 
+          }}
+        >
+          <i className="fas fa-envelope"></i> ananyagowda0903@gmail.com
         </a>
-        <a href="https://linkedin.com/in/ananyagowda" target="_blank" rel="noopener noreferrer" className="social-link">
-          <i className="fab fa-linkedin"></i>
+        
+        <a 
+          href="https://linkedin.com/in/ananyagowda" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="contact-card"
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.5rem', 
+            textDecoration: 'none', 
+            color: 'var(--text-color)', 
+            padding: '0.8rem 1.5rem', 
+            border: '2px solid var(--accent-color)', 
+            borderRadius: '50px', 
+            transition: 'all 0.3s',
+            boxShadow: '0 10px 30px rgba(99,102,241,0.2)'
+          }} 
+          onMouseEnter={(e) => { 
+            e.target.style.background = 'linear-gradient(135deg, var(--accent-color), #8b5cf6)'; 
+            e.target.style.color = 'white'; 
+          }} 
+          onMouseLeave={(e) => { 
+            e.target.style.background = 'transparent'; 
+            e.target.style.color = 'var(--text-color)'; 
+          }}
+        >
+          <i className="fab fa-linkedin"></i> LinkedIn Profile
         </a>
-        <a href="mailto:ananyagowda0903@gmail.com" className="social-link">
-          <i className="fas fa-envelope"></i>
+        
+        <a 
+          href="https://github.com/AnNanya0903" 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="contact-card"
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.5rem', 
+            textDecoration: 'none', 
+            color: 'var(--text-color)', 
+            padding: '0.8rem 1.5rem', 
+            border: '2px solid var(--accent-color)', 
+            borderRadius: '50px', 
+            transition: 'all 0.3s',
+            boxShadow: '0 10px 30px rgba(99,102,241,0.2)'
+          }} 
+          onMouseEnter={(e) => { 
+            e.target.style.background = 'linear-gradient(135deg, var(--accent-color), #8b5cf6)'; 
+            e.target.style.color = 'white'; 
+          }} 
+          onMouseLeave={(e) => { 
+            e.target.style.background = 'transparent'; 
+            e.target.style.color = 'var(--text-color)'; 
+          }}
+        >
+          <i className="fab fa-github"></i> GitHub Profile
         </a>
+        
+        <div 
+          className="contact-card"
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.5rem', 
+            color: 'var(--text-color)', 
+            padding: '0.8rem 1.5rem'
+          }}
+        >
+          <i className="fas fa-map-marker-alt"></i> Tumkur, Karnataka, India
+        </div>
       </div>
     </section>
   );

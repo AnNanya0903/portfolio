@@ -36,5 +36,5 @@ export const useTypingEffect = (texts, typingSpeed = 100, deletingSpeed = 50, pa
     return () => clearTimeout(timeout);
   }, [blink]);
 
-  return `${texts[index].substring(0, subIndex)}${blink ? '|' : ' '}`;
+  return `${texts[index].substring(0, subIndex)}${!reverse && subIndex < texts[index].length && blink ? '|' : ''}`;
 };
