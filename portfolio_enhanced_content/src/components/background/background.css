@@ -1,0 +1,190 @@
+/* =====================================================================
+   AI / Code / Workflow background
+   ---------------------------------------------------------------------
+   QUICK TUNING (edit the variables below)
+     --bg-speed      animation speed multiplier (higher = slower; 0 pauses nothing, use 'none' rules below)
+     --bg-strength   overall opacity of network + grid (0 – 1.5)
+     --ai-blue / --ai-cyan / --ai-violet   the three accent colours
+   ===================================================================== */
+.ai-bg {
+  --ai-base-1: #050810;
+  --ai-base-2: #0a1020;
+  --ai-blue: 59, 130, 246;   /* r, g, b */
+  --ai-cyan: 34, 211, 238;
+  --ai-violet: 139, 92, 246;
+
+  --bg-speed: 1;
+  --bg-strength: 1;
+  --bg-grid-size: 56px;
+
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% 0%, var(--ai-base-2) 0%, var(--ai-base-1) 60%, #03050b 100%);
+}
+
+/* ---------- ambient glows (static, very soft) ---------- */
+.ai-bg__glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: calc(0.2 * var(--bg-strength));
+  will-change: transform;
+}
+.ai-bg__glow--blue {
+  width: 55vmax; height: 55vmax;
+  top: -22vmax; left: -14vmax;
+  background: radial-gradient(circle, rgba(var(--ai-blue), 0.55), transparent 65%);
+  animation: aiDrift calc(46s * var(--bg-speed)) ease-in-out infinite alternate;
+}
+.ai-bg__glow--violet {
+  width: 50vmax; height: 50vmax;
+  bottom: -24vmax; right: -12vmax;
+  background: radial-gradient(circle, rgba(var(--ai-violet), 0.5), transparent 65%);
+  animation: aiDrift calc(58s * var(--bg-speed)) ease-in-out infinite alternate-reverse;
+}
+.ai-bg__glow--cyan {
+  width: 34vmax; height: 34vmax;
+  top: 42%; right: 8%;
+  opacity: calc(0.09 * var(--bg-strength));
+  background: radial-gradient(circle, rgba(var(--ai-cyan), 0.5), transparent 65%);
+  animation: aiDrift calc(64s * var(--bg-speed)) ease-in-out infinite alternate;
+}
+
+@keyframes aiDrift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(3vmax, 2vmax, 0) scale(1.08); }
+}
+
+/* ---------- technical grid ---------- */
+.ai-bg__grid {
+  position: absolute;
+  inset: 0;
+  opacity: calc(0.55 * var(--bg-strength));
+  background-image:
+    linear-gradient(rgba(var(--ai-blue), 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--ai-blue), 0.1) 1px, transparent 1px),
+    linear-gradient(rgba(var(--ai-blue), 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--ai-blue), 0.05) 1px, transparent 1px);
+  background-size:
+    calc(var(--bg-grid-size) * 4) calc(var(--bg-grid-size) * 4),
+    calc(var(--bg-grid-size) * 4) calc(var(--bg-grid-size) * 4),
+    var(--bg-grid-size) var(--bg-grid-size),
+    var(--bg-grid-size) var(--bg-grid-size);
+  -webkit-mask-image: radial-gradient(ellipse 85% 75% at 50% 40%, #000 25%, transparent 100%);
+          mask-image: radial-gradient(ellipse 85% 75% at 50% 40%, #000 25%, transparent 100%);
+}
+
+/* ---------- SVG layer ---------- */
+.ai-bg__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: var(--bg-strength);
+}
+
+.ai-bg__edges line {
+  stroke: rgba(var(--ai-blue), 0.2);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.ai-bg__flows line {
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: 7 93;
+  stroke-dashoffset: 100;
+  vector-effect: non-scaling-stroke;
+  animation: aiFlow calc(var(--dur, 14s) * var(--bg-speed)) linear infinite;
+}
+.ai-bg__flows .is-blue   { stroke: rgba(var(--ai-blue), 0.85); }
+.ai-bg__flows .is-cyan   { stroke: rgba(var(--ai-cyan), 0.85); }
+.ai-bg__flows .is-violet { stroke: rgba(var(--ai-violet), 0.85); }
+
+@keyframes aiFlow {
+  to { stroke-dashoffset: 0; }
+}
+
+.node__core { fill: rgba(var(--ai-blue), 0.7); }
+.node.is-cyan   .node__core { fill: rgba(var(--ai-cyan), 0.7); }
+.node.is-violet .node__core { fill: rgba(var(--ai-violet), 0.75); }
+.node__halo { fill: rgba(var(--ai-blue), 0.07); }
+.node.is-cyan   .node__halo { fill: rgba(var(--ai-cyan), 0.07); }
+.node.is-violet .node__halo { fill: rgba(var(--ai-violet), 0.08); }
+
+.node.is-pulsing .node__core {
+  animation: aiPulse calc(7s * var(--bg-speed)) ease-in-out infinite;
+}
+@keyframes aiPulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* workflow pipelines */
+.pipe {
+  fill: none;
+  stroke: rgba(var(--ai-cyan), 0.16);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.pipe-flow {
+  fill: none;
+  stroke: rgba(var(--ai-cyan), 0.8);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: 4 46;
+  stroke-dashoffset: 50;
+  vector-effect: non-scaling-stroke;
+  animation: aiFlow calc(var(--dur, 18s) * var(--bg-speed)) linear infinite;
+}
+.stage {
+  fill: rgba(var(--ai-cyan), 0.06);
+  stroke: rgba(var(--ai-cyan), 0.35);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* code glyphs */
+.ai-bg__glyphs text {
+  fill: rgba(var(--ai-blue), 0.2);
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.05em;
+}
+
+/* ---------- vignette keeps edges calm and text zone dark ---------- */
+.ai-bg__vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 70% at 50% 50%, rgba(3, 5, 11, 0.45) 0%, transparent 100%),
+    linear-gradient(to bottom, rgba(3, 5, 11, 0.35), transparent 18%, transparent 82%, rgba(3, 5, 11, 0.5));
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 900px) {
+  .ai-bg { --bg-grid-size: 44px; }
+  .ai-bg__glow { filter: blur(70px); }
+}
+.ai-bg__svg--mobile { display: none; }
+@media (max-width: 700px) {
+  .ai-bg { --bg-strength: 0.8; }
+  .ai-bg__svg--desktop { display: none; }
+  .ai-bg__svg--mobile { display: block; }
+}
+
+/* ---------- accessibility ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .ai-bg *,
+  .ai-bg *::before,
+  .ai-bg *::after {
+    animation: none !important;
+  }
+  /* show flow segments as static highlights instead of travelling */
+  .ai-bg__flows line { stroke-dashoffset: 80; opacity: 0.5; }
+  .pipe-flow { display: none; }
+}

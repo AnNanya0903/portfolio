@@ -1,0 +1,212 @@
+/* ===== COMMAND PALETTE (Ctrl / Cmd + K) ===== */
+.cmdk {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 1rem 1rem;
+}
+
+.cmdk__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.72);
+  backdrop-filter: blur(4px);
+  animation: cmdkFade 0.22s ease both;
+}
+
+.cmdk__panel {
+  position: relative;
+  width: min(620px, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
+  background: rgba(11, 18, 32, 0.98);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6);
+  animation: cmdkPop 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.cmdk__search {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.95rem 1.1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cmdk__search i {
+  color: var(--accent-color);
+  font-size: 0.95rem;
+}
+
+.cmdk__search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-color);
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.cmdk__search input::placeholder {
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.cmdk__search kbd,
+.cmdk__footer kbd {
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: rgba(203, 213, 225, 0.85);
+  background: rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+}
+
+.cmdk__list {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem;
+  overflow-y: auto;
+}
+
+.cmdk__group {
+  padding: 0.6rem 0.75rem 0.35rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1rem;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.cmdk__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-color);
+  font-family: inherit;
+  font-size: 0.92rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.cmdk__item i {
+  width: 18px;
+  flex-shrink: 0;
+  color: var(--accent-color);
+  text-align: center;
+}
+
+.cmdk__item.is-active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.28), rgba(139, 92, 246, 0.22));
+}
+
+.cmdk__label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmdk__hint {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: rgba(148, 163, 184, 0.8);
+}
+
+.cmdk__empty {
+  padding: 2rem 1.25rem;
+  text-align: center;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+
+.cmdk__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding: 0.7rem 1.1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.72rem;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.cmdk__footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* ===== NAVBAR TRIGGER ===== */
+.nav-cmdk-item {
+  display: flex;
+  align-items: center;
+}
+
+.nav-cmdk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-color);
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 0.25s ease, background 0.25s ease, transform 0.25s ease;
+}
+
+.nav-cmdk:hover {
+  border-color: var(--accent-color);
+  background: rgba(99, 102, 241, 0.18);
+  transform: translateY(-2px);
+}
+
+.nav-cmdk kbd {
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.2);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+@keyframes cmdkFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cmdkPop {
+  from { opacity: 0; transform: translateY(-14px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 900px) {
+  .nav-cmdk {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmdk__backdrop,
+  .cmdk__panel {
+    animation: none;
+  }
+}
