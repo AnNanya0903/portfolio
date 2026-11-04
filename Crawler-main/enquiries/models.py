@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from django.conf import settings
+from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 
@@ -56,3 +57,27 @@ class GmailLeadAnalysis(models.Model):
 
     def __str__(self) -> str:
         return f"LeadAnalysis:{self.user_id}:{self.message_id}:{'lead' if self.is_lead else 'no'}"
+
+
+class FollowUpSent(models.Model):
+    """Record of a manual follow-up email sent to a customer for an enquiry."""
+
+    enquiry_id = models.CharField(max_length=128, db_index=True)
+    customer_email = models.EmailField(blank=True)
+    customer_name = models.CharField(max_length=320, blank=True)
+    subject = models.CharField(max_length=500, blank=True)
+    body = models.TextField(blank=True)
+    gmail_message_id = models.CharField(max_length=255, blank=True, null=True)
+    sent_at = models.DateTimeField(default=timezone.now)
+    sent_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="follow_ups_sent")
+
+    class Meta:
+        db_table = "enquiries_follow_up_sent"
+        indexes = [
+            models.Index(fields=["enquiry_id"]),
+            models.Index(fields=["sent_by", "-sent_at"]),
+        ]
+        ordering = ["-sent_at"]
+
+    def __str__(self) -> str:
+        return f"FollowUpSent:{self.enquiry_id}:{self.sent_at:%Y-%m-%d %H:%M}"

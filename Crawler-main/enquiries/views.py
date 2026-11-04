@@ -1219,6 +1219,16 @@ def follow_up(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         messages.error(request, "Matched Gmail thread is missing its message identifier.")
         return redirect("enquiries:board")
 
+    # Store follow-up context so the compose page can record history after send.
+    request.session["follow_up_context"] = {
+        "enquiry_id": enquiry_id,
+        "customer_email": str(enquiry.get("customer_email") or "").strip(),
+        "customer_name": str(enquiry.get("customer_name") or "").strip(),
+        "subject": str(enquiry.get("subject") or "").strip(),
+        "gmail_message_id": message_id,
+    }
+    request.session.modified = True
+
     return redirect(reverse("dashboard:compose_email", args=[message_id]))
 
 
