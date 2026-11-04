@@ -1,0 +1,900 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Enquiries - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}
+<style>
+  .enquiry-action-card {
+    background: white;
+    border-radius: 12px;
+    border: 1px solid var(--brand-border);
+    padding: 1.25rem;
+    height: 100%;
+    transition: box-shadow 0.2s ease;
+  }
+  .enquiry-action-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  }
+  .gmail-ai-leads-scroll {
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .gmail-ai-lead-row {
+    cursor: pointer;
+  }
+  .gmail-ai-lead-row:hover {
+    background: rgba(56, 113, 248, 0.04);
+  }
+  @media (max-width: 767.98px) {
+    .enquiry-toolbar-stack,
+    .enquiry-search-stack {
+      flex-direction: column;
+      align-items: stretch !important;
+      width: 100%;
+    }
+    .enquiry-toolbar-stack > *,
+    .enquiry-search-stack > *,
+    .enquiry-search-stack .input-group {
+      width: 100% !important;
+      max-width: none !important;
+    }
+    .enquiry-inline-actions {
+      width: 100%;
+      justify-content: stretch;
+    }
+    .enquiry-inline-actions .btn {
+      flex: 1 1 0;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <h2 class="page-title">Enquiry Management</h2>
+    <p class="page-subtitle">Create enquiry records, review Gmail leads, sync Google Sheets, and monitor live enquiries.</p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap enquiry-toolbar-stack">
+    <a class="btn btn-outline-primary shadow-sm" href="{% url 'enquiries:summary' %}">
+      <i class="bi bi-graph-up me-1"></i> Summary Report
+    </a>
+    <a class="btn btn-primary shadow-sm" href="{% url 'enquiries:gmail_queue' %}">
+      <i class="bi bi-envelope-paper me-1"></i> Lead Queue
+    </a>
+  </div>
+</div>
+
+<!-- Creation Tools -->
+<div class="row g-4 mb-5">
+  <div class="col-lg-6">
+    <div class="enquiry-action-card">
+        <form
+          method="post"
+          id="createSheetForm"
+          class="d-flex flex-column gap-2"
+          data-endpoint="{% url 'enquiries:create_google_sheet' %}"
+          action="{% url 'enquiries:create_google_sheet' %}"
+          data-loader="false"
+          enctype="multipart/form-data"
+        >
+          {% csrf_token %}
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <div class="icon-box icon-green shadow-sm mb-0" style="width:32px;height:32px;font-size:1rem;"><i class="bi bi-file-earmark-spreadsheet"></i></div>
+            <h5 class="mb-0">New Enquiry Sheet</h5>
+          </div>
+          <p class="text-muted small">Spin up a Google Sheet for a new enquiry.</p>
+          <div class="input-group input-group-sm mb-2">
+            <input
+              type="text"
+              name="title"
+              class="form-control border"
+              placeholder="Enter sheet title (e.g. Project X)"
+            />
+            <button class="btn btn-success" type="submit" data-open-google-sheet="true" disabled>
+              Create
+            </button>
+          </div>
+          <div id="createSheetResult" class="small text-muted"></div>
+        </form>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="enquiry-action-card">
+        <form
+          method="post"
+          action="{% url 'enquiries:upload_pdf_enquiry' %}"
+          enctype="multipart/form-data"
+          class="d-flex flex-column gap-2"
+        >
+          {% csrf_token %}
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <div class="icon-box icon-blue shadow-sm mb-0" style="width:32px;height:32px;font-size:1rem;"><i class="bi bi-file-earmark-pdf"></i></div>
+            <h5 class="mb-0">Upload PDF RFQ</h5>
+          </div>
+          <p class="text-muted small">Attach a PDF brief to create a live enquiry instantly.</p>
+          <div class="row g-2">
+            <div class="col-sm-5">
+                <input type="text" name="title" class="form-control form-control-sm" placeholder="Project name" />
+            </div>
+            <div class="col-sm-5">
+                <input type="file" class="form-control form-control-sm" name="pdf" accept="application/pdf" required />
+            </div>
+            <div class="col-sm-2">
+                <button class="btn btn-primary btn-sm w-100" type="submit">Upload</button>
+            </div>
+          </div>
+        </form>
+    </div>
+  </div>
+</div>
+
+<!-- Gmail AI Leads Table -->
+<div class="card border-0 shadow-sm mb-5 overflow-hidden" id="gmailAiLeadsCard" data-endpoint="{% url 'enquiries:gmail_ai_leads' %}">
+  <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+    <div class="d-flex align-items-center gap-3">
+        <h5 class="mb-0">Gmail AI Leads</h5>
+        <span class="badge badge-primary-soft badge-copilot" id="gmailAiLeadsMeta">Loading...</span>
+    </div>
+    <button type="button" class="btn btn-light btn-sm border" data-refresh-gmail-ai-leads>
+      <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+    </button>
+  </div>
+  <div class="table-responsive gmail-ai-leads-scroll">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead>
+        <tr>
+          <th>Received</th>
+          <th>Sender</th>
+          <th>Subject</th>
+          <th>Score</th>
+          <th>AI Verdict</th>
+          <th class="text-end">Action</th>
+        </tr>
+      </thead>
+      <tbody id="gmailAiLeadsBody">
+        <tr>
+          <td colspan="6" class="text-center text-muted py-5">
+            <div class="spinner-border spinner-border-sm text-primary me-2"></div> Loading qualified Gmail leads...
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Live Enquiries Table -->
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center flex-wrap gap-3">
+    <div class="d-flex align-items-center gap-3">
+      <h5 class="mb-0">Live Enquiries</h5>
+      <span class="badge badge-primary-soft badge-copilot">{{ enquiries_total_count }} active</span>
+    </div>
+    <div class="ms-auto">
+      <form class="d-flex align-items-center gap-2 flex-wrap justify-content-end enquiry-search-stack" action="{% url 'enquiries:board' %}" method="get" data-search-form="true">
+        <div class="d-flex align-items-center gap-2">
+          <label for="enquiryPerPage" class="small text-muted mb-0">Per page</label>
+          <select
+            id="enquiryPerPage"
+            name="per_page"
+            class="form-select form-select-sm"
+            style="width: auto;"
+            data-page-size-select
+          >
+            {% for option in enquiries_page_size_options %}
+              <option value="{{ option }}"{% if option == enquiries_page_size %} selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Financial Year Filter -->
+        <div class="d-flex align-items-center gap-2">
+          <label for="finYearFilter" class="small text-muted mb-0">FY</label>
+          <select
+            id="finYearFilter"
+            name="fin_year"
+            class="form-select form-select-sm"
+            style="width: auto;"
+          >
+            <option value="">All Years</option>
+            {% for fy in fin_years %}
+              <option value="{{ fy }}"{% if selected_fin_year == fy %} selected{% endif %}>{{ fy }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Month Filter -->
+        <div class="d-flex align-items-center gap-2">
+          <label for="monthFilter" class="small text-muted mb-0">Month</label>
+          <select
+            id="monthFilter"
+            name="month"
+            class="form-select form-select-sm"
+            style="width: auto;"
+          >
+            <option value="">All Months</option>
+            {% for month_num, month_name in months %}
+              <option value="{{ month_num }}"{% if selected_month == month_num|stringformat:'s' %} selected{% endif %}>{{ month_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Status Filter -->
+        <div class="d-flex align-items-center gap-2">
+          <label for="statusFilter" class="small text-muted mb-0">Status</label>
+          <select
+            id="statusFilter"
+            name="status"
+            class="form-select form-select-sm"
+            style="width: auto;"
+          >
+            <option value="">All Statuses</option>
+            {% for status_value, status_label in status_choices %}
+              <option value="{{ status_value }}"{% if selected_status == status_value %} selected{% endif %}>{{ status_label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="input-group input-group-sm" style="width: 300px;">
+          <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
+          <input type="search" class="form-control border-start-0" placeholder="Search project or customer..." name="q" value="{{ search_query|default:'' }}">
+        </div>
+
+        <button type="submit" class="btn btn-outline-primary btn-sm" data-apply-filter>
+          <i class="bi bi-filter me-1"></i> Apply Filter
+        </button>
+        <a href="{% url 'enquiries:board' %}" class="btn btn-outline-secondary btn-sm" data-reset-filter>
+          <i class="bi bi-x-circle me-1"></i> Reset
+        </a>
+      </form>
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Customer</th>
+          <th>Subject</th>
+          <th>Status</th>
+          <th>Assigned To</th>
+          <th>Received</th>
+          <th class="text-end">Tools</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for enquiry in enquiries %}
+        <tr data-enquiry-row data-enquiry-id="{{ enquiry.enquiry_id }}">
+          <td class="fw-bold text-primary">
+              {% if enquiry.sheet_url %}
+                <a href="{{ enquiry.sheet_url }}" target="_blank" class="text-decoration-none">#{{ enquiry.enquiry_id }}</a>
+              {% else %}
+                #{{ enquiry.enquiry_id }}
+              {% endif %}
+          </td>
+          <td>{{ enquiry.customer_name|default:'—' }}</td>
+          <td>
+            <div class="fw-medium">{{ enquiry.subject|default:'(No Subject)' }}</div>
+          </td>
+          <td>
+            <span
+              class="badge badge-copilot {% if enquiry.status == 'converted' %}badge-success-soft{% elif enquiry.status == 'rejected' %}badge-danger-soft{% else %}badge-warning-soft{% endif %}"
+              data-status-chip
+              data-current-status="{{ enquiry.status }}"
+            >
+                {{ enquiry.status|upper }}
+            </span>
+            {% if enquiry.status == 'accepted' or enquiry.status == 'converted' %}
+              <div class="form-check form-switch mt-2 mb-1">
+                <input
+                  class="form-check-input"
+                  type="checkbox"
+                  role="switch"
+                  id="convertedToggle{{ enquiry.enquiry_id }}"
+                  data-converted-toggle
+                  data-toggle-url="{% url 'enquiries:toggle_converted' enquiry.enquiry_id %}"
+                  data-initial-status="{{ enquiry.status }}"
+                  data-previous-status="{% if enquiry.status == 'converted' %}{{ enquiry.converted_previous_status|default:'accepted' }}{% else %}{{ enquiry.status }}{% endif %}"
+                  {% if enquiry.status == 'converted' %}checked{% endif %}
+                >
+                <label class="form-check-label small text-muted" for="convertedToggle{{ enquiry.enquiry_id }}">
+                  Converted
+                </label>
+              </div>
+              <div class="small text-muted" data-converted-feedback hidden></div>
+            {% endif %}
+            {% if enquiry.rejection_reason %}
+              <div>
+                <button
+                  type="button"
+                  class="btn btn-link btn-sm p-0 mt-1 text-danger text-decoration-none"
+                  data-rejection-reason="{{ enquiry.rejection_reason|escape }}"
+                  data-enquiry-id="{{ enquiry.enquiry_id }}"
+                >
+                  View comments
+                </button>
+              </div>
+            {% endif %}
+          </td>
+          <td>
+             <div class="small text-muted"><i class="bi bi-person me-1"></i>{{ enquiry.assigned_to|default:'Unassigned' }}</div>
+          </td>
+          <td>{{ enquiry.received_at_dt|date:"d M Y"|default:'—' }}</td>
+          <td class="text-end">
+            <div class="btn-group enquiry-inline-actions">
+                <a
+                  href="{% if enquiry.primary_pdf_url %}{{ enquiry.primary_pdf_url }}{% else %}{% url 'enquiries:detail' enquiry.enquiry_id %}{% endif %}"
+                  class="btn btn-sm btn-light border"
+                  title="{% if enquiry.primary_pdf_url %}Open Enquiry PDF{% else %}Open Enquiry{% endif %}"
+                  {% if enquiry.primary_pdf_url %}target="_blank" rel="noopener"{% endif %}
+                ><i class="bi bi-eye"></i></a>
+                <a
+                  href="{% url 'enquiries:follow_up' enquiry.enquiry_id %}"
+                  class="btn btn-sm btn-light border"
+                  title="Follow-up"
+                  onclick="window.setAppLoading && window.setAppLoading('Opening follow-up...');"
+                ><i class="bi bi-reply"></i></a>
+                <a href="{% url 'enquiries:preview' enquiry.enquiry_id %}" class="btn btn-sm btn-light border" title="Generate Link"><i class="bi bi-link-45deg"></i></a>
+                <button type="button" class="btn btn-sm btn-light border text-danger" data-enquiry-delete data-enquiry-id="{{ enquiry.enquiry_id }}" data-delete-url="{% url 'enquiries:delete_enquiry' enquiry.enquiry_id %}"><i class="bi bi-trash"></i></button>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7" class="text-center py-5 text-muted">No active enquiries found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-footer bg-white border-top py-3">
+      <!-- Pagination logic remains same but styled for 2.0 -->
+      <div class="d-flex justify-content-between align-items-center">
+          <small class="text-muted">Showing {{ enquiries_page_start_index }}–{{ enquiries_page_end_index }} of {{ enquiries_total_count }}</small>
+          <div class="btn-group shadow-sm">
+            {% if enquiries_prev_url %}<a href="{{ enquiries_prev_url }}" class="btn btn-sm btn-white border">Prev</a>{% endif %}
+            {% if enquiries_next_url %}<a href="{{ enquiries_next_url }}" class="btn btn-sm btn-white border">Next</a>{% endif %}
+          </div>
+      </div>
+  </div>
+</div>
+
+
+<div class="modal fade" id="rejectionReasonModal" tabindex="-1" aria-labelledby="rejectionReasonModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h1 class="modal-title fs-5" id="rejectionReasonModalLabel">Rejection comments</h1>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p id="rejectionReasonBody" class="mb-0"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    const card = document.getElementById('gmailAiLeadsCard');
+    const tbody = document.getElementById('gmailAiLeadsBody');
+    const meta = document.getElementById('gmailAiLeadsMeta');
+    if (!card || !tbody) {
+      return;
+    }
+
+    const endpoint = card.getAttribute('data-endpoint') || '';
+    const refreshBtn = card.querySelector('[data-refresh-gmail-ai-leads]');
+    if (!endpoint) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Gmail leads endpoint unavailable.</td></tr>';
+      return;
+    }
+
+    const fmtDate = (iso) => {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '—';
+        return d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit' });
+      } catch (e) {
+        return '—';
+      }
+    };
+
+    const setMeta = (text) => {
+      if (!meta) return;
+      meta.textContent = text || '';
+      meta.hidden = !text;
+    };
+
+    const renderRows = (leads, errors = []) => {
+      if (!Array.isArray(leads) || !leads.length) {
+        const warning = Array.isArray(errors) && errors.length
+          ? `<div class="small text-warning mt-2">${errors[0]}</div>`
+          : '';
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-4">No qualified Gmail leads found.${warning}</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = '';
+      leads.forEach((lead) => {
+        const tr = document.createElement('tr');
+        tr.className = 'gmail-ai-lead-row';
+        if (lead.gmail_url) {
+          tr.addEventListener('click', () => {
+            window.open(lead.gmail_url, '_blank', 'noopener');
+          });
+        }
+
+        const receivedTd = document.createElement('td');
+        receivedTd.className = 'text-nowrap';
+        receivedTd.textContent = fmtDate(lead.received_at);
+        tr.appendChild(receivedTd);
+
+        const senderTd = document.createElement('td');
+        senderTd.textContent = lead.sender || '—';
+        tr.appendChild(senderTd);
+
+        const subjectTd = document.createElement('td');
+        subjectTd.style.maxWidth = '360px';
+        subjectTd.innerHTML = '';
+        const subjectDiv = document.createElement('div');
+        subjectDiv.className = 'fw-semibold text-truncate';
+        subjectDiv.textContent = lead.subject || '(no subject)';
+        subjectTd.appendChild(subjectDiv);
+        if (lead.next_step) {
+          const nextDiv = document.createElement('div');
+          nextDiv.className = 'text-muted small text-truncate';
+          nextDiv.textContent = lead.next_step;
+          subjectTd.appendChild(nextDiv);
+        }
+        tr.appendChild(subjectTd);
+
+        const scoreTd = document.createElement('td');
+        scoreTd.className = 'text-nowrap';
+        scoreTd.textContent = String(lead.lead_score ?? '—');
+        tr.appendChild(scoreTd);
+
+        const reasonTd = document.createElement('td');
+        reasonTd.style.maxWidth = '340px';
+        reasonTd.className = 'text-muted small text-truncate';
+        reasonTd.textContent = lead.reason || '—';
+        tr.appendChild(reasonTd);
+
+        const openTd = document.createElement('td');
+        openTd.className = 'text-end';
+        if (lead.gmail_url) {
+          const a = document.createElement('a');
+          a.href = lead.gmail_url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.className = 'btn btn-sm btn-outline-primary';
+          a.textContent = 'Open in Gmail';
+          a.addEventListener('click', (event) => {
+            event.stopPropagation();
+          });
+          openTd.appendChild(a);
+        } else {
+          openTd.textContent = '—';
+        }
+        tr.appendChild(openTd);
+
+        tbody.appendChild(tr);
+      });
+    };
+
+    let autoRefreshAttempts = 0;
+    const load = async ({ force = false } = {}) => {
+      setMeta('Loading qualified Gmail leads…');
+      if (autoRefreshAttempts === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Loading qualified Gmail leads…</td></tr>';
+      }
+      const url = new URL(endpoint, window.location.origin);
+      if (force) {
+        url.searchParams.set('force', '1');
+      }
+      try {
+        const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const msg = data?.error || 'Unable to load Gmail leads.';
+          const reauthUrl = data?.reauth_url;
+          if (reauthUrl) {
+            tbody.innerHTML = `
+              <tr>
+                <td colspan="6" class="text-center text-danger py-4">
+                  ${msg}
+                  <div class="mt-2">
+                    <a class="btn btn-sm btn-outline-primary" href="${reauthUrl}">Reconnect Google</a>
+                  </div>
+                </td>
+              </tr>`;
+            setMeta('');
+            return;
+          }
+          throw new Error(msg);
+        }
+        const leads = data?.leads || [];
+        renderRows(leads, data?.errors || []);
+
+        const remaining = Number(data?.remaining || 0);
+        const metaBits = [];
+        if (Number.isFinite(data?.candidates)) metaBits.push(`${data.candidates} candidates`);
+        metaBits.push(`${leads.length} qualified leads`);
+        if (data?.cached) metaBits.push(`${data.cached} cached`);
+        if (data?.analyzed) metaBits.push(`${data.analyzed} scanned`);
+        if (remaining) metaBits.push(`${remaining} pending`);
+        if (Array.isArray(data?.errors) && data.errors.length) metaBits.push(`${data.errors.length} warnings`);
+        setMeta(metaBits.join(' · '));
+
+        if (remaining && autoRefreshAttempts < 3) {
+          autoRefreshAttempts += 1;
+          setTimeout(() => load({ force: false }), 1600);
+        }
+      } catch (err) {
+        const message = err?.message || 'Unable to load Gmail leads.';
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-4">${message}</td></tr>`;
+        setMeta('');
+      }
+    };
+
+    refreshBtn?.addEventListener('click', () => {
+      autoRefreshAttempts = 0;
+      load({ force: true });
+    });
+
+    load({ force: false });
+  })();
+
+  (function () {
+    const form = document.getElementById("createSheetForm");
+    if (!form) return;
+
+    const resultEl = document.getElementById("createSheetResult");
+    const titleInput = form.querySelector("input[name='title']");
+    const submitBtn = form.querySelector("button[type='submit']");
+
+    const toggleButtonState = () => {
+      if (!submitBtn) return;
+      const titleValue = titleInput?.value?.trim();
+      submitBtn.disabled = !titleValue;
+    };
+
+    toggleButtonState();
+    titleInput?.addEventListener("input", toggleButtonState);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      // Avoid sticky global loader for this AJAX flow
+      form.setAttribute("data-loader", "false");
+      if (submitBtn) {
+        submitBtn.disabled = true;
+      }
+      if (resultEl) {
+        resultEl.classList.remove("text-danger");
+        resultEl.textContent = "Creating sheet...";
+      }
+
+      const endpoint = form.dataset.endpoint || form.action || window.location.href;
+      const csrf = form.querySelector("input[name='csrfmiddlewaretoken']")?.value;
+      const formData = new FormData(form);
+
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: csrf ? { "X-CSRFToken": csrf } : {},
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok || payload.error) {
+          throw new Error(payload.error || "Unable to create sheet.");
+        }
+
+        if (resultEl) {
+          const sheetUrl = payload.sheet_url || "";
+          const title = payload.title || "Google Sheet";
+          const enquiryUrl = payload.enquiry_detail_url || "";
+          const enquiryId = payload.enquiry_id || "";
+          resultEl.textContent = "Created: ";
+          if (sheetUrl) {
+            const link = document.createElement("a");
+            link.href = sheetUrl;
+            link.target = "_blank";
+            link.rel = "noopener";
+            link.textContent = title;
+            resultEl.appendChild(link);
+            try {
+              // Open the sheet immediately for convenience
+              link.click();
+            } catch (e) {
+              // Ignore popup blockers; the link remains clickable.
+            }
+          } else {
+            resultEl.appendChild(document.createTextNode(title));
+          }
+          if (enquiryUrl && enquiryId) {
+            const separator = document.createTextNode(" • Enquiry ");
+            resultEl.appendChild(separator);
+            const enqLink = document.createElement("a");
+            const targetUrl = sheetUrl || enquiryUrl;
+            enqLink.href = targetUrl;
+            if (sheetUrl) {
+              enqLink.target = "_blank";
+              enqLink.rel = "noopener";
+            }
+            enqLink.textContent = `#${enquiryId}`;
+            resultEl.appendChild(enqLink);
+            if (sheetUrl && enquiryUrl) {
+              const appLink = document.createElement("a");
+              appLink.href = enquiryUrl;
+              appLink.textContent = " (open in app)";
+              appLink.classList.add("ms-1");
+              resultEl.appendChild(appLink);
+            }
+          }
+        }
+        form.reset();
+        // Refresh the board so the new enquiry appears in the live list
+          setTimeout(() => window.location.reload(), 400);
+      } catch (err) {
+        if (resultEl) {
+          resultEl.classList.add("text-danger");
+          resultEl.textContent = err?.message || "Unable to create sheet.";
+        }
+      } finally {
+        toggleButtonState();
+      }
+    });
+  })();
+
+  (function () {
+    const forms = document.querySelectorAll('[data-search-form]');
+    if (!forms.length) return;
+
+    const resetToBase = () => {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('q');
+      url.searchParams.delete('page');
+      window.location.href = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+    };
+
+    forms.forEach((form) => {
+      const input = form.querySelector("input[name='q']");
+      const clearBtn = form.querySelector('[data-clear-search]');
+      const pageSizeSelect = form.querySelector('[data-page-size-select]');
+
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          if (input) {
+            input.value = '';
+          }
+          resetToBase();
+        });
+      }
+
+      form.addEventListener('submit', (event) => {
+        if (!input) return;
+        if (!input.value.trim()) {
+          event.preventDefault();
+          resetToBase();
+        }
+      });
+
+      if (pageSizeSelect) {
+        pageSizeSelect.addEventListener('change', () => {
+          form.submit();
+        });
+      }
+    });
+  })();
+
+  (function () {
+    const modalEl = document.getElementById('rejectionReasonModal');
+    const bodyEl = document.getElementById('rejectionReasonBody');
+    const titleEl = document.getElementById('rejectionReasonModalLabel');
+    if (!modalEl || !bodyEl || !titleEl) {
+      return;
+    }
+
+    document.querySelectorAll('[data-rejection-reason]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const reason = el.getAttribute('data-rejection-reason') || '';
+        const enquiryId = el.getAttribute('data-enquiry-id') || '';
+
+        bodyEl.textContent = reason || 'No rejection comments provided.';
+        titleEl.textContent = enquiryId ? `Rejection comments for #${enquiryId}` : 'Rejection comments';
+
+        const bootstrapGlobal = window.bootstrap;
+        if (bootstrapGlobal && bootstrapGlobal.Modal) {
+          const modal = bootstrapGlobal.Modal.getOrCreateInstance(modalEl);
+          modal.show();
+        } else {
+          // Fallback in case Bootstrap JS is unavailable
+          window.alert(reason || 'No rejection comments provided.');
+        }
+      });
+    });
+  })();
+
+  (function () {
+    const toggles = document.querySelectorAll('[data-converted-toggle]');
+    if (!toggles.length) {
+      return;
+    }
+
+    const toStatusText = (value) => (value || '').toUpperCase();
+    const applyStatusChipClass = (element, status) => {
+      if (!element) {
+        return;
+      }
+      element.classList.remove('badge-success-soft', 'badge-danger-soft', 'badge-warning-soft');
+      if (status === 'converted') {
+        element.classList.add('badge-success-soft');
+      } else if (status === 'rejected') {
+        element.classList.add('badge-danger-soft');
+      } else {
+        element.classList.add('badge-warning-soft');
+      }
+    };
+    const getCsrfToken = () => {
+      const tokenInput = document.querySelector('input[name="csrfmiddlewaretoken"]');
+      return tokenInput ? tokenInput.value : '';
+    };
+
+    const showFeedback = (element, message, isError = false) => {
+      if (!element) {
+        return;
+      }
+      element.textContent = message || '';
+      element.hidden = !message;
+      element.classList.toggle('text-danger', Boolean(isError));
+      if (!isError && message) {
+        const snapshot = message;
+        setTimeout(() => {
+          if (element.textContent === snapshot) {
+            element.textContent = '';
+            element.hidden = true;
+          }
+        }, 4000);
+      }
+    };
+
+    const sendToggleRequest = async (toggle, payload) => {
+      const endpoint = toggle.getAttribute('data-toggle-url');
+      const csrfToken = getCsrfToken();
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (error) {
+        // Ignore JSON parsing issues; handled below.
+      }
+      if (!response.ok || data.error) {
+        const message = data.error || 'Unable to update status.';
+        throw new Error(message);
+      }
+      return data;
+    };
+
+    toggles.forEach((toggle) => {
+      const nearestCell = toggle.closest('td');
+      const statusChip = nearestCell ? nearestCell.querySelector('[data-status-chip]') : null;
+      const feedbackEl = nearestCell ? nearestCell.querySelector('[data-converted-feedback]') : null;
+
+      toggle.addEventListener('change', async () => {
+        if (toggle.dataset.conversionPending === '1') {
+          return;
+        }
+        const isChecking = toggle.checked;
+        const previousStatus = (toggle.getAttribute('data-previous-status') || '').toLowerCase();
+        if (isChecking && !previousStatus) {
+          toggle.checked = false;
+          showFeedback(feedbackEl, 'Unable to convert: missing previous status.', true);
+          return;
+        }
+
+        const payload = {
+          converted: isChecking,
+          previous_status: previousStatus || null,
+        };
+
+        toggle.dataset.conversionPending = '1';
+        toggle.disabled = true;
+        showFeedback(feedbackEl, isChecking ? 'Marking as converted…' : 'Restoring previous status…');
+
+        try {
+          const data = await sendToggleRequest(toggle, payload);
+          const newStatus = (data.new_status || '').toLowerCase();
+          const storedPrevious = (data.previous_status || '').toLowerCase();
+
+          toggle.setAttribute('data-initial-status', newStatus);
+          toggle.setAttribute('data-previous-status', storedPrevious);
+          if (statusChip) {
+            statusChip.textContent = toStatusText(data.new_status);
+            statusChip.setAttribute('data-current-status', data.new_status || '');
+            applyStatusChipClass(statusChip, newStatus);
+          }
+          showFeedback(feedbackEl, `Status updated to ${toStatusText(data.new_status)}.`);
+          toggle.checked = newStatus === 'converted';
+        } catch (error) {
+          toggle.checked = !isChecking;
+          showFeedback(feedbackEl, error.message || 'Unable to update status.', true);
+        } finally {
+          toggle.dataset.conversionPending = '0';
+          toggle.disabled = false;
+        }
+      });
+    });
+  })();
+
+  (function () {
+    const deleteButtons = document.querySelectorAll('[data-enquiry-delete]');
+    if (!deleteButtons.length) {
+      return;
+    }
+
+    const getCsrfToken = () => {
+      const tokenInput = document.querySelector('input[name="csrfmiddlewaretoken"]');
+      return tokenInput ? tokenInput.value : '';
+    };
+
+    deleteButtons.forEach((button) => {
+      if (button.dataset.bound === '1') {
+        return;
+      }
+      button.dataset.bound = '1';
+      button.addEventListener('click', () => {
+        const enquiryId = button.getAttribute('data-enquiry-id') || '';
+        const endpoint = button.getAttribute('data-delete-url') || '';
+        if (!enquiryId || !endpoint) {
+          return;
+        }
+        const confirmText = `Delete enquiry ${enquiryId}? This action cannot be undone.`;
+        if (!window.confirm(confirmText)) {
+          return;
+        }
+        const csrfToken = getCsrfToken();
+        button.disabled = true;
+        fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+          },
+          body: JSON.stringify({}),
+        })
+          .then((response) =>
+            response.json().catch(() => ({})).then((data) => ({ ok: response.ok, data })),
+          )
+          .then(({ ok, data }) => {
+            if (!ok || data.error) {
+              const message = data.error || 'Unable to delete enquiry.';
+              throw new Error(message);
+            }
+            const row = button.closest('tr');
+            if (row && row.parentElement) {
+              row.parentElement.removeChild(row);
+            } else {
+              window.location.reload();
+            }
+          })
+          .catch((error) => {
+            window.alert(error?.message || 'Unable to delete enquiry. Please try again.');
+          })
+          .finally(() => {
+            button.disabled = false;
+          });
+      });
+    });
+  })();
+</script>
+{% endblock %}
