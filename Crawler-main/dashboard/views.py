@@ -15,6 +15,8 @@ from collections import Counter
 from types import SimpleNamespace
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
@@ -1667,15 +1669,46 @@ def gmail_summary(request):
         },
     )
 
-def _record_follow_up_sent(request, *, message_id, gmail_message_id, body, subject):
+def _follow_up_context_for(request, *message_ids):
+    """Return the enquiry follow-up context only if it was started for one of these Gmail messages."""
+    context = request.session.get('follow_up_context')
+    if not isinstance(context, dict):
+        return None
+    wanted = {str(m) for m in message_ids if m}
+    if str(context.get('gmail_message_id') or '') not in wanted:
+        return None
+    return context
+
+
+def _follow_up_recipient(context, message):
+    """Pick who an enquiry follow-up goes to.
+
+    Returns (address, is_fallback). Uses the customer email saved on the enquiry when it is a
+    valid address; otherwise falls back to the Gmail sender and flags it so the page can warn.
+    """
+    saved = str((context or {}).get('customer_email') or '').strip()
+    if saved:
+        try:
+            validate_email(saved)
+            return saved, False
+        except ValidationError:
+            pass
+    sender = (
+        message.get('reply_to') or message.get('sender') or message.get('from') or ''
+    ).strip()
+    return sender, True
+
+
+def _record_follow_up_sent(request, *, message_id, gmail_message_id, body, subject, recipient=''):
     """Persist a manual follow-up record when one was initiated from the enquiries board."""
-    context = request.session.pop('follow_up_context', None)
+    context = _follow_up_context_for(request, message_id, gmail_message_id)
     if not context:
         return
+    request.session.pop('follow_up_context', None)
     try:
         FollowUpSent.objects.create(
             enquiry_id=str(context.get('enquiry_id') or message_id),
-            customer_email=context.get('customer_email') or '',
+            customer_email=recipient or context.get('customer_email') or '',
             customer_name=context.get('customer_name') or '',
             subject=subject or context.get('subject') or '',
             body=body or '',
@@ -1740,6 +1773,12 @@ def compose_email(request, email_id):
         initial={'subject': subject},
     )
 
+    # Follow-ups from the enquiries board go to the customer saved on the enquiry.
+    follow_up_context = _follow_up_context_for(request, email_id, message.get('id'))
+    follow_up_recipient, follow_up_recipient_is_fallback = (
+        _follow_up_recipient(follow_up_context, message) if follow_up_context else ('', False)
+    )
+
     if request.method == 'POST' and form.is_valid():
         selected_tokens = form.cleaned_data.get('include_attachments') or []
         attachment_payloads = []
@@ -1773,13 +1812,18 @@ def compose_email(request, email_id):
                 body=form.cleaned_data['body'],
                 attachments=attachment_payloads,
                 subject=form.cleaned_data.get('subject'),
+                to=follow_up_recipient or None,
             )
         except GmailAPIError as exc:
             messages.error(request, str(exc))
         else:
-            messages.success(request, "Reply sent successfully.")
+            if follow_up_recipient:
+                messages.success(request, f"Follow-up sent to {follow_up_recipient}.")
+            else:
+                messages.success(request, "Reply sent successfully.")
             _record_follow_up_sent(request, message_id=email_id, gmail_message_id=message.get('id'),
-                                   body=form.cleaned_data['body'], subject=form.cleaned_data.get('subject') or '')
+                                   body=form.cleaned_data['body'], subject=form.cleaned_data.get('subject') or '',
+                                   recipient=follow_up_recipient)
             return redirect('gmail_ai')
 
     conversation_for_template = []
@@ -1817,7 +1861,9 @@ def compose_email(request, email_id):
             for subwidget in form['include_attachments']
         ],
         'ai_reply_url': reverse('dashboard:generate_ai_reply', args=[email_record.email_id]),
-        'follow_up_context': request.session.get('follow_up_context'),
+        'follow_up_context': follow_up_context,
+        'follow_up_recipient': follow_up_recipient,
+        'follow_up_recipient_is_fallback': follow_up_recipient_is_fallback,
     }
 
     return render(request, 'dashboard/compose_email.html', context)

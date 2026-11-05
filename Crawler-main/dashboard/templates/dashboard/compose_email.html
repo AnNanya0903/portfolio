@@ -60,13 +60,19 @@
                     {% csrf_token %}
 
                     {% if follow_up_context %}
-                    <div class="compose-follow-up-banner alert alert-info mb-3">
+                    <div class="compose-follow-up-banner alert {% if follow_up_recipient_is_fallback %}alert-warning{% else %}alert-info{% endif %} mb-3">
                         <strong>Manual follow-up</strong> for enquiry #{{ follow_up_context.enquiry_id }}
                         {% if follow_up_context.customer_name %}
                         — {{ follow_up_context.customer_name }}
                         {% endif %}
-                        {% if follow_up_context.customer_email %}
-                        ({{ follow_up_context.customer_email }})
+                        <div class="mt-1" data-follow-up-recipient>
+                            To: <strong>{{ follow_up_recipient|default:'(no address found)' }}</strong>
+                        </div>
+                        {% if follow_up_recipient_is_fallback %}
+                        <div class="mt-1" data-follow-up-fallback-warning>
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            This enquiry has no valid customer email saved, so the reply will go to the sender of the matched Gmail message. Check this address before sending, or add the customer email to the enquiry first.
+                        </div>
                         {% endif %}
                         <small class="d-block mt-1 text-muted">Sending this reply will be recorded as a follow-up for this enquiry. No auto-send is used.</small>
                     </div>

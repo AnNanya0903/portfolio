@@ -674,11 +674,10 @@
         });
       }
 
-      form.addEventListener('submit', (event) => {
-        if (!input) return;
-        if (!input.value.trim()) {
-          event.preventDefault();
-          resetToBase();
+      form.addEventListener('submit', () => {
+        // Leave an empty search box out of the URL but still submit the FY/Month/Status selects.
+        if (input && !input.value.trim()) {
+          input.disabled = true;
         }
       });
 
