@@ -10,16 +10,27 @@
 
 {% block auth_content %}
 <section class="compose-layout">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="compose-header">
         <div>
+            {% if follow_up_context %}
+            <span class="compose-eyebrow">Manual follow-up · Enquiry #{{ follow_up_context.enquiry_id }}</span>
+            <h1>Customer follow-up</h1>
+            <p>Review the conversation, choose the follow-up stage and check the message before sending. Nothing is sent until you click Send.</p>
+            {% else %}
             <span class="compose-pill">MagicWand Compose</span>
-            <h1 class="fs-3 fw-bold mt-3 mb-0">Reply to your conversation</h1>
-            <p class="text-muted mb-0">Review the thread, draft your response, and send it without leaving the MagicWand workspace.</p>
+            <h1>Reply to your conversation</h1>
+            <p>Review the thread, draft your response, and send it without leaving the MagicWand workspace.</p>
+            {% endif %}
         </div>
-        <a href="{% url 'gmail_ai' %}" class="btn btn-outline-secondary rounded-pill">
-            <i class="bi bi-arrow-left"></i>
-            Back to Gmail AI
+        {% if follow_up_context %}
+        <a href="{% url 'enquiries:board' %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left me-1"></i>Back to enquiries
         </a>
+        {% else %}
+        <a href="{% url 'gmail_ai' %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left me-1"></i>Back to Gmail AI
+        </a>
+        {% endif %}
     </div>
 
     <div class="row g-4">
@@ -60,60 +71,148 @@
                     {% csrf_token %}
 
                     {% if follow_up_context %}
-                    <div class="compose-follow-up-banner alert {% if follow_up_recipient_is_fallback %}alert-warning{% else %}alert-info{% endif %} mb-3">
-                        <strong>Manual follow-up</strong> for enquiry #{{ follow_up_context.enquiry_id }}
-                        {% if follow_up_context.customer_name %}
-                        — {{ follow_up_context.customer_name }}
-                        {% endif %}
-                        <div class="mt-1" data-follow-up-recipient>
-                            To: <strong>{{ follow_up_recipient|default:'(no address found)' }}</strong>
-                        </div>
-                        {% if follow_up_recipient_is_fallback %}
-                        <div class="mt-1" data-follow-up-fallback-warning>
-                            <i class="bi bi-exclamation-triangle me-1"></i>
-                            This enquiry has no valid customer email saved, so the reply will go to the sender of the matched Gmail message. Check this address before sending, or add the customer email to the enquiry first.
-                        </div>
-                        {% endif %}
-                        <small class="d-block mt-1 text-muted">Sending this reply will be recorded as a follow-up for this enquiry. No auto-send is used.</small>
+                    <input type="hidden" name="follow_up_token" value="{{ follow_up_context.token }}">
+
+                    <div class="compose-section compose-follow-up-banner">
+                        <div class="compose-section-title">Follow-up details</div>
+                        <dl class="compose-summary">
+                            <dt>Enquiry</dt>
+                            <dd>#{{ follow_up_context.enquiry_id }}{% if follow_up_context.subject %} · {{ follow_up_context.subject }}{% endif %}</dd>
+                            {% if follow_up_context.customer_name %}
+                            <dt>Customer</dt>
+                            <dd>{{ follow_up_context.customer_name }}</dd>
+                            {% endif %}
+                            <dt>Send to</dt>
+                            <dd>
+                                {% if follow_up_recipient %}
+                                <span class="compose-to" data-follow-up-recipient>{{ follow_up_recipient }}</span>
+                                {% else %}
+                                <span class="text-danger">Not available</span>
+                                {% endif %}
+                            </dd>
+                            <dt>Conversation</dt>
+                            <dd>Reply in the original email thread</dd>
+                        </dl>
+                    </div>
+
+                    {% if not follow_up_recipient %}
+                    <div class="compose-notice compose-notice--danger" data-follow-up-missing-recipient>
+                        <i class="bi bi-exclamation-octagon"></i>
+                        <div>No confirmed customer email for this enquiry, so this follow-up cannot be sent.</div>
                     </div>
                     {% endif %}
 
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Subject</label>
-                        {{ form.subject }}
-                        {% if form.subject.errors %}
-                            <div class="text-danger small mt-1">{{ form.subject.errors|join:', ' }}</div>
-                        {% endif %}
+                    {% if customer_waiting %}
+                    <div class="compose-notice compose-notice--warning" data-customer-waiting>
+                        <i class="bi bi-chat-left-text"></i>
+                        <div>The customer's latest message{% if customer_waiting_since %} ({{ customer_waiting_since|date:"d M Y" }}){% endif %} has not been answered yet. Consider replying to what they asked instead of sending a general follow-up.</div>
+                    </div>
+                    {% endif %}
+
+                    <div class="compose-section">
+                        <div class="compose-section-title">Follow-up settings</div>
+                        <div class="row g-3">
+                            <div class="col-sm-7">
+                                <label class="form-label" for="followUpStage">Stage</label>
+                                <select class="form-select form-select-sm" id="followUpStage" name="follow_up_stage">
+                                    {% for value, label in follow_up_stage_choices %}
+                                    <option value="{{ value }}"{% if value == follow_up_stage %} selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">Choosing a stage fills in the matching message.</div>
+                            </div>
+                            <div class="col-sm-5">
+                                <label class="form-label" for="nextFollowUpOn">Next follow-up on</label>
+                                <input type="date" class="form-control form-control-sm" id="nextFollowUpOn" name="next_follow_up_on"
+                                       value="{{ next_follow_up_default }}" min="{{ next_follow_up_min }}">
+                                <div class="form-text">Leave empty for no reminder.</div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="compose-ai-banner mb-3">
-                        <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" id="aiSuggestBtn" data-ai-url="{{ ai_reply_url }}">
-                            <i class="bi bi-stars me-1"></i>
-                            Draft with AI
-                        </button>
-                        <select class="form-select form-select-sm w-auto" id="aiToneSelect">
-                            <option value="professional and concise">Professional</option>
-                            <option value="friendly and warm">Friendly</option>
-                            <option value="brief and direct">Direct</option>
-                            <option value="empathetic">Empathetic</option>
-                        </select>
-                    </div>
-
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Reply</label>
-                        {{ form.body }}
-                        {% if form.body.errors %}
-                            <div class="text-danger small mt-1">{{ form.body.errors|join:', ' }}</div>
+                    <div class="compose-section" data-auto-follow-up-section>
+                        <div class="compose-section-title">Automatic follow-ups</div>
+                        {% if auto_plan.stages|length and auto_plan.this_attempt < auto_plan.limit %}
+                        <input type="hidden" name="auto_follow_up_shown" value="1">
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="autoFollowUp" name="auto_follow_up" value="1"{% if auto_follow_up_checked %} checked{% endif %}>
+                            <label class="form-check-label" for="autoFollowUp">
+                                After this follow-up (#{{ auto_plan.this_attempt }} of {{ auto_plan.limit }}), send the next ones automatically
+                            </label>
+                        </div>
+                        <div class="form-text mb-2">
+                            They go out as replies in this same email thread{% if auto_plan.sender %}, sent from {{ auto_plan.sender }}{% endif %}.
+                            They stop automatically if the customer replies, the enquiry is closed, converted or rejected, or the follow-up is paused on the board.
+                            {% if not auto_plan.enabled %}<br><span class="text-warning-emphasis"><i class="bi bi-exclamation-triangle me-1"></i>Automatic follow-ups are currently turned off on this site, so your choice is saved but nothing will be sent automatically yet.</span>{% endif %}
+                        </div>
+                        <details class="small" data-auto-follow-up-plan>
+                            <summary>See the planned automatic emails</summary>
+                            {% for stage_key, plan in auto_plan.stages.items %}
+                            <div data-auto-plan-stage="{{ stage_key }}"{% if stage_key != follow_up_stage %} hidden{% endif %}>
+                                {% for step in plan %}
+                                <div class="border rounded p-2 mt-2">
+                                    <div class="fw-semibold">Follow-up #{{ step.attempt }}{% if step.final %} (final){% endif %} · <span class="text-muted fw-normal">{{ step.when }}</span></div>
+                                    <pre class="mb-0 mt-1" style="white-space: pre-wrap; font-family: inherit;">{{ step.body }}</pre>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endfor %}
+                        </details>
+                        {% else %}
+                        <div class="form-text">This is the last follow-up allowed for this enquiry (#{{ auto_plan.this_attempt }} of {{ auto_plan.limit }}), so no automatic follow-ups will follow. Please call the customer if there is still no reply.</div>
                         {% endif %}
-                        <div class="form-text">AI suggestions will replace the current reply text.</div>
+                    </div>
+                    {{ follow_up_stage_bodies|json_script:"followUpStageBodies" }}
+                    {% endif %}
+
+                    <div class="compose-section">
+                        {% if follow_up_context %}<div class="compose-section-title">Message</div>{% endif %}
+                        <div class="mb-3">
+                            <label class="form-label">Subject</label>
+                            {{ form.subject }}
+                            {% if form.subject.errors %}
+                                <div class="text-danger small mt-1">{{ form.subject.errors|join:', ' }}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="compose-ai-banner mb-3">
+                            <span class="compose-ai-label"><i class="bi bi-stars me-1"></i>Need a different wording?</span>
+                            <select class="form-select form-select-sm w-auto" id="aiToneSelect" aria-label="Tone">
+                                <option value="professional and concise">Professional</option>
+                                <option value="friendly and warm">Friendly</option>
+                                <option value="brief and direct">Direct</option>
+                                <option value="empathetic">Empathetic</option>
+                            </select>
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="aiSuggestBtn" data-ai-url="{{ ai_reply_url }}">
+                                <i class="bi bi-stars me-1"></i>
+                                Draft with AI
+                            </button>
+                            <div class="small mt-1 w-100" id="aiSampleNote" style="color: #92400e;" hidden>
+                                <i class="bi bi-info-circle me-1"></i>AI is not available right now, so this is a sample draft for the selected tone. Please review it before sending.
+                            </div>
+                        </div>
+
+                        <div class="mb-1">
+                            <label class="form-label">{% if follow_up_context %}Message{% else %}Reply{% endif %}</label>
+                            {{ form.body }}
+                            {% if form.body.errors %}
+                                <div class="text-danger small mt-1">{{ form.body.errors|join:', ' }}</div>
+                            {% endif %}
+                            <div class="form-text">You can edit the text freely. AI drafts replace the current text.</div>
+                        </div>
                     </div>
 
                     {% if attachment_entries %}
-                        <div class="compose-attachments mb-3">
-                            <label class="form-label d-flex justify-content-between align-items-center">
-                                <span>Attachments from the latest message</span>
-                                <small class="text-muted">Toggle to include with your reply</small>
-                            </label>
+                        <div class="compose-attachments compose-section">
+                            <div class="compose-section-title d-flex justify-content-between align-items-center">
+                                <span>{% if follow_up_context and quote_attachment_from_us %}Quotation attachment{% else %}Attachments from the latest message{% endif %}</span>
+                                <span class="text-lowercase fw-normal" style="letter-spacing: 0;">tick to include</span>
+                            </div>
+                            {% if follow_up_context %}
+                            <div class="form-text mb-2" data-quote-attachment-note>
+                                {% if quote_attachment_from_us %}Your PDF is ticked so the customer has the quote at hand.{% else %}No PDF sent by your team was found in this conversation, so nothing is ticked.{% endif %}
+                            </div>
+                            {% endif %}
                             <ul class="list-group attachment-list">
                                 {% for attachment in attachment_entries %}
                                     <li class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-3">
@@ -141,10 +240,13 @@
                     {% endif %}
 
                     <div class="compose-actions">
-                        <a href="{% url 'gmail_ai' %}" class="btn btn-outline-secondary rounded-pill">Cancel</a>
-                        <button type="submit" class="btn btn-primary rounded-pill">
+                        {% if follow_up_context %}
+                        <span class="compose-actions-note"><i class="bi bi-shield-check me-1"></i>The follow-up will be recorded on enquiry #{{ follow_up_context.enquiry_id }}.</span>
+                        {% endif %}
+                        <a href="{% if follow_up_context %}{% url 'enquiries:board' %}{% else %}{% url 'gmail_ai' %}{% endif %}" class="btn btn-outline-secondary">Cancel</a>
+                        <button type="submit" class="btn btn-primary" data-compose-send{% if follow_up_context and not follow_up_recipient %} disabled{% endif %}>
                             <i class="bi bi-send me-1"></i>
-                            Send reply
+                            {% if follow_up_context %}Send follow-up{% else %}Send reply{% endif %}
                         </button>
                     </div>
                 </form>
@@ -187,6 +289,10 @@
                     return;
                 }
                 textarea.value = data.reply;
+                const sampleNote = document.getElementById('aiSampleNote');
+                if (sampleNote) {
+                    sampleNote.hidden = !data.is_sample;
+                }
             })
             .catch(error => {
                 console.error('AI reply error', error);
@@ -249,6 +355,60 @@
             }
         });
     });
+})();
+
+(function () {
+    // Prevent a double click on Send from submitting the reply twice.
+    const sendButton = document.querySelector('[data-compose-send]');
+    const form = sendButton ? sendButton.closest('form') : null;
+    if (!form) return;
+    form.addEventListener('submit', (event) => {
+        if (form.dataset.submitting === 'true') {
+            event.preventDefault();
+            return;
+        }
+        form.dataset.submitting = 'true';
+        sendButton.disabled = true;
+        sendButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Sending…';
+    });
+})();
+
+(function () {
+    // Follow-up stage picker: fill the message with the template for the chosen stage.
+    const select = document.getElementById('followUpStage');
+    const data = document.getElementById('followUpStageBodies');
+    const textarea = document.getElementById('{{ form.body.id_for_label }}');
+    if (!select || !data || !textarea) return;
+    const bodies = JSON.parse(data.textContent || '{}');
+    let lastTemplate = textarea.value;
+    select.addEventListener('change', () => {
+        const next = bodies[select.value];
+        if (!next) return;
+        const edited = textarea.value.trim() && textarea.value !== lastTemplate;
+        if (edited && !window.confirm('Replace your edited message with the "' + select.options[select.selectedIndex].text + '" template?')) {
+            return;
+        }
+        textarea.value = next;
+        lastTemplate = next;
+    });
+})();
+(function () {
+    // Automatic follow-ups: show the planned emails for the chosen stage; the next date is needed to start them.
+    const select = document.getElementById('followUpStage');
+    const checkbox = document.getElementById('autoFollowUp');
+    const nextDate = document.getElementById('nextFollowUpOn');
+    if (select) {
+        select.addEventListener('change', () => {
+            document.querySelectorAll('[data-auto-plan-stage]').forEach((el) => {
+                el.hidden = el.dataset.autoPlanStage !== select.value;
+            });
+        });
+    }
+    if (checkbox && nextDate) {
+        const sync = () => { nextDate.required = checkbox.checked; };
+        checkbox.addEventListener('change', sync);
+        sync();
+    }
 })();
 </script>
 {% endblock %}

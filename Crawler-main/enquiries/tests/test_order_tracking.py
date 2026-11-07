@@ -1,0 +1,441 @@
+"""Tests for the order process: PI status, payment tracking, and automatic rejection / PI-disagree emails."""
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
+
+from django.contrib.auth import get_user_model
+from django.core import signing
+from django.test import TestCase, override_settings
+from django.urls import reverse
+from django.utils import timezone
+
+from dashboard.follow_up_templates import STAGE_CHOICES, STAGE_KEYS, build_follow_up_body
+from enquiries import auto_follow_up, status_emails
+from enquiries.models import CustomerStatusEmail, EnquiryContact, FollowUpSent
+from enquiries.views import _follow_up_stopped_reason
+
+AUTO_ON = dict(FOLLOW_UP_AUTO_ENABLED=True, FOLLOW_UP_AUTO_DRY_RUN=False, FOLLOW_UP_AUTO_SENDER="sales",
+               FOLLOW_UP_MAX_COUNT=4, STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage")
+
+ENQUIRY = {"enquiry_id": "E1", "status": "rejected", "subject": "Gasket quote", "customer_name": "Acme",
+           "customer_reference": "", "remarks": ""}
+
+
+def _gmail():
+    svc = MagicMock()
+    svc.own_addresses.return_value = {"sales@ourcompany.example"}
+    svc.get_message.return_value = {"id": "m2", "subject": "Re: Gasket quote", "thread_id": "t1"}
+    svc.send_reply.return_value = {"id": "sent-1", "threadId": "t1"}
+    return svc
+
+
+def _conversation(email="buyer@acme.example"):
+    return ("ok", {"thread_id": "t1", "customer_email": email, "latest_message_id": "m2"})
+
+
+class StageTests(TestCase):
+    def test_stages_match_the_process(self):
+        labels = dict(STAGE_CHOICES)
+        self.assertNotIn("sample_sent", STAGE_KEYS)
+        self.assertEqual(labels["waiting_po"], "Waiting for order confirmation")
+        self.assertEqual([key for key, _ in STAGE_CHOICES], ["general", "waiting_po", "payment_pending"])
+        self.assertNotIn("pi_sent", STAGE_KEYS)
+        self.assertEqual(labels["payment_pending"], "Payment pending")
+
+    def test_every_stage_has_four_emails(self):
+        for key in STAGE_KEYS:
+            bodies = {build_follow_up_body(key, reference="E1", subject="Gasket", attempt=n) for n in (1, 2, 3, 4)}
+            self.assertEqual(len(bodies), 4, key)
+            for body in bodies:
+                self.assertTrue(body.startswith("Dear Sir/Madam,"))
+                self.assertIn("AVIGIRI Team", body)
+
+    def test_old_sample_stage_falls_back_to_general(self):
+        self.assertEqual(build_follow_up_body("sample_sent", reference="E1", subject="G"),
+                         build_follow_up_body("general", reference="E1", subject="G"))
+
+
+class StopRuleTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("u", "u@example.com", "x")
+
+    def _sent(self, n, stage="waiting_po"):
+        for _ in range(n):
+            FollowUpSent.objects.create(enquiry_id="E1", sent_by=self.user, status="sent", stage=stage)
+
+    def test_converted_order_is_paid_so_no_follow_up(self):
+        self.assertIn("converted", _follow_up_stopped_reason({"enquiry_id": "E1", "status": "converted"}, 0))
+
+    @override_settings(FOLLOW_UP_MAX_COUNT=4)
+    def test_accepted_unpaid_order_gets_payment_follow_ups_with_their_own_limit(self):
+        self._sent(4)  # sales follow-ups do not use up the payment ones
+        enquiry = {"enquiry_id": "E1", "status": "accepted"}
+        self.assertEqual(_follow_up_stopped_reason(enquiry, 4), "")
+        self._sent(4, stage="payment_pending")
+        self.assertIn("followed up 4 times", _follow_up_stopped_reason(enquiry, 8))
+
+    def test_paid_order_gets_no_follow_up(self):
+        EnquiryContact.objects.create(enquiry_id="E1", payment_status=EnquiryContact.PAYMENT_PAID)
+        self.assertIn("has been received", _follow_up_stopped_reason({"enquiry_id": "E1", "status": "accepted"}, 0))
+
+
+@override_settings(**AUTO_ON)
+class StatusEmailTests(TestCase):
+    def setUp(self):
+        self.sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
+        self.gmail = _gmail()
+        for target, value in (("enquiries.status_emails.GmailService", MagicMock(return_value=self.gmail)),):
+            p = patch(target, value)
+            p.start()
+            self.addCleanup(p.stop)
+        p = patch("enquiries.views._resolve_follow_up_conversation", return_value=_conversation())
+        self.resolve = p.start()
+        self.addCleanup(p.stop)
+
+    def test_rejection_email_asks_for_the_reason_once(self):
+        outcome = status_emails.send_status_email("rejection", "E1", ENQUIRY)
+        self.assertEqual(outcome["result"], "sent")
+        kwargs = self.gmail.send_reply.call_args.kwargs
+        self.assertEqual(kwargs["to"], "buyer@acme.example")
+        self.assertIn("could you please let us know the main reason", kwargs["body"])
+        self.assertTrue(kwargs["body"].startswith("Dear Sir/Madam,"))
+        row = CustomerStatusEmail.objects.get()
+        self.assertEqual((row.status, row.customer_email, row.gmail_message_id), ("sent", "buyer@acme.example", "sent-1"))
+        # Changing the status again never emails twice.
+        self.assertEqual(status_emails.send_status_email("rejection", "E1", ENQUIRY)["result"], "already_sent")
+        self.assertEqual(self.gmail.send_reply.call_count, 1)
+
+    def test_reason_already_given_sends_a_thank_you(self):
+        status_emails.send_status_email("rejection", "E1", ENQUIRY, reason="Price too high")
+        body = self.gmail.send_reply.call_args.kwargs["body"]
+        self.assertIn("for sharing your reason", body)
+        self.assertNotIn("main reason?", body)
+
+    @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
+    def test_turned_off_sends_nothing(self):
+        self.assertEqual(status_emails.send_status_email("rejection", "E1", ENQUIRY)["result"], "skipped")
+        self.gmail.send_reply.assert_not_called()
+
+    @override_settings(FOLLOW_UP_AUTO_DRY_RUN=True)
+    def test_test_mode_sends_nothing_and_can_send_later(self):
+        self.assertEqual(status_emails.send_status_email("rejection", "E1", ENQUIRY)["result"], "dry_run")
+        self.gmail.send_reply.assert_not_called()
+        with self.settings(FOLLOW_UP_AUTO_DRY_RUN=False):
+            self.assertEqual(status_emails.send_status_email("rejection", "E1", ENQUIRY)["result"], "sent")
+
+    def test_unconfirmed_conversation_is_not_guessed(self):
+        self.resolve.return_value = ("choose", [{"thread_id": "a"}, {"thread_id": "b"}])
+        outcome = status_emails.send_status_email("rejection", "E1", ENQUIRY)
+        self.assertEqual(outcome["result"], "skipped")
+        self.assertIn("email the customer manually", outcome["note"])
+        self.gmail.send_reply.assert_not_called()
+
+    def test_never_emails_our_own_address(self):
+        self.resolve.return_value = _conversation("sales@ourcompany.example")
+        self.assertEqual(status_emails.send_status_email("rejection", "E1", ENQUIRY)["result"], "skipped")
+        self.gmail.send_reply.assert_not_called()
+
+    def test_gmail_failure_is_recorded_not_raised(self):
+        self.gmail.send_reply.side_effect = RuntimeError("boom")
+        self.assertEqual(status_emails.send_status_email("rejection", "E1", ENQUIRY)["result"], "failed")
+        self.assertIn("boom", CustomerStatusEmail.objects.get().note)
+
+
+@override_settings(**AUTO_ON)
+class ShareLinkTests(TestCase):
+    def setUp(self):
+        self.token = signing.dumps({"enquiry_id": "E1"}, salt="enquiry-share")
+        self.update = patch("enquiries.views.services.update_enquiry").start()
+        patch("enquiries.views.services.fetch_enquiry", return_value={**ENQUIRY, "status": "open", "remarks": "note"}).start()
+        self.send = patch("enquiries.views.status_emails.send_status_email", return_value={"result": "sent"}).start()
+        self.addCleanup(patch.stopall)
+
+    def _post(self, action, reason=""):
+        return self.client.post(reverse("enquiries:share_action"), {"token": self.token, "action": action, "reason": reason})
+
+    def test_reject_sends_rejection_email_with_the_reason(self):
+        self.assertEqual(self._post("reject", "Price too high").status_code, 200)
+        self.assertEqual(self.update.call_args.args[2]["status"], "rejected")
+        self.assertEqual(self.send.call_args.args[0], "rejection")
+        self.assertEqual(self.send.call_args.kwargs["reason"], "Price too high")
+
+    def test_request_changes_is_no_longer_accepted(self):
+        self.assertEqual(self._post("request_changes", "30 days").status_code, 400)
+        self.update.assert_not_called()
+        self.send.assert_not_called()
+
+    def test_accept_sets_accepted_and_sends_no_email(self):
+        self._post("accept")
+        self.assertEqual(self.update.call_args.args[2]["status"], "accepted")
+        self.send.assert_not_called()
+
+
+@override_settings(**AUTO_ON)
+class BoardTrackingTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_superuser("boss", "b@example.com", "x")
+        self.client.force_login(self.user)
+        self.rows = [
+            {"enquiry_id": "C1", "status": "accepted", "subject": "S1", "customer_name": "A", "received_at_dt": datetime(2026, 5, 1)},
+            {"enquiry_id": "C2", "status": "accepted", "subject": "S2", "customer_name": "B", "received_at_dt": datetime(2026, 5, 2)},
+            {"enquiry_id": "O1", "status": "open", "subject": "S3", "customer_name": "C", "received_at_dt": datetime(2026, 5, 3)},
+        ]
+        patch("enquiries.views.services.list_enquiries", side_effect=lambda *a, **k: [dict(r) for r in self.rows]).start()
+        self.statuses = {r["enquiry_id"]: r["status"] for r in self.rows}
+        patch("enquiries.views.services.fetch_enquiry",
+              side_effect=lambda root, eid, **k: {**ENQUIRY, "enquiry_id": eid, "status": self.statuses[eid]}).start()
+
+        def update(root, eid, payload, **k):
+            if "status" in payload:
+                self.statuses[eid] = payload["status"]
+                for row in self.rows:
+                    if row["enquiry_id"] == eid:
+                        row["status"] = payload["status"]
+            return {}
+        self.update = patch("enquiries.views.services.update_enquiry", side_effect=update).start()
+        self.send = patch("enquiries.views.status_emails.send_status_email", return_value={"result": "sent", "note": ""}).start()
+        self.addCleanup(patch.stopall)
+
+    def _post(self, **data):
+        return self.client.post(reverse("enquiries:board"), data)
+
+    def test_paid_converts_the_order_and_filters_work(self):
+        due = (timezone.localdate() - timedelta(days=1)).isoformat()
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_amount_received="1500")
+        self._post(action="update_payment", enquiry_id="C2", payment_status="partial", payment_due_on=due)
+        contact = EnquiryContact.objects.get(enquiry_id="C1")
+        self.assertEqual((contact.payment_status, str(contact.payment_amount_received)), ("paid", "1500.00"))
+        self.assertEqual(contact.payment_updated_by, self.user)
+        self.assertEqual(self.statuses["C1"], "converted")  # paid -> converted
+        paid_calls = [c for c in self.send.call_args_list if c.args[0] == "payment_received"]
+        self.assertEqual([c.args[1] for c in paid_calls], ["C1"])  # thank-you email for the paid order only
+        self.assertEqual(self.statuses["C2"], "accepted")   # partly paid stays accepted
+
+        unpaid = self.client.get(reverse("enquiries:board"), {"payment": "unpaid"})
+        self.assertEqual([e["enquiry_id"] for e in unpaid.context["enquiries"]], ["C2"])
+        self.assertContains(unpaid, "(overdue)")
+        paid = self.client.get(reverse("enquiries:board"), {"payment": "paid"})
+        self.assertEqual([e["enquiry_id"] for e in paid.context["enquiries"]], ["C1"])
+
+    def test_accepted_order_without_payment_shows_pending(self):
+        response = self.client.get(reverse("enquiries:board"))
+        rows = {e["enquiry_id"]: e for e in response.context["enquiries"]}
+        self.assertEqual(rows["C1"]["payment"]["status"], "pending")
+        self.assertIsNone(rows["O1"]["payment"])
+
+    def test_payment_only_for_accepted_orders(self):
+        self._post(action="update_payment", enquiry_id="O1", payment_status="paid")
+        self.assertFalse(EnquiryContact.objects.filter(enquiry_id="O1").exists())
+        self.assertEqual(self.statuses["O1"], "open")
+
+    def test_switch_cannot_convert_an_unpaid_order(self):
+        url = reverse("enquiries:toggle_converted", args=["C1"])
+        response = self.client.post(url, {"converted": "true", "previous_status": "accepted"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Mark as paid", response.json()["error"])
+        self.assertEqual(self.statuses["C1"], "accepted")
+
+    def test_undoing_a_conversion_sets_payment_back_to_pending(self):
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_reference="UTR123")
+        url = reverse("enquiries:toggle_converted", args=["C1"])
+        self.client.post(url, {"converted": "false", "previous_status": "accepted"})
+        self.assertEqual(self.statuses["C1"], "accepted")
+        contact = EnquiryContact.objects.get(enquiry_id="C1")
+        self.assertEqual(contact.payment_status, "pending")
+        self.assertIsNone(contact.payment_paid_on)
+
+    def test_paid_records_date_and_reference(self):
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid",
+                   payment_paid_on="2026-11-01", payment_reference="UTR123")
+        contact = EnquiryContact.objects.get(enquiry_id="C1")
+        self.assertEqual((contact.payment_paid_on.isoformat(), contact.payment_reference), ("2026-11-01", "UTR123"))
+        response = self.client.get(reverse("enquiries:board"))
+        self.assertContains(response, "Paid · 01 Nov 2026")
+
+    def test_paid_defaults_to_today_and_refuses_future_dates(self):
+        future = (timezone.localdate() + timedelta(days=3)).isoformat()
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_paid_on=future)
+        self.assertEqual(self.statuses["C1"], "accepted")
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid")
+        self.assertEqual(EnquiryContact.objects.get(enquiry_id="C1").payment_paid_on, timezone.localdate())
+
+    def test_conversion_rule(self):
+        from enquiries.views import _conversion_block_reason
+
+        self.assertIn("payment is received", _conversion_block_reason("C1", "accepted", "converted"))
+        self.assertIn("payment is received", _conversion_block_reason("O1", "open", "converted"))
+        self.assertEqual(_conversion_block_reason("C1", "converted", "converted"), "")
+        self.assertEqual(_conversion_block_reason("C1", "open", "accepted"), "")
+        EnquiryContact.objects.create(enquiry_id="C1", payment_status="paid")
+        self.assertEqual(_conversion_block_reason("C1", "accepted", "converted"), "")
+
+    def test_bad_payment_values_are_rejected(self):
+        self._post(action="update_payment", enquiry_id="C1", payment_status="lots")
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_amount_received="-5")
+        self.assertFalse(EnquiryContact.objects.filter(enquiry_id="C1").exists())
+
+    def test_skipped_email_is_shown_with_retry(self):
+        self.rows[2]["status"] = "rejected"
+        CustomerStatusEmail.objects.create(enquiry_id="O1", kind="rejection", event_key="rejection",
+                                           status="skipped", note="no confirmed customer email address")
+        response = self.client.get(reverse("enquiries:board"))
+        self.assertContains(response, 'data-status-email-state="skipped"')
+        self.assertContains(response, "no confirmed customer email address")
+        self.assertContains(response, 'value="retry_status_email"')
+
+
+@override_settings(**AUTO_ON)
+class AfterStatusChangeTests(TestCase):
+    def test_staff_rejecting_sends_email_only_on_the_change(self):
+        from django.contrib.messages.storage.fallback import FallbackStorage
+        from django.test import RequestFactory
+        from enquiries.views import _after_status_change
+
+        request = RequestFactory().post("/")
+        request.session = {}
+        request._messages = FallbackStorage(request)
+        with patch("enquiries.views.status_emails.send_status_email", return_value={"result": "sent"}) as send:
+            _after_status_change(request, "E1", {**ENQUIRY, "status": "open", "remarks": "internal note"}, "rejected")
+            self.assertEqual(send.call_args.kwargs["reason"], "")  # internal remarks are not the customer's reason
+            _after_status_change(request, "E1", {**ENQUIRY, "status": "rejected"}, "rejected")
+            _after_status_change(request, "E1", {**ENQUIRY, "status": "open"}, "accepted")
+        self.assertEqual(send.call_count, 1)
+
+
+@override_settings(**AUTO_ON)
+class AutoFollowUpOnConvertedTests(TestCase):
+    def test_quote_follow_ups_stop_when_order_is_accepted(self):
+        sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
+        latest = FollowUpSent.objects.create(enquiry_id="E1", customer_email="b@acme.example", sent_by=sales,
+                                             status="sent", gmail_thread_id="t1", stage="waiting_po",
+                                             next_follow_up_on=timezone.localdate())
+        reason = auto_follow_up._skip_reason("E1", {"enquiry_id": "E1", "status": "accepted"}, latest, 1,
+                                             timezone.localdate())
+        self.assertIn("payment follow-up manually", reason)
+        latest.stage = "payment_pending"
+        self.assertEqual(auto_follow_up._skip_reason("E1", {"enquiry_id": "E1", "status": "accepted"}, latest, 1,
+                                                     timezone.localdate()), "")
+
+
+@override_settings(**AUTO_ON, FOLLOW_UP_ACK_WITHIN_DAYS=2, FOLLOW_UP_CLOSE_AFTER_DAYS=7, N8N_API_TOKEN="tok")
+class CustomerEmailTests(TestCase):
+    """Acknowledgement, payment received and closing emails."""
+
+    def setUp(self):
+        self.sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
+        self.gmail = _gmail()
+        self.gmail.get_thread_messages.return_value = [{"id": "m1", "sender": "Buyer <buyer@acme.example>"}]
+        patch("enquiries.status_emails.GmailService", return_value=self.gmail).start()
+        self.resolve = patch("enquiries.views._resolve_follow_up_conversation", return_value=_conversation()).start()
+        self.update = patch("enquiries.services.update_enquiry").start()
+        self.addCleanup(patch.stopall)
+        self.today = timezone.localdate()
+
+    def _enq(self, eid, status="open", days_ago=0):
+        return {"enquiry_id": eid, "status": status, "subject": "Gasket", "customer_name": "Acme",
+                "received_at_dt": datetime.combine(self.today - timedelta(days=days_ago), datetime.min.time())}
+
+    def _followed_up(self, eid, n=4, days_ago=8, stage="waiting_po"):
+        for i in range(n):
+            FollowUpSent.objects.create(enquiry_id=eid, sent_by=self.sales, status="sent", stage=stage,
+                                        sent_at=timezone.now() - timedelta(days=days_ago + (n - i)))
+
+    # --- acknowledgement -------------------------------------------------------------------
+    def test_acknowledgement_only_for_new_open_enquiries(self):
+        rows = [self._enq("NEW"), self._enq("OLD", days_ago=10), self._enq("ACC", status="accepted")]
+        due = status_emails.acknowledgement_due(rows, self.today)
+        self.assertEqual([e["enquiry_id"] for e in due], ["NEW"])
+
+    def test_acknowledgement_text_and_sent_once(self):
+        outcome = status_emails.send_status_email("acknowledgement", "NEW", self._enq("NEW"))
+        self.assertEqual(outcome["result"], "sent")
+        body = self.gmail.send_reply.call_args.kwargs["body"]
+        self.assertIn("We have registered it with our reference NEW", body)
+        self.assertIn("checking its feasibility", body)
+        self.assertEqual(status_emails.acknowledgement_due([self._enq("NEW")], self.today), [])
+
+    def test_no_acknowledgement_when_the_team_already_replied(self):
+        self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})
+        outcome = status_emails.send_status_email("acknowledgement", "NEW", self._enq("NEW"))
+        self.assertEqual(outcome["result"], "skipped")
+        self.assertIn("already replied", outcome["note"])
+        self.gmail.send_reply.assert_not_called()
+
+    # --- closing ---------------------------------------------------------------------------
+    def test_closing_due_after_all_follow_ups_and_the_wait(self):
+        self._followed_up("DONE")                      # 4 sent, last 9 days ago -> due
+        self._followed_up("RECENT", days_ago=1)        # last one too recent
+        self._followed_up("FEW", n=2)                  # not all follow-ups sent
+        self._followed_up("PAY", stage="payment_pending")  # payment reminders never close an enquiry
+        rows = [self._enq(e) for e in ("DONE", "RECENT", "FEW", "PAY")] + [self._enq("ACC", status="accepted")]
+        self._followed_up("ACC")
+        self.assertEqual([e["enquiry_id"] for e in status_emails.closing_due(rows)], ["DONE"])
+
+    def test_closing_email_closes_the_enquiry(self):
+        self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})
+        outcome = status_emails.send_closing_email(self._enq("DONE"), "http://api")
+        self.assertEqual(outcome["result"], "sent")
+        self.assertIn("We are therefore closing this enquiry for now.", self.gmail.send_reply.call_args.kwargs["body"])
+        self.assertEqual(self.update.call_args.args[1:], ("DONE", {"status": "closed"}))
+
+    def test_customer_reply_stops_the_closing_email(self):
+        outcome = status_emails.send_closing_email(self._enq("DONE"), "http://api")  # customer wrote last
+        self.assertEqual(outcome["result"], "skipped")
+        self.gmail.send_reply.assert_not_called()
+        self.update.assert_not_called()
+
+    @override_settings(FOLLOW_UP_AUTO_DRY_RUN=True)
+    def test_test_mode_neither_sends_nor_closes(self):
+        self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})
+        self.assertEqual(status_emails.send_closing_email(self._enq("DONE"), "http://api")["result"], "dry_run")
+        self.update.assert_not_called()
+
+    # --- payment received ------------------------------------------------------------------
+    def test_payment_received_mentions_reference_and_date(self):
+        from datetime import date
+
+        detail = status_emails.payment_detail_text(date(2026, 11, 1), "UTR123")
+        status_emails.send_status_email("payment_received", "C1", self._enq("C1", status="converted"), payment_detail=detail)
+        body = self.gmail.send_reply.call_args.kwargs["body"]
+        self.assertIn("(payment reference: UTR123, received on 01 Nov 2026)", body)
+        self.assertIn("confirmed for production", body)
+
+    # --- scheduled endpoint ----------------------------------------------------------------
+    def test_scheduled_run_needs_the_token_and_runs_both(self):
+        url = reverse("enquiries:customer_emails_run")
+        self.assertEqual(self.client.post(url).status_code, 401)
+        self._followed_up("DONE")
+        rows = [self._enq("NEW"), self._enq("DONE", days_ago=30)]
+        with patch("enquiries.services.list_enquiries", return_value=rows):
+            data = self.client.post(url, HTTP_X_N8N_TOKEN="tok").json()
+        self.assertEqual([r["enquiry_id"] for r in data["acknowledgement"]], ["NEW"])
+        self.assertEqual([r["enquiry_id"] for r in data["closing"]], ["DONE"])
+
+    @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
+    def test_scheduled_run_does_nothing_when_turned_off(self):
+        data = self.client.post(reverse("enquiries:customer_emails_run"), HTTP_X_N8N_TOKEN="tok").json()
+        self.assertEqual((data["acknowledgement"], data["closing"]), ([], []))
+        self.gmail.send_reply.assert_not_called()
+
+
+class EmailWordingTests(TestCase):
+    """Every automatic email is signed by the team and ends with a line that fits its purpose."""
+
+    def test_no_personal_name_in_any_email(self):
+        user = get_user_model().objects.create_user("ananya", "a@example.com", "x", first_name="Ananya", last_name="Y A")
+        bodies = [build_follow_up_body(k, reference="E1", subject="Gasket", user=user, attempt=n)
+                  for k in STAGE_KEYS for n in (1, 2, 3, 4)]
+        bodies += [status_emails.build_status_email_body(t, reference="E1", subject="Gasket", user=user)
+                   for t in ("acknowledgement", "rejection_ask", "rejection_thanks", "payment_received", "closing")]
+        for body in bodies:
+            self.assertNotIn("Ananya", body)
+            self.assertTrue(body.endswith("Best regards,\nAVIGIRI Team"), body[-60:])
+
+    def test_closing_line_matches_the_purpose(self):
+        def last_paragraph(stage, attempt=1):
+            return build_follow_up_body(stage, reference="E1", subject="G", attempt=attempt).split("\n\n")[-2]
+
+        self.assertIn("schedule production", last_paragraph("waiting_po"))
+        self.assertIn("payment reference", last_paragraph("payment_pending"))
+        self.assertIn("payment reference", last_paragraph("payment_pending", attempt=4))
+        closings = {last_paragraph(k) for k in STAGE_KEYS} | {last_paragraph(k, 4) for k in STAGE_KEYS}
+        self.assertEqual(len(closings), 2 * len(STAGE_KEYS))  # no two stages share a closing line

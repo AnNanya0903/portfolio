@@ -25,14 +25,17 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.text import slugify
 from django.core import signing
+from django.db.models import Max
 from django.views.decorators.http import require_POST
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
-from .models import GmailLeadAnalysis, ShareLink
+from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, GmailLeadAnalysis, ShareLink
+from . import status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
     COSTING_FIELD_ORDER,
@@ -50,6 +53,7 @@ from .constants import (
     STATUS_CHOICES,
 )
 from .pdf_preview import generate_preview_pdf
+from dashboard.follow_up_templates import PAYMENT_STAGE
 from dashboard.gmail_service import GmailService, GmailAPIError
 from dashboard.ai_service import AIReplyRequest, AIReplyService, AIServiceError
 
@@ -990,6 +994,287 @@ def _generate_financial_year_options(dates: list) -> list:
     return sorted(labels)
 
 
+# Process: open (enquiry, feasibility, quotation, PI) -> accepted (order accepted, payment pending)
+# -> converted (payment received). Accepted orders only get "Payment pending" follow-ups.
+FOLLOW_UP_CLOSED_STATUSES = {"closed", "converted", "rejected"}
+
+
+def _payment_status(enquiry_id: str) -> str:
+    """Payment status of an accepted order: pending (default), partial or paid."""
+    contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).only("payment_status").first()
+    return (contact.payment_status if contact else "") or EnquiryContact.PAYMENT_PENDING
+
+
+def _conversion_block_reason(enquiry_id: str, old_status: Any, new_status: Any) -> str:
+    """An order becomes Converted only when its payment is recorded as Paid (Mark as paid on the board)."""
+    old_status = str(old_status or "").strip().lower()
+    new_status = str(new_status or "").strip().lower()
+    if new_status != CONVERTED_STATUS or old_status == CONVERTED_STATUS:
+        return ""
+    contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).only("payment_status").first()
+    if contact and contact.payment_status == EnquiryContact.PAYMENT_PAID:
+        return ""
+    return (
+        "An order becomes Converted only when the payment is received. Set the status to Accepted, "
+        "then use “Mark as paid” on the enquiries board."
+    )
+
+
+def _payment_follow_up_count(enquiry_id: str) -> int:
+    return FollowUpSent.objects.filter(
+        enquiry_id=str(enquiry_id), status=FollowUpSent.STATUS_SENT, stage=PAYMENT_STAGE
+    ).count()
+
+
+def _follow_up_summaries(enquiry_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
+    """Per enquiry: how many follow-ups were sent, the last one (date, sender) and when the next is due."""
+    today = timezone.localdate()
+    summaries: Dict[str, Dict[str, Any]] = {}
+    rows = (
+        FollowUpSent.objects.filter(enquiry_id__in=list(enquiry_ids), status=FollowUpSent.STATUS_SENT)
+        .select_related("sent_by")
+        .order_by("enquiry_id", "-sent_at")
+    )
+    for row in rows:
+        summary = summaries.get(row.enquiry_id)
+        if summary is None:  # first row per enquiry is the latest
+            sender = row.sent_by
+            due = row.next_follow_up_on
+            summaries[row.enquiry_id] = {
+                "count": 1,
+                "last_sent_at": row.sent_at,
+                "last_sent_by": (sender.get_full_name() or sender.username) if sender else "",
+                "due": due,
+                "due_state": None if due is None else ("overdue" if due < today else "today" if due == today else "later"),
+                "last_auto": row.source == FollowUpSent.SOURCE_AUTO,
+                "last_stage": row.stage,
+            }
+        else:
+            summary["count"] += 1
+    return summaries
+
+
+def _follow_up_stopped_reason(enquiry: Mapping[str, Any], sent_count: int) -> str:
+    """Why no more follow-ups should be sent for this enquiry, or '' if one is fine.
+
+    For an accepted order only payment follow-ups count, and they stop once it is paid.
+    """
+    status = str(enquiry.get("status") or "").strip().lower()
+    if status == "accepted":
+        enquiry_id = str(enquiry.get("enquiry_id") or "")
+        if _payment_status(enquiry_id) == EnquiryContact.PAYMENT_PAID:
+            return f"Payment for order #{enquiry_id} has been received, so no follow-up is needed."
+        sent_count = _payment_follow_up_count(enquiry_id)
+    elif status in FOLLOW_UP_CLOSED_STATUSES:
+        return f"Enquiry #{enquiry.get('enquiry_id')} is {status}, so no follow-up is needed."
+    limit = int(getattr(settings, "FOLLOW_UP_MAX_COUNT", 4) or 0)
+    if limit and sent_count >= limit:
+        return (
+            f"Enquiry #{enquiry.get('enquiry_id')} has already been followed up {sent_count} times. "
+            "Please call the customer or update the enquiry status instead."
+        )
+    return ""
+
+
+def _save_customer_email(enquiry_id: Optional[str], email: str, user) -> None:
+    """Remember the customer email typed when creating an enquiry (stored in MagicWand's own database)."""
+    if not enquiry_id or not email:
+        return
+    EnquiryContact.objects.update_or_create(
+        enquiry_id=str(enquiry_id),
+        defaults={"customer_email": email, "updated_by": user if getattr(user, "is_authenticated", False) else None},
+    )
+
+
+@require_POST
+def toggle_auto_follow_up(request: HttpRequest, enquiry_id: str) -> HttpResponse:
+    """Pause or resume automatic follow-ups for one enquiry (button on the board)."""
+    contact, _ = EnquiryContact.objects.get_or_create(enquiry_id=str(enquiry_id))
+    contact.auto_follow_up_paused = not contact.auto_follow_up_paused
+    contact.updated_by = request.user
+    contact.save(update_fields=["auto_follow_up_paused", "updated_by", "updated_at"])
+    state = "paused" if contact.auto_follow_up_paused else "resumed"
+    messages.success(request, f"Automatic follow-ups {state} for enquiry #{enquiry_id}.")
+    next_url = request.POST.get("next") or ""
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        next_url = reverse("enquiries:board")
+    return redirect(next_url)
+
+
+def _saved_customer_email(enquiry_id: str) -> str:
+    contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).only("customer_email").first()
+    return (contact.customer_email if contact else "") or ""
+
+
+def _attach_order_tracking(enquiry: MutableMapping[str, Any], contact: Optional[EnquiryContact],
+                           emails: Mapping[str, CustomerStatusEmail]) -> None:
+    """Payment (accepted / converted orders) and the automatic rejection email, for the board."""
+    status = str(enquiry.get("status") or "").strip().lower()
+    if status in ("accepted", "converted"):
+        # Converted means the payment was received.
+        payment = EnquiryContact.PAYMENT_PAID if status == "converted" else (
+            (contact.payment_status if contact else "") or EnquiryContact.PAYMENT_PENDING)
+        enquiry["payment"] = {
+            "status": payment,
+            "label": dict(EnquiryContact.PAYMENT_STATUS_CHOICES)[payment],
+            "amount": contact.payment_amount_received if contact else None,
+            "paid_on": contact.payment_paid_on if contact else None,
+            "reference": contact.payment_reference if contact else "",
+            "due": contact.payment_due_on if contact else None,
+            "overdue": bool(contact and contact.payment_due_on and payment != EnquiryContact.PAYMENT_PAID
+                            and contact.payment_due_on < timezone.localdate()),
+        }
+    else:
+        enquiry["payment"] = None
+    shown = []
+    for kind, label in _STATUS_EMAIL_LABELS:
+        row = emails.get(kind)
+        if row is None:
+            continue
+        can_retry = row.status != CustomerStatusEmail.STATUS_SENT and _status_email_allowed(kind, status) == ""
+        # A failed email is only worth showing while it still applies (e.g. rejection while rejected).
+        if row.status == CustomerStatusEmail.STATUS_SENT or can_retry:
+            shown.append({"kind": kind, "label": label, "status": row.status, "note": row.note,
+                          "when": row.sent_at or row.updated_at, "can_retry": can_retry})
+    enquiry["status_emails"] = shown
+
+
+def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) -> None:
+    from decimal import Decimal, InvalidOperation
+
+    value = (request.POST.get("payment_status") or "").strip()
+    if value not in {key for key, _ in EnquiryContact.PAYMENT_STATUS_CHOICES}:
+        messages.error(request, "Unknown payment status.")
+        return
+    amount_raw = (request.POST.get("payment_amount_received") or "").strip().replace(",", "")
+    amount = None
+    if amount_raw:
+        try:
+            amount = Decimal(amount_raw)
+        except InvalidOperation:
+            amount = None
+        if amount is None or amount < 0:
+            messages.error(request, "Please enter a valid amount received.")
+            return
+    due_raw = (request.POST.get("payment_due_on") or "").strip()
+    due = parse_date(due_raw) if due_raw else None
+    if due_raw and due is None:
+        messages.error(request, "Please enter a valid payment due date.")
+        return
+    paid_on, reference = None, (request.POST.get("payment_reference") or "").strip()[:120]
+    if value == EnquiryContact.PAYMENT_PAID:
+        paid_raw = (request.POST.get("payment_paid_on") or "").strip()
+        paid_on = parse_date(paid_raw) if paid_raw else timezone.localdate()
+        if paid_on is None or paid_on > timezone.localdate():
+            messages.error(request, "Please enter the date the payment was received (not a future date).")
+            return
+    try:
+        enquiry = services.fetch_enquiry(api_root, enquiry_id, request=request)
+    except services.EnquiryServiceError as exc:
+        messages.error(request, f"Unable to load enquiry: {exc}")
+        return
+    status = str(enquiry.get("status") or "").strip().lower()
+    if status != "accepted":
+        messages.error(request, f"Payment can only be updated for accepted orders (enquiry #{enquiry_id} is {status or 'not accepted'}).")
+        return
+    if value == EnquiryContact.PAYMENT_PAID:
+        # Paid: the order is converted.
+        try:
+            services.update_enquiry(api_root, enquiry_id, {"status": CONVERTED_STATUS}, request=request)
+        except services.EnquiryServiceError as exc:
+            messages.error(request, f"Payment not saved: could not mark the order as converted ({exc}).")
+            return
+        conversions = request.session.get(CONVERSION_SESSION_KEY, {})
+        if not isinstance(conversions, dict):
+            conversions = {}
+        conversions[enquiry_id] = "accepted"
+        request.session[CONVERSION_SESSION_KEY] = conversions
+        request.session.modified = True
+    _save_payment(enquiry_id, value, request.user, amount=amount, due=due, paid_on=paid_on, reference=reference)
+    label = dict(EnquiryContact.PAYMENT_STATUS_CHOICES)[value]
+    if value == EnquiryContact.PAYMENT_PAID:
+        messages.success(request, f"Order #{enquiry_id}: {label}. The status is now Converted.")
+        outcome = status_emails.send_status_email(
+            CustomerStatusEmail.KIND_PAYMENT_RECEIVED, enquiry_id, enquiry,
+            payment_detail=status_emails.payment_detail_text(paid_on, reference),
+        )
+        _report_status_email(request, outcome, "payment received")
+    else:
+        messages.success(request, f"Order #{enquiry_id}: {label}.")
+
+
+def _save_payment(enquiry_id: str, value: str, user, *, amount=None, due=None, paid_on=None, reference="",
+                  keep_details: bool = False) -> None:
+    contact, _ = EnquiryContact.objects.get_or_create(enquiry_id=str(enquiry_id))
+    contact.payment_status = value
+    if not keep_details:
+        contact.payment_amount_received = amount
+        contact.payment_due_on = due
+        contact.payment_paid_on = paid_on
+        contact.payment_reference = reference
+    elif value != EnquiryContact.PAYMENT_PAID:
+        contact.payment_paid_on = None
+    contact.payment_updated_by = user if getattr(user, "is_authenticated", False) else None
+    contact.payment_updated_at = timezone.now()
+    contact.save()
+
+
+_STATUS_EMAIL_LABELS = (
+    (CustomerStatusEmail.KIND_ACKNOWLEDGEMENT, "Acknowledgement"),
+    (CustomerStatusEmail.KIND_REJECTION, "Reason email"),
+    (CustomerStatusEmail.KIND_PAYMENT_RECEIVED, "Payment thank-you"),
+    (CustomerStatusEmail.KIND_CLOSING, "Closing email"),
+)
+# The enquiry status each automatic email belongs to.
+_STATUS_EMAIL_STATUS = {
+    CustomerStatusEmail.KIND_ACKNOWLEDGEMENT: "open",
+    CustomerStatusEmail.KIND_REJECTION: "rejected",
+    CustomerStatusEmail.KIND_PAYMENT_RECEIVED: CONVERTED_STATUS,
+    CustomerStatusEmail.KIND_CLOSING: "open",
+}
+
+
+def _status_email_allowed(kind: str, status: str) -> str:
+    """'' if this automatic email may be (re)sent for an enquiry with this status, else why not."""
+    wanted = _STATUS_EMAIL_STATUS.get(kind)
+    if wanted is None:
+        return "Unknown email type."
+    if status != wanted:
+        return f"This email is only sent while the enquiry is {wanted}."
+    return ""
+
+
+def _board_retry_status_email(request: HttpRequest, api_root: str, enquiry_id: str) -> None:
+    kind = (request.POST.get("kind") or "").strip()
+    if kind not in _STATUS_EMAIL_STATUS:
+        messages.error(request, "Unknown email type.")
+        return
+    try:
+        enquiry = services.fetch_enquiry(api_root, enquiry_id, request=request)
+    except services.EnquiryServiceError as exc:
+        messages.error(request, f"Unable to load enquiry: {exc}")
+        return
+    status = str(enquiry.get("status") or "").strip().lower()
+    blocked = _status_email_allowed(kind, status)
+    if blocked:
+        messages.error(request, f"Enquiry #{enquiry_id}: {blocked}")
+        return
+    label = dict(_STATUS_EMAIL_LABELS)[kind].lower()
+    if kind == CustomerStatusEmail.KIND_CLOSING:
+        outcome = status_emails.send_closing_email(enquiry, api_root)
+    elif kind == CustomerStatusEmail.KIND_PAYMENT_RECEIVED:
+        contact = EnquiryContact.objects.filter(enquiry_id=enquiry_id).first()
+        detail = status_emails.payment_detail_text(contact.payment_paid_on, contact.payment_reference) if contact else ""
+        outcome = status_emails.send_status_email(kind, enquiry_id, enquiry, payment_detail=detail)
+    else:
+        outcome = status_emails.send_status_email(kind, enquiry_id, enquiry,
+                                                  reason=_share_reason(enquiry, kind=kind) if kind in _SHARE_REASON_MARKERS else "")
+    if outcome.get("result") == "already_sent":
+        messages.info(request, f"The {label} email was already sent for enquiry #{enquiry_id}.")
+    else:
+        _report_status_email(request, outcome, label)
+
+
 @login_required
 def board(request: HttpRequest) -> HttpResponse:
     api_root = _get_api_root()
@@ -1025,8 +1310,19 @@ def board(request: HttpRequest) -> HttpResponse:
                     messages.error(request, f"Unable to update subject: {exc}")
                 else:
                     messages.success(request, f"Updated subject for enquiry {enquiry_id}.")
+        elif action in {"update_payment", "retry_status_email"}:
+            enquiry_id = (request.POST.get("enquiry_id") or "").strip()
+            if not enquiry_id:
+                messages.error(request, "Missing enquiry identifier.")
+            elif action == "update_payment":
+                _board_update_payment(request, api_root, enquiry_id)
+            else:
+                _board_retry_status_email(request, api_root, enquiry_id)
         else:
             messages.error(request, "Unknown action requested.")
+        next_url = request.POST.get("next") or ""
+        if next_url.startswith("/") and not next_url.startswith("//"):
+            return redirect(next_url)
         return redirect("enquiries:board")
 
     query_raw = (request.GET.get("q") or "").strip()
@@ -1037,6 +1333,9 @@ def board(request: HttpRequest) -> HttpResponse:
 
     if status and status not in STATUS_VALUE_SET:
         status = ""
+    payment_filter = (request.GET.get("payment") or "").strip()
+    if payment_filter not in {"unpaid", "paid"}:
+        payment_filter = ""
 
     page_size_options = [25, 50, 100]
     try:
@@ -1083,6 +1382,22 @@ def board(request: HttpRequest) -> HttpResponse:
             enquiry for enquiry in enquiries
             if str(enquiry.get("status") or "").strip().lower() == status
         ]
+
+    # Payment filter: accepted orders still waiting for payment ("unpaid"), or paid / converted ones ("paid").
+    if payment_filter:
+        def _status_of(e):
+            return str(e.get("status") or "").strip().lower()
+
+        accepted_ids = [str(e.get("enquiry_id")) for e in enquiries if _status_of(e) == "accepted"]
+        paid_ids = set(
+            EnquiryContact.objects.filter(enquiry_id__in=accepted_ids, payment_status=EnquiryContact.PAYMENT_PAID)
+            .values_list("enquiry_id", flat=True)
+        )
+        if payment_filter == "unpaid":
+            wanted = set(accepted_ids) - paid_ids
+        else:
+            wanted = paid_ids | {str(e.get("enquiry_id")) for e in enquiries if _status_of(e) == "converted"}
+        enquiries = [e for e in enquiries if str(e.get("enquiry_id")) in wanted]
 
     # Financial year + month filter
     if fin_year or month:
@@ -1136,6 +1451,36 @@ def board(request: HttpRequest) -> HttpResponse:
     end_index = min(total_count, start_index + page_size)
     enquiries_page = enquiries[start_index:end_index]
 
+    # Follow-up history and next-due date per enquiry on this page (shown under the Follow-up button).
+    page_ids = [str(e.get("enquiry_id")) for e in enquiries_page if e.get("enquiry_id")]
+    if page_ids:
+        summaries = _follow_up_summaries(page_ids)
+        contacts = {c.enquiry_id: c for c in EnquiryContact.objects.filter(enquiry_id__in=page_ids)}
+        paused_ids = {eid for eid, c in contacts.items() if c.auto_follow_up_paused}
+        status_email_rows = status_emails.latest_status_emails(page_ids)
+        for enquiry in enquiries_page:
+            enquiry["auto_paused"] = str(enquiry.get("enquiry_id")) in paused_ids
+            _attach_order_tracking(enquiry, contacts.get(str(enquiry.get("enquiry_id"))),
+                                   status_email_rows.get(str(enquiry.get("enquiry_id")), {}))
+            summary = summaries.get(str(enquiry.get("enquiry_id")))
+            # Why the Follow-up button cannot be used (closed/converted/rejected or limit reached), or ''.
+            enquiry["follow_up_blocked"] = _follow_up_stopped_reason(enquiry, summary["count"] if summary else 0)
+            if summary:
+                limit = int(getattr(settings, "FOLLOW_UP_MAX_COUNT", 4) or 0)
+                summary = {
+                    **summary,
+                    "limit": limit,
+                    "steps": [n <= summary["count"] for n in range(1, max(limit, summary["count"]) + 1)],
+                }
+                status = str(enquiry.get("status") or "").strip().lower()
+                if _follow_up_stopped_reason(enquiry, summary["count"]):
+                    # closed/converted/rejected or limit reached: no more follow-ups are due
+                    summary.update(due=None, due_state="closed" if status in FOLLOW_UP_CLOSED_STATUSES else "limit")
+                elif status == "accepted" and summary.get("last_stage") != PAYMENT_STAGE:
+                    # Order accepted: earlier quote reminders no longer apply; payment follow-ups start manually.
+                    summary.update(due=None, due_state="payment")
+            enquiry["follow_up"] = summary
+
     page_start_display = start_index + 1 if total_count else 0
     page_end_display = end_index if total_count else 0
 
@@ -1148,6 +1493,8 @@ def board(request: HttpRequest) -> HttpResponse:
         base_params["month"] = month
     if status:
         base_params["status"] = status
+    if payment_filter:
+        base_params["payment"] = payment_filter
 
     prev_url = None
     if page > 1:
@@ -1185,6 +1532,8 @@ def board(request: HttpRequest) -> HttpResponse:
         "selected_month": month,
         "status_choices": STATUS_CHOICES,
         "selected_status": status,
+        "selected_payment": payment_filter,
+        "payment_status_choices": EnquiryContact.PAYMENT_STATUS_CHOICES,
     }
     return render(request, "enquiries/board.html", context)
 
@@ -1198,38 +1547,163 @@ def follow_up(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         messages.error(request, f"Unable to load enquiry: {exc}")
         return redirect("enquiries:board")
 
-    query = _build_enquiry_follow_up_query(enquiry)
-    if not query:
-        messages.error(request, "This enquiry does not have enough subject information to prepare a Gmail follow-up.")
+    # Step 9: stop following up closed/converted/rejected enquiries or after the limit.
+    sent_count = FollowUpSent.objects.filter(enquiry_id=str(enquiry_id), status=FollowUpSent.STATUS_SENT).count()
+    stopped = _follow_up_stopped_reason({**enquiry, "enquiry_id": enquiry_id}, sent_count)
+    if stopped:
+        messages.warning(request, stopped)
         return redirect("enquiries:board")
+
+    # Customer email typed when the enquiry was created on the board (PDF / Google Sheet).
+    if not str(enquiry.get("customer_email") or "").strip():
+        saved_email = _saved_customer_email(enquiry_id)
+        if saved_email:
+            enquiry = {**enquiry, "customer_email": saved_email}
+
+    chosen_thread = (request.GET.get("thread") or "").strip()
+    if chosen_thread and not _GMAIL_ID_PATTERN.match(chosen_thread):
+        messages.error(request, "Invalid Gmail conversation selected.")
+        return redirect("enquiries:board")
+
+    # Local development: make sure the sample "demo-" emails exist so follow-ups work without Gmail.
+    from dashboard import views as dashboard_views
+
+    dashboard_views._ensure_local_demo_emails(request.user)
 
     gmail_service = GmailService(request.user)
     try:
-        matches = gmail_service.search_messages(query, limit=1)
+        outcome, result = _resolve_follow_up_conversation(enquiry_id, enquiry, gmail_service, chosen_thread)
     except GmailAPIError as exc:
-        messages.error(request, str(exc))
+        messages.error(request, f"Could not check Gmail for this enquiry: {exc}")
         return redirect("enquiries:board")
 
-    if not matches:
-        messages.error(request, "No Gmail thread matched this enquiry subject for follow-up.")
+    if outcome == "error":
+        messages.error(request, result)
         return redirect("enquiries:board")
 
-    message_id = str((matches[0] or {}).get("id") or "").strip()
-    if not message_id:
-        messages.error(request, "Matched Gmail thread is missing its message identifier.")
+    if outcome == "choose":
+        return render(
+            request,
+            "enquiries/follow_up_select.html",
+            {"enquiry": enquiry, "enquiry_id": enquiry_id, "conversations": result},
+        )
+
+    conversation = result
+    customer_email = conversation.get("customer_email") or ""
+    reply_to_id = str(conversation.get("latest_message_id") or "").strip()
+    if not _is_valid_email(customer_email) or not reply_to_id:
+        messages.error(
+            request,
+            "The customer's email address could not be identified in the Gmail conversation, so no follow-up was prepared.",
+        )
         return redirect("enquiries:board")
 
-    # Store follow-up context so the compose page can record history after send.
+    # Store follow-up context so the compose page can prefill, send to the customer and record history.
     request.session["follow_up_context"] = {
         "enquiry_id": enquiry_id,
-        "customer_email": str(enquiry.get("customer_email") or "").strip(),
+        "customer_email": customer_email,
         "customer_name": str(enquiry.get("customer_name") or "").strip(),
         "subject": str(enquiry.get("subject") or "").strip(),
-        "gmail_message_id": message_id,
+        "gmail_message_id": reply_to_id,
+        "gmail_thread_id": conversation.get("thread_id") or "",
+        "token": secrets.token_urlsafe(24),
+        "stage": _suggested_follow_up_stage(enquiry_id, enquiry),
     }
     request.session.modified = True
 
-    return redirect(reverse("dashboard:compose_email", args=[message_id]))
+    return redirect(reverse("dashboard:compose_email", args=[reply_to_id]))
+
+
+def _suggested_follow_up_stage(enquiry_id: str, enquiry: Mapping[str, Any]) -> str:
+    """Stage to preselect on the compose page: payment pending for accepted orders."""
+    if str(enquiry.get("status") or "").strip().lower() == "accepted":
+        return PAYMENT_STAGE
+    return ""
+
+
+_GMAIL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def _is_valid_email(value: str) -> bool:
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+
+    try:
+        validate_email(value or "")
+    except ValidationError:
+        return False
+    return True
+
+
+def _resolve_follow_up_conversation(enquiry_id, enquiry, gmail_service, chosen_thread=""):
+    """Find the enquiry's Gmail conversation without guessing.
+
+    Returns ("ok", conversation), ("choose", [conversations]) or ("error", message).
+    Order: an employee-confirmed choice, the conversation of the last sent follow-up,
+    the original Gmail message saved on email-created enquiries (customer_reference
+    "EMAIL-<id>"), then a Gmail search. Search results from subject + name alone are
+    never used without the employee confirming the conversation.
+    """
+    subject = str(enquiry.get("subject") or "").strip()
+    customer_name = str(enquiry.get("customer_name") or "").strip()
+    saved_email = str(enquiry.get("customer_email") or "").strip()
+    if not _is_valid_email(saved_email):
+        saved_email = ""
+
+    def search():
+        if not subject:
+            return []
+        return gmail_service.find_enquiry_conversations(
+            subject=subject, customer_email=saved_email, customer_name=customer_name
+        )
+
+    if chosen_thread:
+        candidates = search()
+        for conversation in candidates:
+            if conversation.get("thread_id") == chosen_thread:
+                return "ok", conversation
+        return "error", "The selected Gmail conversation does not match this enquiry. Please try Follow-up again."
+
+    previous = (
+        FollowUpSent.objects.filter(enquiry_id=enquiry_id, status=FollowUpSent.STATUS_SENT)
+        .exclude(gmail_thread_id="")
+        .order_by("-sent_at")
+        .first()
+    )
+    if previous:
+        try:
+            conversation = gmail_service.describe_conversation(previous.gmail_thread_id)
+        except GmailAPIError:
+            conversation = None
+        if conversation:
+            if previous.customer_email:
+                conversation["customer_email"] = previous.customer_email.lower()
+            return "ok", conversation
+
+    reference = str(enquiry.get("customer_reference") or "").strip()
+    if reference.upper().startswith("EMAIL-"):
+        original_id = reference[len("EMAIL-"):].strip()
+        if _GMAIL_ID_PATTERN.match(original_id):
+            try:
+                original = gmail_service.get_message(original_id)
+            except GmailAPIError:
+                original = None
+            thread_id = (original or {}).get("thread_id")
+            if thread_id:
+                conversation = gmail_service.describe_conversation(thread_id)
+                if conversation:
+                    return "ok", conversation
+
+    if not subject and not saved_email:
+        return "error", "This enquiry has no subject or customer email, so its Gmail conversation cannot be identified."
+
+    candidates = search()
+    if not candidates:
+        return "error", "No Gmail conversation matching this enquiry was found. No follow-up was prepared."
+    if saved_email and len(candidates) == 1:
+        return "ok", candidates[0]
+    # Several matches, or a match found by subject/name only: the employee must confirm.
+    return "choose", candidates
 
 
 @login_required
@@ -1451,6 +1925,10 @@ def toggle_converted_status(request: HttpRequest, enquiry_id: str) -> JsonRespon
 
     if target_status not in STATUS_VALUE_SET:
         return JsonResponse({"error": "Status value is not supported."}, status=400)
+    if converted:
+        blocked = _conversion_block_reason(enquiry_id, previous_status_raw, CONVERTED_STATUS)
+        if blocked:
+            return JsonResponse({"error": blocked}, status=400)
     if not converted and target_status not in NON_CONVERTED_STATUS_SET:
         return JsonResponse({"error": "Only non-converted statuses can be restored."}, status=400)
 
@@ -1465,6 +1943,9 @@ def toggle_converted_status(request: HttpRequest, enquiry_id: str) -> JsonRespon
     else:
         stored_previous = target_status
         session_map.pop(enquiry_id, None)
+        if _payment_status(enquiry_id) == EnquiryContact.PAYMENT_PAID:
+            # Conversion undone: the payment is no longer treated as received.
+            _save_payment(enquiry_id, EnquiryContact.PAYMENT_PENDING, request.user, keep_details=True)
 
     request.session[CONVERSION_SESSION_KEY] = session_map
     request.session.modified = True
@@ -1560,6 +2041,10 @@ def _create_google_sheet_enquiry(request: HttpRequest, *, sheet_title: str) -> D
     api_root = _get_api_root()
     if not sheet_title:
         sheet_title = "New Enquiry"
+    customer_name = " ".join((request.POST.get("customer_name") or "").split())[:255]
+    customer_email = (request.POST.get("customer_email") or "").strip().lower()
+    if customer_email and not _is_valid_email(customer_email):
+        raise ValueError("Please enter a valid customer email address.")
 
     gmail_service = GmailService(request.user)
     credentials = gmail_service.build_authorized_credentials()
@@ -1595,7 +2080,8 @@ def _create_google_sheet_enquiry(request: HttpRequest, *, sheet_title: str) -> D
     default_payload = {
         "subject": sheet_title,
         "project_name": sheet_title,
-        "customer_name": sheet_title,
+        # The enquiry service requires a customer name; fall back to the title as before.
+        "customer_name": customer_name or sheet_title,
         "enquiry_date": timezone.now().date().isoformat(),
         "currency": "USD",
         "status": "open",
@@ -1618,6 +2104,7 @@ def _create_google_sheet_enquiry(request: HttpRequest, *, sheet_title: str) -> D
         payload,
         request=request,
     )
+    _save_customer_email((created_enquiry or {}).get("enquiry_id"), customer_email, request.user)
     return {
         "sheet_url": sheet_url,
         "spreadsheet_id": spreadsheet_id,
@@ -1703,7 +2190,10 @@ def _create_pdf_enquiry(
             raise ValueError(str(first_error))
         pdf_file = form.cleaned_data["pdf"]
         title = title or form.cleaned_data.get("title")
+        customer_name = (form.cleaned_data.get("customer_name") or "").strip()
+        customer_email = (form.cleaned_data.get("customer_email") or "").strip().lower()
     else:
+        customer_name, customer_email = "", ""
         pdf_name = (getattr(pdf_file, "name", "") or "").lower()
         if not pdf_name.endswith(".pdf"):
             raise ValueError("Please upload a PDF file.")
@@ -1713,7 +2203,8 @@ def _create_pdf_enquiry(
 
     default_payload = {
         "subject": resolved_title,
-        "customer_name": resolved_title,
+        # The enquiry service requires a customer name; fall back to the title as before.
+        "customer_name": customer_name or resolved_title,
         "project_name": resolved_title,
         "enquiry_date": today,
         "currency": "USD",
@@ -1735,6 +2226,7 @@ def _create_pdf_enquiry(
         request=request,
     )
     enquiry_id = (created or {}).get("enquiry_id")
+    _save_customer_email(enquiry_id, customer_email, request.user)
     return {
         "title": resolved_title,
         "enquiry_id": enquiry_id,
@@ -1765,7 +2257,11 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         form = forms.EnquiryUpdateForm(request.POST, request.FILES, initial=enquiry)
         form.fields["attachments"].label = "Attach additional files"
         form.fields["profile"].label = "Replace profile"
-        if form.is_valid():
+        blocked = form.is_valid() and _conversion_block_reason(enquiry_id, enquiry.get("status"), form.cleaned_data.get("status"))
+        if blocked:
+            form.add_error("status", blocked)
+            messages.error(request, blocked)
+        elif form.is_valid():
             payload = form.cleaned_payload()
             files = request.FILES.getlist("attachments")
             try:
@@ -1778,6 +2274,7 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
                     request=request,
                 )
                 messages.success(request, "Enquiry updated successfully.")
+                _after_status_change(request, enquiry_id, enquiry, payload.get("status"))
                 return redirect(reverse("enquiries:detail", args=[enquiry_id]))
             except services.EnquiryServiceError as exc:
                 messages.error(request, f"Unable to update enquiry: {exc}")
@@ -2559,10 +3056,51 @@ def share(request: HttpRequest, brand: str | None = None, enq_no: str | None = N
     return render(request, "enquiries/share.html", context)
 
 
+_SHARE_REASON_MARKERS = {
+    CustomerStatusEmail.KIND_REJECTION: "Rejection reason (via share link):",
+}
+
+
+def _share_reason(enquiry: Mapping[str, Any] | None, *, kind: str) -> str:
+    """What the customer typed on the share link; other remarks are internal notes and do not count."""
+    marker = _SHARE_REASON_MARKERS[kind]
+    remarks = str((enquiry or {}).get("remarks") or "")
+    return next((line.split(marker, 1)[1].strip() for line in reversed(remarks.splitlines()) if marker in line), "")
+
+
+def _after_status_change(request: HttpRequest, enquiry_id: str, enquiry: Mapping[str, Any], new_status: Any) -> None:
+    """Staff changed the status: email the customer when an order becomes rejected."""
+    old_status = str((enquiry or {}).get("status") or "").strip().lower()
+    new_status = str(new_status or "").strip().lower()
+    if old_status == CONVERTED_STATUS and new_status and new_status != CONVERTED_STATUS:
+        if _payment_status(enquiry_id) == EnquiryContact.PAYMENT_PAID:
+            _save_payment(enquiry_id, EnquiryContact.PAYMENT_PENDING, request.user, keep_details=True)
+    if new_status != "rejected" or old_status == "rejected":
+        return
+    reason = _share_reason(enquiry, kind=CustomerStatusEmail.KIND_REJECTION)
+    outcome = status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, enquiry_id, enquiry or {}, reason=reason)
+    _report_status_email(request, outcome, "rejection")
+
+
+def _report_status_email(request: HttpRequest, outcome: Mapping[str, Any], label: str) -> None:
+    result = outcome.get("result")
+    if result == CustomerStatusEmail.STATUS_SENT:
+        messages.success(request, f"The {label} email was sent to the customer.")
+    elif result == CustomerStatusEmail.STATUS_DRY_RUN:
+        messages.info(request, f"Test mode: the {label} email was prepared but not sent.")
+    elif result in (CustomerStatusEmail.STATUS_SKIPPED, CustomerStatusEmail.STATUS_FAILED):
+        messages.warning(request, f"The {label} email was not sent: {outcome.get('note')}.")
+
+
+def _append_remark(existing: Mapping[str, Any] | None, line: str) -> str:
+    existing_remarks = str((existing or {}).get("remarks") or "").strip()
+    return f"{existing_remarks}\n{line}" if existing_remarks else line
+
+
 def share_action(request: HttpRequest) -> HttpResponse:
+    """Customer's answer on the share link: accept, or reject with a reason."""
     token = request.POST.get("token") or ""
     action = (request.POST.get("action") or "").lower()
-    next_url = request.POST.get("next") or request.META.get("HTTP_REFERER") or reverse("enquiries:board")
     if action not in {"accept", "reject"}:
         return JsonResponse({"error": "Unknown action."}, status=400)
     if not token:
@@ -2575,26 +3113,24 @@ def share_action(request: HttpRequest) -> HttpResponse:
     if not enquiry_id:
         return JsonResponse({"error": "Share link is missing an enquiry reference."}, status=400)
 
-    status_value = "accepted" if action == "accept" else "rejected"
     api_root = _get_api_root()
+    reason = (request.POST.get("reason") or "").strip()
+    try:
+        existing = services.fetch_enquiry(api_root, enquiry_id, request=request)
+    except services.EnquiryServiceError:
+        existing = None
+
+    status_value = "accepted" if action == "accept" else "rejected"
     update_payload: Dict[str, Any] = {"status": status_value}
-    if action == "reject":
-        reason = (request.POST.get("reason") or "").strip()
-        if reason:
-            try:
-                existing = services.fetch_enquiry(api_root, enquiry_id, request=request)
-                existing_remarks = str(existing.get("remarks") or "").strip()
-            except services.EnquiryServiceError:
-                existing_remarks = ""
-            if existing_remarks:
-                new_remarks = f"{existing_remarks}\nRejection reason (via share link): {reason}"
-            else:
-                new_remarks = f"Rejection reason (via share link): {reason}"
-            update_payload["remarks"] = new_remarks
+    if action == "reject" and reason:
+        update_payload["remarks"] = _append_remark(existing, f"Rejection reason (via share link): {reason}")
     try:
         services.update_enquiry(api_root, enquiry_id, update_payload, request=request)
     except services.EnquiryServiceError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
+
+    if action == "reject":
+        status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, enquiry_id, existing or {}, reason=reason)
 
     return JsonResponse({"status": "ok", "enquiry_id": enquiry_id, "new_status": status_value})
 
@@ -2718,6 +3254,10 @@ def preview_pdf(request: HttpRequest) -> HttpResponse:
             return JsonResponse({"error": str(exc)}, status=400)
 
     if save_flag and enquiry_id:
+        before_save = existing
+        blocked = _conversion_block_reason(enquiry_id, (existing or {}).get("status"), payload.get("status"))
+        if blocked:
+            return JsonResponse({"error": blocked}, status=400)
         try:
             existing = services.update_enquiry(
                 api_root,
@@ -2727,6 +3267,7 @@ def preview_pdf(request: HttpRequest) -> HttpResponse:
             )
         except services.EnquiryServiceError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
+        _after_status_change(request, enquiry_id, before_save or {}, payload.get("status"))
         try:
             pdf_bytes = generate_preview_pdf(
                 payload,

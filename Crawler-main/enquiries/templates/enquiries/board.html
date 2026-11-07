@@ -16,6 +16,52 @@
   .enquiry-action-card:hover {
     box-shadow: 0 4px 12px rgba(0,0,0,0.05);
   }
+  /* Follow-up column on the live enquiries table */
+  .fu-cell { min-width: 170px; }
+  .fu-block { display: flex; flex-direction: column; gap: 4px; line-height: 1.2; }
+  .fu-head { display: flex; align-items: center; gap: 8px; }
+  .fu-steps { display: inline-flex; gap: 3px; }
+  .fu-step { width: 14px; height: 4px; border-radius: 2px; background: #e2e8f0; }
+  .fu-step.is-done { background: var(--accent-blue, #2563eb); }
+  .fu-count { font-size: 0.8rem; font-weight: 600; color: var(--brand-text, #0f172a); font-variant-numeric: tabular-nums; }
+  .fu-of { color: var(--brand-muted, #64748b); font-weight: 500; }
+  .fu-tag {
+    font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #0e7490; background: #ecfeff; border: 1px solid #cffafe; border-radius: 4px; padding: 1px 5px;
+  }
+  .fu-meta { font-size: 0.75rem; color: var(--brand-muted, #64748b); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .fu-foot { display: flex; align-items: center; gap: 6px; }
+  .fu-chip {
+    display: inline-flex; align-items: center; font-size: 0.72rem; font-weight: 500;
+    padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .fu-chip--overdue { background: #fef2f2; color: #dc2626; }
+  .fu-chip--today { background: #fffbeb; color: #b45309; }
+  .fu-chip--later { background: #eff6ff; color: #2563eb; }
+  .fu-chip--muted { background: #f1f5f9; color: var(--brand-muted, #64748b); }
+  .fu-toggle { display: inline; margin: 0; }
+  .fu-toggle-btn {
+    display: inline-flex; align-items: center; gap: 3px; height: 22px; min-width: 22px; padding: 0 5px;
+    font-size: 0.72rem; color: var(--brand-muted, #64748b); background: transparent;
+    border: 1px solid var(--brand-border, rgba(0,0,0,0.08)); border-radius: 6px; cursor: pointer;
+  }
+  .fu-toggle-btn:hover { color: var(--brand-text, #0f172a); background: #f8fafc; }
+  .fu-toggle-btn.is-paused { color: #b45309; border-color: #fde68a; background: #fffbeb; }
+  .fu-empty { font-size: 0.75rem; color: #94a3b8; }
+  .fu-btn-blocked, .fu-btn-blocked:hover, .fu-btn-blocked:focus { color: #cbd5e1; cursor: not-allowed; background: #f8fafc; }
+  /* Payment and automatic customer emails (status column) */
+  .order-track { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; min-width: 150px; }
+  .order-track-payment > summary { list-style: none; cursor: pointer; display: inline-block; }
+  .order-track-payment > summary::-webkit-details-marker { display: none; }
+  .order-chip { font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .order-chip--warn { background: #fffbeb; color: #b45309; }
+  .order-chip--alert { background: #fef2f2; color: #dc2626; }
+  .order-chip--ok { background: #f0fdf4; color: #15803d; }
+  .order-track-form { display: grid; gap: 3px; margin-top: 6px; padding: 8px; max-width: 200px;
+    border: 1px solid var(--brand-border, rgba(0,0,0,0.08)); border-radius: 8px; background: #fff; }
+  .order-track-mail { font-size: 0.72rem; color: var(--brand-muted, #64748b); }
+  .order-track-mail[data-status-email-state="skipped"],
+  .order-track-mail[data-status-email-state="failed"] { color: #b45309; }
   .gmail-ai-leads-scroll {
     max-height: 420px;
     overflow-y: auto;
@@ -96,6 +142,14 @@
               Create
             </button>
           </div>
+          <div class="row g-2 mb-2">
+            <div class="col-sm-6">
+              <input type="text" name="customer_name" class="form-control form-control-sm" maxlength="255" placeholder="Customer name (optional)" />
+            </div>
+            <div class="col-sm-6">
+              <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email (optional)" />
+            </div>
+          </div>
           <div id="createSheetResult" class="small text-muted"></div>
         </form>
     </div>
@@ -123,6 +177,12 @@
             </div>
             <div class="col-sm-2">
                 <button class="btn btn-primary btn-sm w-100" type="submit">Upload</button>
+            </div>
+            <div class="col-sm-5">
+                <input type="text" name="customer_name" class="form-control form-control-sm" maxlength="255" placeholder="Customer name (optional)" />
+            </div>
+            <div class="col-sm-5">
+                <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email (optional)" />
             </div>
           </div>
         </form>
@@ -236,6 +296,16 @@
           </select>
         </div>
 
+        <!-- Payment Filter (accepted / converted orders) -->
+        <div class="d-flex align-items-center gap-2">
+          <label for="paymentFilter" class="small text-muted mb-0">Payment</label>
+          <select id="paymentFilter" name="payment" class="form-select form-select-sm" style="width: auto;">
+            <option value="">All</option>
+            <option value="unpaid"{% if selected_payment == 'unpaid' %} selected{% endif %}>Accepted, payment pending</option>
+            <option value="paid"{% if selected_payment == 'paid' %} selected{% endif %}>Paid (converted)</option>
+          </select>
+        </div>
+
         <div class="input-group input-group-sm" style="width: 300px;">
           <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
           <input type="search" class="form-control border-start-0" placeholder="Search project or customer..." name="q" value="{{ search_query|default:'' }}">
@@ -260,6 +330,7 @@
           <th>Status</th>
           <th>Assigned To</th>
           <th>Received</th>
+          <th>Follow-up</th>
           <th class="text-end">Tools</th>
         </tr>
       </thead>
@@ -285,8 +356,9 @@
             >
                 {{ enquiry.status|upper }}
             </span>
-            {% if enquiry.status == 'accepted' or enquiry.status == 'converted' %}
-              <div class="form-check form-switch mt-2 mb-1">
+            {% if enquiry.status == 'converted' %}
+              {# Orders become Converted only through “Mark as paid”; this switch only undoes a conversion. #}
+              <div class="form-check form-switch mt-2 mb-1" title="Turn off to undo the conversion (payment goes back to pending).">
                 <input
                   class="form-check-input"
                   type="checkbox"
@@ -316,11 +388,109 @@
                 </button>
               </div>
             {% endif %}
+            <div class="order-track" data-order-tracking="{{ enquiry.enquiry_id }}">
+              {% if enquiry.payment and enquiry.status == 'converted' %}
+              <span class="order-chip order-chip--ok" data-payment-status="paid"
+                    title="{% if enquiry.payment.reference %}Ref: {{ enquiry.payment.reference }}{% endif %}">Paid{% if enquiry.payment.paid_on %} · {{ enquiry.payment.paid_on|date:'d M Y' }}{% endif %}</span>
+              {% elif enquiry.payment %}
+              <details class="order-track-payment" data-payment-status="{{ enquiry.payment.status }}">
+                <summary class="order-chip order-chip--{% if enquiry.payment.status == 'paid' %}ok{% elif enquiry.payment.overdue %}alert{% else %}warn{% endif %}">
+                  {{ enquiry.payment.label }}{% if enquiry.payment.amount %} · {{ enquiry.payment.amount }} received{% endif %}{% if enquiry.payment.due and enquiry.payment.status != 'paid' %} · due {{ enquiry.payment.due|date:'d M' }}{% if enquiry.payment.overdue %} (overdue){% endif %}{% endif %}
+                </summary>
+                <form method="post" class="order-track-form">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="update_payment">
+                  <input type="hidden" name="enquiry_id" value="{{ enquiry.enquiry_id }}">
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <label class="small text-muted" for="payStatus{{ enquiry.enquiry_id }}">Payment</label>
+                  <select id="payStatus{{ enquiry.enquiry_id }}" name="payment_status" class="form-select form-select-sm">
+                    {% for value, label in payment_status_choices %}
+                    <option value="{{ value }}"{% if enquiry.payment.status == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <label class="small text-muted" for="payAmount{{ enquiry.enquiry_id }}">Amount received</label>
+                  <input id="payAmount{{ enquiry.enquiry_id }}" type="number" step="0.01" min="0" name="payment_amount_received" class="form-control form-control-sm" value="{{ enquiry.payment.amount|default_if_none:'' }}">
+                  <label class="small text-muted" for="payDue{{ enquiry.enquiry_id }}">Payment due on</label>
+                  <input id="payDue{{ enquiry.enquiry_id }}" type="date" name="payment_due_on" class="form-control form-control-sm" value="{{ enquiry.payment.due|date:'Y-m-d' }}">
+                  <label class="small text-muted" for="payPaidOn{{ enquiry.enquiry_id }}">Paid on (when Paid)</label>
+                  <input id="payPaidOn{{ enquiry.enquiry_id }}" type="date" name="payment_paid_on" class="form-control form-control-sm">
+                  <label class="small text-muted" for="payRef{{ enquiry.enquiry_id }}">Payment reference (UTR / cheque no.)</label>
+                  <input id="payRef{{ enquiry.enquiry_id }}" type="text" maxlength="120" name="payment_reference" class="form-control form-control-sm" value="{{ enquiry.payment.reference|default:'' }}">
+                  <div class="small text-muted">Choosing “Paid” marks the payment as received and changes the status to Converted. This is the only way to convert an order.</div>
+                  <button type="submit" class="btn btn-sm btn-primary mt-1">Save payment</button>
+                </form>
+              </details>
+              {% endif %}
+              {% for mail in enquiry.status_emails %}
+              <div class="order-track-mail" data-status-email="{{ mail.kind }}" data-status-email-state="{{ mail.status }}">
+                {% if mail.status == 'sent' %}
+                  <i class="bi bi-envelope-check"></i> {{ mail.label }} sent {{ mail.when|date:'d M' }}
+                {% else %}
+                  <i class="bi bi-envelope-exclamation"></i>
+                  {{ mail.label }}: {% if mail.status == 'dry_run' %}test mode, not sent{% else %}not sent{% endif %}
+                  {% if mail.note and mail.status != 'dry_run' %}<span class="text-muted">({{ mail.note }})</span>{% endif %}
+                  {% if mail.can_retry %}
+                  <form method="post" class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="retry_status_email">
+                    <input type="hidden" name="enquiry_id" value="{{ enquiry.enquiry_id }}">
+                    <input type="hidden" name="kind" value="{{ mail.kind }}">
+                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                    <button type="submit" class="btn btn-link btn-sm p-0 align-baseline">Retry</button>
+                  </form>
+                  {% endif %}
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
           </td>
           <td>
              <div class="small text-muted"><i class="bi bi-person me-1"></i>{{ enquiry.assigned_to|default:'Unassigned' }}</div>
           </td>
           <td>{{ enquiry.received_at_dt|date:"d M Y"|default:'—' }}</td>
+          <td class="fu-cell">
+            {% with fu=enquiry.follow_up %}
+            {% if fu %}
+            <div class="fu-block" data-last-follow-up
+                 title="Followed up {{ fu.count }} time{{ fu.count|pluralize }}, last on {{ fu.last_sent_at|date:'d M Y' }}{% if fu.last_sent_by %} by {{ fu.last_sent_by }}{% endif %}{% if fu.last_auto %} (sent automatically){% endif %}">
+              <div class="fu-head">
+                <span class="fu-steps" aria-hidden="true">{% for done in fu.steps %}<span class="fu-step{% if done %} is-done{% endif %}"></span>{% endfor %}</span>
+                <span class="fu-count">{{ fu.count }}<span class="fu-of">/{{ fu.limit }}</span></span>
+                {% if fu.last_auto %}<span class="fu-tag" data-auto-follow-up>Auto</span>{% endif %}
+              </div>
+              <div class="fu-meta">Last sent {{ fu.last_sent_at|date:'d M Y' }}</div>
+              <div class="fu-foot">
+                {% if fu.due %}
+                  <span class="fu-chip fu-chip--{{ fu.due_state }}" data-follow-up-due="{{ fu.due_state }}">
+                    {% if fu.due_state == 'overdue' %}Overdue · {{ fu.due|date:'d M' }}{% elif fu.due_state == 'today' %}Due today{% else %}Next · {{ fu.due|date:'d M' }}{% endif %}
+                  </span>
+                {% elif fu.due_state == 'limit' %}
+                  <span class="fu-chip fu-chip--muted" data-follow-up-state="limit" title="All follow-ups sent. Please call the customer.">Completed</span>
+                {% elif fu.due_state == 'payment' %}
+                  <span class="fu-chip fu-chip--today" data-follow-up-state="payment" title="Order accepted. Send a “Payment pending” follow-up to start payment reminders.">Payment follow-up</span>
+                {% elif fu.due_state == 'closed' %}
+                  <span class="fu-chip fu-chip--muted" data-follow-up-state="closed" title="Enquiry is {{ enquiry.status }}">Stopped</span>
+                {% else %}
+                  <span class="fu-chip fu-chip--muted">No reminder</span>
+                {% endif %}
+                {% if fu.due_state != 'limit' and fu.due_state != 'closed' %}
+                <form method="post" action="{% url 'enquiries:toggle_auto_follow_up' enquiry.enquiry_id %}" class="fu-toggle" data-auto-follow-up-toggle>
+                  {% csrf_token %}
+                  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                  <button type="submit" class="fu-toggle-btn{% if enquiry.auto_paused %} is-paused{% endif %}"
+                          title="{% if enquiry.auto_paused %}Automatic follow-ups paused. Click to resume{% else %}Automatic follow-ups on. Click to pause{% endif %}"
+                          aria-label="{% if enquiry.auto_paused %}Resume{% else %}Pause{% endif %} automatic follow-ups">
+                    {% if enquiry.auto_paused %}<i class="bi bi-play-fill"></i><span>Paused</span>{% else %}<i class="bi bi-pause-fill"></i>{% endif %}
+                  </button>
+                </form>
+                {% endif %}
+              </div>
+            </div>
+            {% else %}
+            <span class="fu-empty">Not followed up</span>
+            {% endif %}
+            {% endwith %}
+          </td>
           <td class="text-end">
             <div class="btn-group enquiry-inline-actions">
                 <a
@@ -329,19 +499,30 @@
                   title="{% if enquiry.primary_pdf_url %}Open Enquiry PDF{% else %}Open Enquiry{% endif %}"
                   {% if enquiry.primary_pdf_url %}target="_blank" rel="noopener"{% endif %}
                 ><i class="bi bi-eye"></i></a>
+                {% if enquiry.follow_up_blocked %}
+                <button
+                  type="button"
+                  class="btn btn-sm btn-light border fu-btn-blocked"
+                  title="Follow-up not available: {{ enquiry.follow_up_blocked }}"
+                  aria-label="Follow-up not available: {{ enquiry.follow_up_blocked }}"
+                  aria-disabled="true"
+                  data-follow-up-blocked
+                ><i class="bi bi-reply"></i></button>
+                {% else %}
                 <a
                   href="{% url 'enquiries:follow_up' enquiry.enquiry_id %}"
                   class="btn btn-sm btn-light border"
                   title="Follow-up"
                   onclick="window.setAppLoading && window.setAppLoading('Opening follow-up...');"
                 ><i class="bi bi-reply"></i></a>
+                {% endif %}
                 <a href="{% url 'enquiries:preview' enquiry.enquiry_id %}" class="btn btn-sm btn-light border" title="Generate Link"><i class="bi bi-link-45deg"></i></a>
                 <button type="button" class="btn btn-sm btn-light border text-danger" data-enquiry-delete data-enquiry-id="{{ enquiry.enquiry_id }}" data-delete-url="{% url 'enquiries:delete_enquiry' enquiry.enquiry_id %}"><i class="bi bi-trash"></i></button>
             </div>
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="7" class="text-center py-5 text-muted">No active enquiries found.</td></tr>
+        <tr><td colspan="8" class="text-center py-5 text-muted">No active enquiries found.</td></tr>
         {% endfor %}
       </tbody>
     </table>

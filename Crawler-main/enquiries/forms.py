@@ -614,6 +614,8 @@ class PDFUploadForm(forms.Form):
         label="Upload PDF",
         widget=forms.ClearableFileInput(attrs={"accept": "application/pdf"}),
     )
+    customer_name = forms.CharField(label="Customer name", max_length=255, required=False)
+    customer_email = forms.EmailField(label="Customer email", required=False)
 
     def clean_pdf(self):
         pdf_file = self.cleaned_data["pdf"]

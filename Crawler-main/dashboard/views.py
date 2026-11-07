@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import queue
+import secrets
 import threading
 import time
 from datetime import datetime, timedelta
@@ -26,9 +27,9 @@ from django.views.decorators.http import require_http_methods
 from django.utils.dateparse import parse_date
 from django.urls import reverse, NoReverseMatch
 from allauth.socialaccount.models import SocialAccount
-from django.contrib.auth import logout
+from django.contrib.auth import get_user_model, logout
 import requests
-from django.db import close_old_connections, transaction
+from django.db import IntegrityError, close_old_connections, transaction
 from django.db.models import Count
 from django.utils import timezone
 
@@ -38,6 +39,13 @@ from .gmail_service import GmailService, GmailAPIError
 from .priority_engine import PriorityEngine
 from .automation import AutomationService
 from .forms import ComposeReplyForm
+from .follow_up_templates import (
+    DEFAULT_STAGE as DEFAULT_FOLLOW_UP_STAGE,
+    STAGE_CHOICES as FOLLOW_UP_STAGE_CHOICES,
+    STAGE_KEYS as FOLLOW_UP_STAGE_KEYS,
+    all_stage_bodies,
+    build_follow_up_body,
+)
 from .ai_service import AIReplyService, AIReplyRequest, AIServiceError
 from . import realtime
 from .models import (
@@ -48,7 +56,7 @@ from .models import (
     KeywordPriorityMapping,
 )
 
-from enquiries.models import FollowUpSent
+from enquiries.models import EnquiryContact, FollowUpSent
 
 
 def _latest_email_record(user, email_id: str):
@@ -1680,44 +1688,121 @@ def _follow_up_context_for(request, *message_ids):
     return context
 
 
-def _follow_up_recipient(context, message):
-    """Pick who an enquiry follow-up goes to.
+def _follow_up_recipient(context):
+    """Return the customer address confirmed for an enquiry follow-up, or '' if it is not valid.
 
-    Returns (address, is_fallback). Uses the customer email saved on the enquiry when it is a
-    valid address; otherwise falls back to the Gmail sender and flags it so the page can warn.
+    There is deliberately no fallback to a guessed address: without a confirmed customer
+    email the follow-up cannot be sent.
     """
-    saved = str((context or {}).get('customer_email') or '').strip()
-    if saved:
-        try:
-            validate_email(saved)
-            return saved, False
-        except ValidationError:
-            pass
-    sender = (
-        message.get('reply_to') or message.get('sender') or message.get('from') or ''
-    ).strip()
-    return sender, True
-
-
-def _record_follow_up_sent(request, *, message_id, gmail_message_id, body, subject, recipient=''):
-    """Persist a manual follow-up record when one was initiated from the enquiries board."""
-    context = _follow_up_context_for(request, message_id, gmail_message_id)
-    if not context:
-        return
-    request.session.pop('follow_up_context', None)
+    address = str((context or {}).get('customer_email') or '').strip()
+    if not address:
+        return ''
     try:
-        FollowUpSent.objects.create(
-            enquiry_id=str(context.get('enquiry_id') or message_id),
-            customer_email=recipient or context.get('customer_email') or '',
-            customer_name=context.get('customer_name') or '',
-            subject=subject or context.get('subject') or '',
-            body=body or '',
-            gmail_message_id=gmail_message_id or '',
-            sent_by=request.user,
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Failed to record follow-up sent for enquiry %s: %s",
-                       context.get('enquiry_id'), exc)
+        validate_email(address)
+    except ValidationError:
+        return ''
+    return address
+
+
+def _follow_up_default_body(context, user=None, stage=DEFAULT_FOLLOW_UP_STAGE):
+    return build_follow_up_body(
+        stage,
+        reference=(context or {}).get('enquiry_id') or '',
+        subject=(context or {}).get('subject') or '',
+        user=user,
+    )
+
+
+def _parse_next_follow_up(raw):
+    """Return (date or None, error message or '') for the 'next follow-up' date on the compose form."""
+    raw = (raw or '').strip()
+    if not raw:
+        return None, ''
+    value = parse_date(raw)
+    if value is None:
+        return None, "Please enter a valid next follow-up date."
+    if value < timezone.localdate():
+        return None, "The next follow-up date cannot be in the past."
+    return value, ''
+
+
+def _auto_follow_up_plan(context, user):
+    """What automation would send after this manual follow-up, per stage.
+
+    Returns {'this_attempt', 'limit', 'paused', 'enabled', 'stages': {stage: [{'attempt', 'when', 'body'}]}}.
+    """
+    enquiry_id = str((context or {}).get('enquiry_id') or '')
+    sent_count = FollowUpSent.objects.filter(enquiry_id=enquiry_id, status=FollowUpSent.STATUS_SENT).count()
+    this_attempt = sent_count + 1
+    limit = int(getattr(settings, 'FOLLOW_UP_MAX_COUNT', 4) or 0)
+    gaps = list(getattr(settings, 'FOLLOW_UP_AUTO_GAP_DAYS', []) or [7])
+    later_attempts = list(range(this_attempt + 1, limit + 1)) if limit else []
+    stages = {}
+    for key, _label in FOLLOW_UP_STAGE_CHOICES:
+        plan = []
+        for attempt in later_attempts:
+            if attempt == this_attempt + 1:
+                when = "On the “Next follow-up on” date"
+            else:
+                gap = gaps[attempt - 2] if attempt - 2 < len(gaps) else gaps[-1]
+                when = f"{gap} days after follow-up #{attempt - 1}"
+            plan.append({
+                'attempt': attempt,
+                'when': when,
+                'final': attempt == limit,
+                'body': build_follow_up_body(
+                    key, attempt=attempt, reference=enquiry_id,
+                    subject=(context or {}).get('subject') or '', user=user,
+                ),
+            })
+        stages[key] = plan
+    sender_username = (getattr(settings, 'FOLLOW_UP_AUTO_SENDER', '') or '').strip()
+    sender = get_user_model().objects.filter(username=sender_username).first() if sender_username else None
+    return {
+        'this_attempt': this_attempt,
+        'limit': limit,
+        'sender': (sender.email or sender.username) if sender else '',
+        'paused': EnquiryContact.objects.filter(enquiry_id=enquiry_id, auto_follow_up_paused=True).exists(),
+        'enabled': bool(getattr(settings, 'FOLLOW_UP_AUTO_ENABLED', False)),
+        'stages': stages,
+    }
+
+
+def _save_auto_follow_up_choice(enquiry_id, enabled, user):
+    """Remember on the enquiry whether automation may continue after this manual follow-up."""
+    contact, _ = EnquiryContact.objects.get_or_create(enquiry_id=str(enquiry_id))
+    if contact.auto_follow_up_paused == (not enabled):
+        return
+    contact.auto_follow_up_paused = not enabled
+    contact.updated_by = user
+    contact.save(update_fields=['auto_follow_up_paused', 'updated_by', 'updated_at'])
+
+
+def _email_address(value):
+    from email.utils import parseaddr
+    return (parseaddr(value or '')[1] or '').strip().lower()
+
+
+def _start_follow_up_record(request, context, *, recipient, subject, body, stage='', next_follow_up_on=None):
+    """Create the Pending history row. Returns None if this form was already submitted."""
+    try:
+        with transaction.atomic():
+            return FollowUpSent.objects.create(
+                enquiry_id=str(context.get('enquiry_id') or ''),
+                customer_email=recipient,
+                customer_name=context.get('customer_name') or '',
+                subject=subject or context.get('subject') or '',
+                body=body or '',
+                gmail_message_id=context.get('gmail_message_id') or '',
+                gmail_thread_id=context.get('gmail_thread_id') or '',
+                sent_by=request.user,
+                status=FollowUpSent.STATUS_PENDING,
+                submission_token=context.get('token') or None,
+                stage=stage or '',
+                next_follow_up_on=next_follow_up_on,
+            )
+    except IntegrityError:
+        return None
 
 
 @login_required
@@ -1741,11 +1826,43 @@ def compose_email(request, email_id):
 
     conversation = thread_messages or [message]
 
-    latest_with_attachments = next(
+    # Follow-ups started from the enquiries board go to the confirmed customer address.
+    follow_up_context = _follow_up_context_for(request, email_id, message.get('id'))
+    follow_up_recipient = _follow_up_recipient(follow_up_context) if follow_up_context else ''
+
+    own_addresses = set()
+    if follow_up_context:
+        try:
+            own_addresses = {a.lower() for a in gmail_service.own_addresses()}
+        except Exception:  # profile lookup is best effort
+            own_addresses = {(request.user.email or '').lower()} - {''}
+
+    def _is_pdf(meta):
+        return 'pdf' in (meta.get('mimeType') or '').lower() or (meta.get('filename') or '').lower().endswith('.pdf')
+
+    our_pdf_message = None
+    if follow_up_context:
+        # Re-send our own quote, not the customer's files: the latest message we sent with a PDF.
+        our_pdf_message = next(
+            (msg for msg in reversed(conversation)
+             if _email_address(msg.get('sender')) in own_addresses and any(_is_pdf(a) for a in msg.get('attachments') or [])),
+            None,
+        )
+
+    latest_with_attachments = our_pdf_message or next(
         (msg for msg in reversed(conversation) if msg.get('attachments')),
         None,
     )
     attachment_metadata = latest_with_attachments.get('attachments', []) if latest_with_attachments else []
+
+    # Step 9: warn if the customer's latest message has not been answered yet.
+    customer_waiting, customer_waiting_since = False, None
+    if follow_up_context and conversation:
+        last_message = conversation[-1]
+        last_sender = _email_address(last_message.get('sender'))
+        if last_sender and own_addresses and last_sender not in own_addresses:
+            customer_waiting = True
+            customer_waiting_since = last_message.get('parsed_date')
 
     attachment_lookup = {}
     attachment_choices = []
@@ -1767,19 +1884,50 @@ def compose_email(request, email_id):
     if subject and not subject.lower().startswith('re:'):
         subject = f"Re: {subject}"
 
+    initial = {'subject': subject}
+    # Stage suggested by the enquiry (payment pending for accepted orders).
+    suggested_stage = (follow_up_context or {}).get('stage') or DEFAULT_FOLLOW_UP_STAGE
+    if suggested_stage not in FOLLOW_UP_STAGE_KEYS:
+        suggested_stage = DEFAULT_FOLLOW_UP_STAGE
+    if follow_up_context:
+        initial['body'] = _follow_up_default_body(follow_up_context, user=request.user, stage=suggested_stage)
+        # Tick only our own quote PDFs; never re-send the customer's files by default.
+        initial['include_attachments'] = [
+            token for token, meta in attachment_lookup.items()
+            if our_pdf_message is not None and _is_pdf(meta)
+        ]
+
+    follow_up_stage = suggested_stage
+    next_follow_up_on, next_follow_up_error = None, ''
+    auto_follow_up_choice = None  # None = not posted yet; True/False = the employee's choice
+    if request.method == 'POST' and follow_up_context:
+        follow_up_stage = request.POST.get('follow_up_stage') or DEFAULT_FOLLOW_UP_STAGE
+        if follow_up_stage not in FOLLOW_UP_STAGE_KEYS:
+            follow_up_stage = DEFAULT_FOLLOW_UP_STAGE
+        next_follow_up_on, next_follow_up_error = _parse_next_follow_up(request.POST.get('next_follow_up_on'))
+        if request.POST.get('auto_follow_up_shown') == '1':
+            auto_follow_up_choice = request.POST.get('auto_follow_up') == '1'
+        if auto_follow_up_choice and not next_follow_up_on and not next_follow_up_error:
+            next_follow_up_error = "Choose a “Next follow-up on” date so automatic follow-ups know when to start."
+
+    if request.method == 'POST':
+        posted_token = (request.POST.get('follow_up_token') or '').strip()
+        expected_token = (follow_up_context or {}).get('token') or ''
+        if (posted_token or follow_up_context) and posted_token != expected_token:
+            messages.warning(request, "This follow-up was already submitted, so it was not sent again.")
+            return redirect('enquiries:board')
+
     form = ComposeReplyForm(
         request.POST or None,
         attachments=attachment_choices,
-        initial={'subject': subject},
+        initial=initial,
     )
 
-    # Follow-ups from the enquiries board go to the customer saved on the enquiry.
-    follow_up_context = _follow_up_context_for(request, email_id, message.get('id'))
-    follow_up_recipient, follow_up_recipient_is_fallback = (
-        _follow_up_recipient(follow_up_context, message) if follow_up_context else ('', False)
-    )
-
-    if request.method == 'POST' and form.is_valid():
+    if request.method == 'POST' and follow_up_context and not follow_up_recipient:
+        messages.error(request, "No confirmed customer email for this follow-up, so it was not sent.")
+    elif request.method == 'POST' and follow_up_context and next_follow_up_error:
+        messages.error(request, f"{next_follow_up_error} The follow-up was not sent.")
+    elif request.method == 'POST' and form.is_valid():
         selected_tokens = form.cleaned_data.get('include_attachments') or []
         attachment_payloads = []
         for token in selected_tokens:
@@ -1806,25 +1954,67 @@ def compose_email(request, email_id):
                 'content': content,
             })
 
-        try:
-            gmail_service.send_reply(
-                original_message=message,
-                body=form.cleaned_data['body'],
-                attachments=attachment_payloads,
-                subject=form.cleaned_data.get('subject'),
-                to=follow_up_recipient or None,
-            )
-        except GmailAPIError as exc:
-            messages.error(request, str(exc))
-        else:
-            if follow_up_recipient:
-                messages.success(request, f"Follow-up sent to {follow_up_recipient}.")
+        if not follow_up_context:
+            try:
+                gmail_service.send_reply(
+                    original_message=message,
+                    body=form.cleaned_data['body'],
+                    attachments=attachment_payloads,
+                    subject=form.cleaned_data.get('subject'),
+                )
+            except GmailAPIError as exc:
+                messages.error(request, str(exc))
             else:
                 messages.success(request, "Reply sent successfully.")
-            _record_follow_up_sent(request, message_id=email_id, gmail_message_id=message.get('id'),
-                                   body=form.cleaned_data['body'], subject=form.cleaned_data.get('subject') or '',
-                                   recipient=follow_up_recipient)
-            return redirect('gmail_ai')
+                return redirect('gmail_ai')
+        else:
+            record = _start_follow_up_record(
+                request,
+                follow_up_context,
+                recipient=follow_up_recipient,
+                subject=form.cleaned_data.get('subject') or '',
+                body=form.cleaned_data['body'],
+                stage=follow_up_stage,
+                next_follow_up_on=next_follow_up_on,
+            )
+            if record is None:
+                messages.warning(request, "This follow-up was already submitted, so it was not sent again.")
+                return redirect('enquiries:board')
+            try:
+                sent = gmail_service.send_reply(
+                    original_message=message,
+                    body=form.cleaned_data['body'],
+                    attachments=attachment_payloads,
+                    subject=form.cleaned_data.get('subject'),
+                    to=follow_up_recipient,
+                )
+            except Exception as exc:  # Gmail API or network failure
+                logger.warning("Follow-up send failed for enquiry %s: %s", record.enquiry_id, exc)
+                record.status = FollowUpSent.STATUS_FAILED
+                record.error_message = str(exc)[:1000]
+                record.save(update_fields=['status', 'error_message'])
+                # New token so the employee can retry from the same page.
+                follow_up_context['token'] = secrets.token_urlsafe(24)
+                request.session.modified = True
+                detail = str(exc) if isinstance(exc, GmailAPIError) else "a network or Gmail error occurred"
+                messages.error(request, f"Follow-up was not sent: {detail}. Nothing was delivered; you can try again.")
+            else:
+                record.status = FollowUpSent.STATUS_SENT
+                record.gmail_message_id = (sent or {}).get('id') or record.gmail_message_id
+                record.gmail_thread_id = (sent or {}).get('threadId') or record.gmail_thread_id
+                record.sent_at = timezone.now()
+                record.save(update_fields=['status', 'gmail_message_id', 'gmail_thread_id', 'sent_at'])
+                if auto_follow_up_choice is not None:
+                    _save_auto_follow_up_choice(record.enquiry_id, auto_follow_up_choice, request.user)
+                request.session.pop('follow_up_context', None)
+                messages.success(
+                    request,
+                    f"Follow-up sent to {follow_up_recipient} and recorded for enquiry #{record.enquiry_id}."
+                    + (" Next follow-ups will be sent automatically." if auto_follow_up_choice
+                       else " Automatic follow-ups are off for this enquiry." if auto_follow_up_choice is False
+                       else ""),
+                )
+                return redirect('enquiries:board')
 
     conversation_for_template = []
     for msg in conversation:
@@ -1863,8 +2053,30 @@ def compose_email(request, email_id):
         'ai_reply_url': reverse('dashboard:generate_ai_reply', args=[email_record.email_id]),
         'follow_up_context': follow_up_context,
         'follow_up_recipient': follow_up_recipient,
-        'follow_up_recipient_is_fallback': follow_up_recipient_is_fallback,
     }
+    if follow_up_context:
+        posted_next = (request.POST.get('next_follow_up_on') or '').strip() if request.method == 'POST' else ''
+        context.update({
+            'follow_up_stage_choices': FOLLOW_UP_STAGE_CHOICES,
+            'follow_up_stage': follow_up_stage,
+            'follow_up_stage_bodies': all_stage_bodies(
+                reference=follow_up_context.get('enquiry_id') or '',
+                subject=follow_up_context.get('subject') or '',
+                user=request.user,
+            ),
+            'next_follow_up_default': posted_next or (
+                timezone.localdate() + timedelta(days=getattr(settings, 'FOLLOW_UP_DEFAULT_GAP_DAYS', 2))
+            ).isoformat(),
+            'next_follow_up_min': timezone.localdate().isoformat(),
+            'customer_waiting': customer_waiting,
+            'customer_waiting_since': customer_waiting_since,
+            'quote_attachment_from_us': our_pdf_message is not None,
+        })
+        auto_plan = _auto_follow_up_plan(follow_up_context, request.user)
+        context['auto_plan'] = auto_plan
+        context['auto_follow_up_checked'] = (
+            auto_follow_up_choice if auto_follow_up_choice is not None else not auto_plan['paused']
+        )
 
     return render(request, 'dashboard/compose_email.html', context)
 
@@ -1934,15 +2146,26 @@ def generate_ai_reply_api(request, email_id):
 
     summary = _build_thread_summary(thread_messages or [message])
 
+    # On a follow-up started from the enquiries board, draft a follow-up rather than a generic reply.
+    follow_up_context = _follow_up_context_for(request, email_id, message.get('id'))
+    if follow_up_context:
+        ai_request = AIReplyRequest(
+            thread_summary=summary,
+            tone=tone,
+            purpose='follow_up',
+            customer_name=follow_up_context.get('customer_name') or '',
+            enquiry_subject=follow_up_context.get('subject') or '',
+        )
+    else:
+        ai_request = AIReplyRequest(thread_summary=summary, tone=tone)
+
     try:
         ai_service = AIReplyService()
-        reply_text = ai_service.generate_reply(
-            AIReplyRequest(thread_summary=summary, tone=tone)
-        )
+        reply_text = ai_service.generate_reply(ai_request)
     except AIServiceError as exc:
         return JsonResponse({'error': str(exc)}, status=400)
 
-    return JsonResponse({'reply': reply_text})
+    return JsonResponse({'reply': reply_text, 'is_sample': bool(ai_service.last_reply_was_sample)})
 
 
 @login_required

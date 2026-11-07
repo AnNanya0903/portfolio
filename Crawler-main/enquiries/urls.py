@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import api_views, views
 from magicwand.access import require_service_access
 
 app_name = "enquiries"
@@ -9,6 +9,10 @@ _enquiries = require_service_access("enquiries")
 
 urlpatterns = [
     path("", _enquiries(views.board), name="board"),
+    # Stage 2: called by n8n with the X-N8N-Token header (no login session).
+    path("api/auto-follow-ups/due/", api_views.due, name="auto_follow_up_due"),
+    path("api/auto-follow-ups/<str:enquiry_id>/send/", api_views.send, name="auto_follow_up_send"),
+    path("api/customer-emails/run/", api_views.run_customer_emails, name="customer_emails_run"),
     path("gmail-ai-leads/", _enquiries(views.gmail_ai_leads), name="gmail_ai_leads"),
     path("google-sheet/create/", _enquiries(views.create_google_sheet), name="create_google_sheet"),
     path("google-sheet/import/", _enquiries(views.import_google_sheet), name="import_google_sheet"),
@@ -16,6 +20,11 @@ urlpatterns = [
     path("summary/", _enquiries(views.summary), name="summary"),
     path("gmail-queue/", _enquiries(views.gmail_queue), name="gmail_queue"),
     path("<str:enquiry_id>/follow-up/", _enquiries(views.follow_up), name="follow_up"),
+    path(
+        "<str:enquiry_id>/auto-follow-up/toggle/",
+        _enquiries(views.toggle_auto_follow_up),
+        name="toggle_auto_follow_up",
+    ),
     path("<str:enquiry_id>/preview/", _enquiries(views.preview), name="preview"),
     path("share/", views.share, name="share"),
     path("share/action/", views.share_action, name="share_action"),
