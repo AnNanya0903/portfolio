@@ -2065,7 +2065,7 @@ def compose_email(request, email_id):
                 user=request.user,
             ),
             'next_follow_up_default': posted_next or (
-                timezone.localdate() + timedelta(days=getattr(settings, 'FOLLOW_UP_DEFAULT_GAP_DAYS', 2))
+                timezone.localdate() + timedelta(days=getattr(settings, 'FOLLOW_UP_DEFAULT_GAP_DAYS', 3))
             ).isoformat(),
             'next_follow_up_min': timezone.localdate().isoformat(),
             'customer_waiting': customer_waiting,

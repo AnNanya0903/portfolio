@@ -260,7 +260,7 @@ AI_REPLY_STUB_SIGNATURE = config('AI_REPLY_STUB_SIGNATURE', default="Thanks,\nMa
 # Enquiry follow-up emails
 FOLLOW_UP_CONTACT_PHONE = config('FOLLOW_UP_CONTACT_PHONE', default='')  # shown under the signature
 FOLLOW_UP_MAX_COUNT = config('FOLLOW_UP_MAX_COUNT', default=4, cast=int)  # stop after this many sent
-FOLLOW_UP_DEFAULT_GAP_DAYS = config('FOLLOW_UP_DEFAULT_GAP_DAYS', default=2, cast=int)
+FOLLOW_UP_DEFAULT_GAP_DAYS = config('FOLLOW_UP_DEFAULT_GAP_DAYS', default=3, cast=int)
 
 # Stage 2: automatic follow-ups, triggered by n8n through /enquiries/api/auto-follow-ups/...
 FOLLOW_UP_AUTO_ENABLED = config('FOLLOW_UP_AUTO_ENABLED', default=False, cast=bool)  # master on/off switch
