@@ -1,0 +1,209 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ row.customer_name|default:row.enquiry_id }} - Marketing - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}
+<style>
+  .mk-chip { display: inline-flex; align-items: center; font-size: 0.72rem; font-weight: 600;
+             padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .mk-chip--rejected { background: #fef2f2; color: #b91c1c; }
+  .mk-chip--no_response { background: #f1f5f9; color: #475569; }
+  .mk-chip--waiting { background: #fffbeb; color: #b45309; }
+  .mk-chip--ready { background: #ecfdf5; color: #047857; }
+  .mk-chip--do_not_contact { background: #f1f5f9; color: #334155; text-decoration: line-through; }
+  .mk-chip--revived { background: #eff6ff; color: #1d4ed8; }
+  .mk-facts { display: grid; grid-template-columns: minmax(120px, 40%) 1fr; gap: 6px 12px; font-size: 0.9rem; margin: 0; }
+  .mk-facts dt { color: var(--brand-muted, #64748b); font-weight: 500; }
+  .mk-facts dd { margin: 0; overflow-wrap: anywhere; }
+  .mk-muted { font-size: 0.78rem; color: var(--brand-muted, #64748b); }
+  .mk-activity { border-left: 2px solid var(--brand-border, #e2e8f0); padding: 0 0 12px 12px; margin-left: 4px; }
+  .mk-activity-text { white-space: pre-line; font-size: 0.9rem; }
+</style>
+{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'marketing:board' %}" class="mk-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Marketing</a>
+    <h2 class="page-title mb-1">{{ row.customer_name|default:"Unknown customer" }}</h2>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <span class="mk-chip mk-chip--{{ row.kind }}">{{ row.kind_label }}</span>
+      <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
+      <span class="mk-muted">Enquiry {{ row.enquiry_id }}{% if row.subject %} · {{ row.subject }}{% endif %}</span>
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-primary shadow-sm" href="{% url 'enquiries:detail' row.enquiry_id %}">
+      <i class="bi bi-box-arrow-up-right me-1"></i> Open original enquiry
+    </a>
+    {% if row.revived_enquiry_id %}
+      <a class="btn btn-primary shadow-sm" href="{% url 'enquiries:detail' row.revived_enquiry_id %}">
+        <i class="bi bi-arrow-repeat me-1"></i> Open revived enquiry {{ row.revived_enquiry_id }}
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">What was lost</h6></div>
+      <div class="card-body">
+        <dl class="mk-facts">
+          <dt>Customer email</dt><dd>{{ row.customer_email|default:"—" }}</dd>
+          <dt>Project</dt><dd>{{ row.project_name|default:"—" }}</dd>
+          <dt>Quoted price</dt><dd>{{ row.price|default:"—" }}</dd>
+          <dt>Salesperson</dt><dd>{{ row.assigned_to|default:"—" }}</dd>
+          <dt>Enquiry received</dt><dd>{{ row.received_on|date:"d M Y"|default:"—" }}</dd>
+          <dt>Lost on</dt><dd>{{ row.lost_on|date:"d M Y"|default:"—" }}</dd>
+          <dt>Follow-ups sent</dt><dd>{{ row.follow_up_count }}</dd>
+          <dt>Can contact from</dt>
+          <dd>{% if row.ready_on %}{{ row.ready_on|date:"d M Y" }}{% else %}—{% endif %}
+            <span class="mk-muted">({{ wait_days }} days after loss)</span></dd>
+          {% if row.customer_reason %}
+            <dt>Customer's reason</dt><dd>“{{ row.customer_reason }}”</dd>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Reason lost</h6></div>
+      <div class="card-body">
+        <form method="post" class="d-flex gap-2">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="set_reason">
+          <select name="lost_reason" class="form-select form-select-sm" aria-label="Reason lost">
+            <option value="">Not recorded</option>
+            {% for key, label in reason_choices %}
+              <option value="{{ key }}"{% if row.lead.lost_reason == key %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-primary btn-sm" type="submit">Save</button>
+        </form>
+        {% if row.kind == 'no_response' and not row.lead.lost_reason %}
+          <p class="mk-muted mt-2 mb-0">Shown as "Never replied" until a reason is chosen.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Win back</h6></div>
+      <div class="card-body">
+        {% if row.stage == 'revived' %}
+          <p class="mb-0">Revived as enquiry
+            <a href="{% url 'enquiries:detail' row.revived_enquiry_id %}">{{ row.revived_enquiry_id }}</a>
+            {% if row.lead.revived_at %}on {{ row.lead.revived_at|date:"d M Y" }}{% endif %}
+            {% if row.lead.revived_by %}by {{ row.lead.revived_by.get_full_name|default:row.lead.revived_by.username }}{% endif %}.
+          </p>
+        {% elif can_revive %}
+          {% if row.stage == 'waiting' %}
+            <div class="alert alert-warning py-2 small">The waiting period has not ended yet (until {{ row.ready_on|date:"d M Y" }}).
+              Revive only if the customer contacted you first.</div>
+          {% endif %}
+          <form method="post" onsubmit="return confirm('Create a new enquiry for sales from this lost enquiry?');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="revive">
+            <label for="reviveNote" class="form-label small">What did the customer say? (optional)</label>
+            <textarea id="reviveNote" name="revive_note" rows="2" class="form-control form-control-sm mb-2"
+                      placeholder="e.g. Ready to order if the price is 5% lower"></textarea>
+            <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-arrow-repeat me-1"></i> Revive as new enquiry</button>
+            <p class="mk-muted mt-2 mb-0">Creates a new enquiry linked to this one, for the same salesperson.</p>
+          </form>
+        {% endif %}
+
+        <hr>
+        <form method="post" class="d-flex align-items-center justify-content-between gap-2">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="toggle_do_not_contact">
+          <div class="small">
+            {% if row.lead.do_not_contact %}
+              <strong>Do not contact</strong> is on. Nobody should email or call this customer.
+            {% else %}
+              Turn on if the customer asked not to be contacted.
+            {% endif %}
+          </div>
+          <button class="btn btn-sm {% if row.lead.do_not_contact %}btn-outline-secondary{% else %}btn-outline-danger{% endif %} text-nowrap" type="submit">
+            {% if row.lead.do_not_contact %}Remove Do not contact{% else %}Do not contact{% endif %}
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Notes and calls</h6></div>
+      <div class="card-body">
+        <form method="post" class="mb-4">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="add_note">
+          <div class="d-flex gap-2 mb-2">
+            <select name="kind" class="form-select form-select-sm" style="width:auto;" aria-label="Type">
+              {% for key, label in note_kinds %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </div>
+          <textarea name="text" rows="3" class="form-control form-control-sm mb-2" required
+                    placeholder="e.g. Called Rahul, they bought from another supplier but are open to a new quote in March." aria-label="Note"></textarea>
+          <button class="btn btn-primary btn-sm" type="submit">Save note</button>
+        </form>
+
+        {% for item in activities %}
+          <div class="mk-activity">
+            <div class="mk-muted">
+              <strong>{{ item.get_kind_display }}</strong> ·
+              {{ item.created_at|date:"d M Y, H:i" }}
+              {% if item.created_by %}· {{ item.created_by.get_full_name|default:item.created_by.username }}{% endif %}
+            </div>
+            <div class="mk-activity-text">{{ item.text }}</div>
+          </div>
+        {% empty %}
+          <p class="mk-muted mb-0">No notes yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if campaign_emails %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Campaign emails</h6></div>
+      <div class="table-responsive">
+        <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+          <thead><tr><th>Campaign</th><th>Result</th><th>Replied</th></tr></thead>
+          <tbody>
+            {% for ce in campaign_emails %}
+              <tr>
+                <td><a href="{% url 'marketing:campaign_detail' ce.campaign_id %}">{{ ce.campaign.name }}</a>
+                  <div class="mk-muted">{{ ce.customer_email }}{% if ce.sent_at %} · {{ ce.sent_at|date:"d M Y" }}{% endif %}</div></td>
+                <td>{{ ce.get_status_display }}</td>
+                <td>{{ ce.replied_at|date:"d M Y"|default:"—" }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Follow-ups sales already sent</h6></div>
+      <div class="table-responsive">
+        <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+          <thead><tr><th>Sent</th><th>Subject</th><th>How</th><th>Result</th></tr></thead>
+          <tbody>
+            {% for fu in follow_ups %}
+              <tr>
+                <td class="text-nowrap">{{ fu.sent_at|date:"d M Y" }}</td>
+                <td>{{ fu.subject|default:"—" }}</td>
+                <td>{{ fu.get_source_display }}</td>
+                <td>{{ fu.get_status_display }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="text-center text-muted py-4">No follow-ups were sent.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

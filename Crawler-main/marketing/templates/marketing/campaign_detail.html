@@ -1,0 +1,186 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ campaign.name }} - Campaigns - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'marketing/_campaign_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'marketing:campaign_list' %}" class="mk-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Campaigns</a>
+    <h2 class="page-title mb-1">{{ campaign.name }}</h2>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <span class="mk-chip mk-chip--{{ campaign.status }}">{{ campaign.get_status_display }}</span>
+      <span class="mk-muted">Audience: {{ filter_labels|join:" · " }}</span>
+      {% if campaign.sent_at %}<span class="mk-muted">· Sent {{ campaign.sent_at|date:"d M Y, H:i" }}{% if campaign.sent_by %} by {{ campaign.sent_by.get_full_name|default:campaign.sent_by.username }}{% endif %}</span>{% endif %}
+    </div>
+  </div>
+  {% if campaign.status == 'draft' %}
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-primary shadow-sm" href="{% url 'marketing:campaign_edit' campaign.pk %}"><i class="bi bi-pencil me-1"></i> Edit</a>
+    <form method="post" action="{% url 'marketing:campaign_delete' campaign.pk %}" onsubmit="return confirm('Delete this draft?');">
+      {% csrf_token %}
+      <button class="btn btn-outline-danger shadow-sm" type="submit"><i class="bi bi-trash me-1"></i> Delete draft</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+{% if dry_run %}
+  <div class="mk-test-banner mb-4"><i class="bi bi-shield-check me-1"></i>
+    <strong>Test mode is on.</strong> Pressing Send records who would get the email, but sends nothing.
+    To send for real, set <code>MARKETING_CAMPAIGN_DRY_RUN=False</code>.</div>
+{% endif %}
+
+{% if campaign.status == 'draft' %}
+  {% if load_error %}<div class="alert alert-warning">{{ load_error }}</div>{% endif %}
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+          <h6 class="mb-0">Will get the email ({{ audience.recipients|length }})</h6>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+            <thead><tr><th>Customer</th><th>Email</th><th>Lost enquiry</th></tr></thead>
+            <tbody>
+              {% for item in audience.recipients %}
+                <tr>
+                  <td>{{ item.row.customer_name|default:"—" }}</td>
+                  <td>{{ item.email }}</td>
+                  <td><a href="{% url 'marketing:detail' item.row.enquiry_id %}">{{ item.row.enquiry_id }}</a>
+                    <div class="mk-muted">{{ item.row.kind_label }}{% if item.row.reason_label %} · {{ item.row.reason_label }}{% endif %}</div></td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="3" class="text-center text-muted py-4">Nobody is ready to receive this campaign. Try other filters.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {% if audience.skipped %}
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Left out ({{ audience.skipped|length }})</h6></div>
+        <div class="table-responsive">
+          <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+            <thead><tr><th>Customer</th><th>Lost enquiry</th><th>Why</th></tr></thead>
+            <tbody>
+              {% for item in audience.skipped %}
+                <tr>
+                  <td>{{ item.row.customer_name|default:"—" }}</td>
+                  <td><a href="{% url 'marketing:detail' item.row.enquiry_id %}">{{ item.row.enquiry_id }}</a></td>
+                  <td class="mk-muted">{{ item.reason }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="col-lg-5">
+      <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Preview</h6></div>
+        <div class="card-body">
+          {% if preview %}
+            <div class="mk-email">
+              <div class="mk-email-head">
+                <div><span class="mk-muted">To:</span> {{ preview.to }}</div>
+                <div><span class="mk-muted">Subject:</span> <strong>{{ preview.subject }}</strong></div>
+              </div>
+              <div class="mk-email-body">{{ preview.body }}</div>
+            </div>
+            <p class="mk-muted mt-2 mb-0">Each customer gets their own name and enquiry filled in.</p>
+          {% else %}
+            <p class="mk-muted mb-0">The preview appears when at least one customer will get the email.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card border-0 shadow-sm">
+        <div class="card-body">
+          {% if too_many %}
+            <div class="alert alert-warning small mb-0">{{ audience.recipients|length }} customers match, but a campaign can go to at most
+              {{ max_recipients }}. <a href="{% url 'marketing:campaign_edit' campaign.pk %}">Narrow the filters</a>.</div>
+          {% elif audience.recipients %}
+            <form method="post" action="{% url 'marketing:campaign_send' campaign.pk %}"
+                  onsubmit="return confirm('{% if dry_run %}Test mode: record who would get this email? Nothing will be sent.{% else %}Send this email to {{ audience.recipients|length }} customers now? This cannot be undone.{% endif %}');">
+              {% csrf_token %}
+              <input type="hidden" name="expected_count" value="{{ audience.recipients|length }}">
+              <button class="btn {% if dry_run %}btn-secondary{% else %}btn-success{% endif %} w-100" type="submit">
+                <i class="bi bi-send me-1"></i>
+                {% if dry_run %}Run in test mode ({{ audience.recipients|length }} customers){% else %}Send to {{ audience.recipients|length }} customers{% endif %}
+              </button>
+            </form>
+            <p class="mk-muted mt-2 mb-0">Sent from your Gmail account as a new email. Customers emailed by another campaign in the
+              last {{ gap_days }} days are left out automatically.</p>
+          {% else %}
+            <p class="mk-muted mb-0">Nothing to send yet.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+{% else %}
+  <div class="row g-4">
+    <div class="col-lg-8">
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom d-flex flex-wrap gap-2 justify-content-between align-items-center">
+          <h6 class="mb-0">Customers ({{ recipients|length }}) · {{ sent_count }} sent · {{ replied_count }} replied</h6>
+          <div class="d-flex gap-2">
+            {% if can_retry %}
+              <form method="post" action="{% url 'marketing:campaign_send' campaign.pk %}"
+                    onsubmit="return confirm('Send the emails that were not sent yet? This cannot be undone.');">
+                {% csrf_token %}
+                <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-send me-1"></i> Send the unsent emails</button>
+              </form>
+            {% endif %}
+            {% if sent_count %}
+              <form method="post" action="{% url 'marketing:campaign_check_replies' campaign.pk %}">
+                {% csrf_token %}
+                <button class="btn btn-outline-primary btn-sm" type="submit"><i class="bi bi-arrow-clockwise me-1"></i> Check for replies</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+            <thead><tr><th>Customer</th><th>Email</th><th>Result</th><th>Replied</th></tr></thead>
+            <tbody>
+              {% for r in recipients %}
+                <tr>
+                  <td>{{ r.customer_name|default:"—" }}
+                    <div class="mk-muted"><a href="{% url 'marketing:detail' r.enquiry_id %}">{{ r.enquiry_id }}</a></div></td>
+                  <td>{{ r.customer_email }}</td>
+                  <td><span class="mk-chip mk-chip--{{ r.status }}">{{ r.get_status_display }}</span>
+                    {% if r.note %}<div class="mk-muted">{{ r.note }}</div>{% endif %}</td>
+                  <td>{% if r.replied_at %}<span class="mk-chip mk-chip--replied">{{ r.replied_at|date:"d M Y" }}</span>{% else %}—{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if campaign.replies_checked_at %}
+          <div class="card-footer bg-white mk-muted">Replies last checked {{ campaign.replies_checked_at|date:"d M Y, H:i" }}.
+            A reply containing "unsubscribe" turns on Do not contact automatically.</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">The email</h6>
+          <div class="mk-muted">Words in {braces} were filled in for each customer.</div></div>
+        <div class="card-body">
+          <div class="mk-email">
+            <div class="mk-email-head"><span class="mk-muted">Subject:</span> <strong>{{ campaign.subject }}</strong></div>
+            <div class="mk-email-body">{{ campaign.body }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

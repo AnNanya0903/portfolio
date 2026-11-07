@@ -1,0 +1,250 @@
+"""Which enquiries are lost, and the facts the Marketing portal shows about each one.
+
+An enquiry is lost when it is:
+- Rejected: its status is "rejected".
+- No response: the closing email was sent (enquiries/status_emails.py), or every follow-up was sent
+  (FOLLOW_UP_MAX_COUNT) and the customer stayed silent for FOLLOW_UP_CLOSE_AFTER_DAYS after the last one.
+  This is the same rule the closing email uses, so the two never disagree.
+
+Marketing waits MARKETING_WAIT_DAYS after the loss before the lead is "Ready to contact".
+"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+
+from django.conf import settings
+from django.utils import timezone
+
+from dashboard.follow_up_templates import PAYMENT_STAGE
+from enquiries.models import CustomerStatusEmail, EnquiryContact, FollowUpSent
+
+from .models import MarketingLead
+
+REJECTED = "rejected"
+NO_RESPONSE = "no_response"
+KIND_LABELS = {REJECTED: "Rejected", NO_RESPONSE: "No response"}
+
+STAGE_WAITING = "waiting"
+STAGE_READY = "ready"
+STAGE_DO_NOT_CONTACT = "do_not_contact"
+STAGE_REVIVED = "revived"
+STAGE_LABELS = {
+    STAGE_WAITING: "Waiting period",
+    STAGE_READY: "Ready to contact",
+    STAGE_DO_NOT_CONTACT: "Do not contact",
+    STAGE_REVIVED: "Revived",
+}
+
+REASON_LABELS = dict(MarketingLead.REASON_CHOICES)
+
+
+def wait_days() -> int:
+    return max(int(getattr(settings, "MARKETING_WAIT_DAYS", 30) or 0), 0)
+
+
+def financial_year_label(value: date) -> str:
+    """Indian financial year (1 April - 31 March), e.g. 2026-27."""
+    start = value.year if value.month >= 4 else value.year - 1
+    return f"{start}-{str(start + 1)[2:]}"
+
+
+def _status(enquiry: Mapping[str, Any]) -> str:
+    return str(enquiry.get("status") or "").strip().lower()
+
+
+def _local_date(value) -> Optional[date]:
+    if value is None:
+        return None
+    if hasattr(value, "tzinfo") and getattr(value, "tzinfo", None) is not None:
+        return timezone.localtime(value).date()
+    return value.date() if hasattr(value, "date") else value
+
+
+def _follow_up_stats(enquiry_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    stats: Dict[str, Dict[str, Any]] = {}
+    rows = (FollowUpSent.objects.filter(enquiry_id__in=enquiry_ids, status=FollowUpSent.STATUS_SENT)
+            .exclude(stage=PAYMENT_STAGE).values_list("enquiry_id", "sent_at"))
+    for enquiry_id, sent_at in rows:
+        item = stats.setdefault(enquiry_id, {"count": 0, "last": sent_at})
+        item["count"] += 1
+        item["last"] = max(item["last"], sent_at)
+    return stats
+
+
+def _status_email_dates(enquiry_ids: List[str], kind: str, sent_only: bool) -> Dict[str, Any]:
+    rows = CustomerStatusEmail.objects.filter(enquiry_id__in=enquiry_ids, kind=kind)
+    if sent_only:
+        rows = rows.filter(status=CustomerStatusEmail.STATUS_SENT)
+    dates: Dict[str, Any] = {}
+    for enquiry_id, sent_at, created_at in rows.values_list("enquiry_id", "sent_at", "created_at"):
+        dates[enquiry_id] = sent_at or created_at
+    return dates
+
+
+def _price_text(enquiry: Mapping[str, Any]) -> str:
+    currency = str(enquiry.get("currency") or "").strip()
+    for key, unit in (("final_price_per_piece", "pc"), ("final_price_per_meter", "m"),
+                      ("total_price_per_piece", "pc"), ("price_per_piece", "pc")):
+        value = enquiry.get(key)
+        if value in (None, "", 0):
+            continue
+        try:
+            amount = f"{float(value):,.2f}"
+        except (TypeError, ValueError):
+            continue
+        return f"{currency} {amount}/{unit}".strip()
+    return ""
+
+
+def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[date] = None) -> List[Dict[str, Any]]:
+    """Every lost enquiry with what marketing needs to know, newest loss first."""
+    today = today or timezone.localdate()
+    candidates = {str(e.get("enquiry_id")): e for e in enquiries
+                  if e.get("enquiry_id") and _status(e) in {"open", "closed", "rejected"}}
+    if not candidates:
+        return []
+    ids = list(candidates)
+    follow_ups = _follow_up_stats(ids)
+    closing_sent = _status_email_dates(ids, CustomerStatusEmail.KIND_CLOSING, sent_only=True)
+    rejection_seen = _status_email_dates(ids, CustomerStatusEmail.KIND_REJECTION, sent_only=False)
+    limit = int(getattr(settings, "FOLLOW_UP_MAX_COUNT", 4) or 0)
+    silent_days = int(getattr(settings, "FOLLOW_UP_CLOSE_AFTER_DAYS", 7) or 0)
+    now = timezone.now()
+
+    found: Dict[str, Dict[str, Any]] = {}
+    for enquiry_id, enquiry in candidates.items():
+        stats = follow_ups.get(enquiry_id, {"count": 0, "last": None})
+        kind = None
+        lost_at = None
+        if _status(enquiry) == "rejected":
+            kind = REJECTED
+            lost_at = rejection_seen.get(enquiry_id)
+        elif enquiry_id in closing_sent:
+            kind = NO_RESPONSE
+            lost_at = closing_sent[enquiry_id]
+        elif (limit and stats["count"] >= limit and stats["last"]
+              and stats["last"] <= now - timedelta(days=silent_days)):
+            kind = NO_RESPONSE
+            lost_at = stats["last"] + timedelta(days=silent_days)
+        if kind is None:
+            continue
+        found[enquiry_id] = {"enquiry": enquiry, "kind": kind, "lost_at": lost_at, "follow_ups": stats}
+
+    if not found:
+        return []
+    marketing = {lead.enquiry_id: lead for lead in MarketingLead.objects.filter(enquiry_id__in=list(found))}
+    emails: Dict[str, str] = {}
+    for enquiry_id, address in (FollowUpSent.objects.filter(enquiry_id__in=list(found), status=FollowUpSent.STATUS_SENT)
+                                .exclude(customer_email="").order_by("sent_at")
+                                .values_list("enquiry_id", "customer_email")):
+        emails[enquiry_id] = address  # latest wins
+    for enquiry_id, address in EnquiryContact.objects.filter(enquiry_id__in=list(found)).exclude(
+            customer_email="").values_list("enquiry_id", "customer_email"):
+        emails[enquiry_id] = address  # the address sales saved wins
+
+    leads: List[Dict[str, Any]] = []
+    for enquiry_id, item in found.items():
+        enquiry = item["enquiry"]
+        lead = marketing.get(enquiry_id)
+        lost_on = _local_date(item["lost_at"]) or _local_date(enquiry.get("received_at_dt"))
+        ready_on = lost_on + timedelta(days=wait_days()) if lost_on else None
+
+        if lead and lead.revived_enquiry_id:
+            stage = STAGE_REVIVED
+        elif lead and lead.do_not_contact:
+            stage = STAGE_DO_NOT_CONTACT
+        elif ready_on and ready_on > today:
+            stage = STAGE_WAITING
+        else:
+            stage = STAGE_READY
+
+        reason_key = lead.lost_reason if lead and lead.lost_reason else ""
+        if not reason_key and item["kind"] == NO_RESPONSE:
+            reason_key = "no_reply"
+        received = _local_date(enquiry.get("received_at_dt"))
+
+        leads.append({
+            "enquiry_id": enquiry_id,
+            "customer_name": enquiry.get("customer_name") or "",
+            "subject": enquiry.get("subject") or "",
+            "project_name": enquiry.get("project_name") or "",
+            "assigned_to": enquiry.get("assigned_to") or "",
+            "customer_email": emails.get(enquiry_id, ""),
+            "kind": item["kind"],
+            "kind_label": KIND_LABELS[item["kind"]],
+            "reason_key": reason_key,
+            "reason_label": REASON_LABELS.get(reason_key, ""),
+            "customer_reason": enquiry.get("rejection_reason") or "",  # given by the customer on the share link
+            "price": _price_text(enquiry),
+            "follow_up_count": item["follow_ups"]["count"],
+            "last_follow_up": item["follow_ups"]["last"],
+            "lost_on": lost_on,
+            "ready_on": ready_on,
+            "received_on": received,
+            "fin_year": financial_year_label(lost_on or received) if (lost_on or received) else "",
+            "stage": stage,
+            "stage_label": STAGE_LABELS[stage],
+            "revived_enquiry_id": lead.revived_enquiry_id if lead else "",
+            "lead": lead,
+        })
+    leads.sort(key=lambda row: (row["lost_on"] or date.min, row["enquiry_id"]), reverse=True)
+    return leads
+
+
+FILTER_KEYS = ("q", "kind", "reason", "stage", "fin_year")
+
+
+def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
+    """Apply the Marketing list filters. Returns (matching rows, cleaned filter values)."""
+    chosen = {
+        "q": (params.get("q") or "").strip(),
+        "kind": (params.get("kind") or "").strip(),
+        "reason": (params.get("reason") or "").strip(),
+        "stage": (params.get("stage") or "").strip(),
+        "fin_year": (params.get("fin_year") or "").strip(),
+    }
+    if chosen["kind"] not in KIND_LABELS:
+        chosen["kind"] = ""
+    if chosen["stage"] not in STAGE_LABELS:
+        chosen["stage"] = ""
+    if chosen["reason"] not in REASON_LABELS and chosen["reason"] != "none":
+        chosen["reason"] = ""
+
+    query = chosen["q"].lower()
+    rows = []
+    for row in leads:
+        if chosen["kind"] and row["kind"] != chosen["kind"]:
+            continue
+        if chosen["stage"] and row["stage"] != chosen["stage"]:
+            continue
+        if chosen["reason"] == "none" and row["reason_key"]:
+            continue
+        if chosen["reason"] not in ("", "none") and row["reason_key"] != chosen["reason"]:
+            continue
+        if chosen["fin_year"] and row["fin_year"] != chosen["fin_year"]:
+            continue
+        if query:
+            haystack = " ".join(str(row[k]) for k in (
+                "enquiry_id", "customer_name", "subject", "project_name", "customer_email", "assigned_to",
+            )).lower()
+            if query not in haystack:
+                continue
+        rows.append(row)
+    return rows, chosen
+
+
+def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_reason: Dict[str, int] = {}
+    for row in leads:
+        label = row["reason_label"] or "Reason not recorded"
+        by_reason[label] = by_reason.get(label, 0) + 1
+    return {
+        "total": len(leads),
+        "rejected": sum(1 for r in leads if r["kind"] == REJECTED),
+        "no_response": sum(1 for r in leads if r["kind"] == NO_RESPONSE),
+        "ready": sum(1 for r in leads if r["stage"] == STAGE_READY),
+        "waiting": sum(1 for r in leads if r["stage"] == STAGE_WAITING),
+        "revived": sum(1 for r in leads if r["stage"] == STAGE_REVIVED),
+        "by_reason": sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0])),
+    }
