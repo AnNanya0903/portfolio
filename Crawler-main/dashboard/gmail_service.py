@@ -1192,10 +1192,12 @@ class GmailService:
         attachments: Optional[List[Dict]] = None,
         subject: Optional[str] = None,
         to: Optional[str] = None,
+        cc: Optional[List[str]] = None,
     ) -> Dict:
         """Send a reply email referencing an existing message.
 
         ``to`` overrides the recipient; otherwise the reply goes to the original sender.
+        ``cc`` is an optional list of addresses copied on the email.
         """
         original_id = str(original_message.get('id') or '')
         if original_id.startswith('demo-') and self._local_demo_enabled():
@@ -1204,7 +1206,8 @@ class GmailService:
             now = timezone.now()
             fake_id = f"demo-sent-{now:%Y%m%d%H%M%S%f}"
             thread_id = original_message.get('thread_id') or f"{original_id}-thread"
-            logger.info("Local demo: not sending reply to %s for %s", to or original_message.get('sender'), original_id)
+            logger.info("Local demo: not sending reply to %s (cc %s) for %s", to or original_message.get('sender'),
+                        ", ".join(cc or []) or "none", original_id)
             EmailResult.objects.create(
                 user=self.user,
                 email_id=fake_id,
@@ -1239,6 +1242,8 @@ class GmailService:
 
         email_message = EmailMessage()
         email_message['To'] = reply_to
+        if cc:
+            email_message['Cc'] = ", ".join(cc)
         email_message['Subject'] = subject_line
 
         message_id_header = original_message.get('message_id_header')

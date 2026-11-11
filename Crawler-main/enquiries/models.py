@@ -86,6 +86,7 @@ class FollowUpSent(models.Model):
     submission_token = models.CharField(max_length=64, unique=True, null=True, blank=True)
     stage = models.CharField(max_length=32, blank=True, default="")  # template used, e.g. "waiting_po"
     next_follow_up_on = models.DateField(null=True, blank=True)  # when to follow up again
+    cc = models.CharField(max_length=1000, blank=True, default="")  # comma-separated CC addresses
 
     SOURCE_MANUAL = "manual"
     SOURCE_AUTO = "auto"
@@ -110,6 +111,7 @@ class EnquiryContact(models.Model):
     enquiry_id = models.CharField(max_length=128, unique=True)
     customer_email = models.EmailField(blank=True)
     auto_follow_up_paused = models.BooleanField(default=False)  # sales paused automatic follow-ups
+    follow_up_cc = models.CharField(max_length=1000, blank=True, default="")  # CC used for this enquiry's follow-ups
 
     # Payment for an accepted order. Empty means "pending"; when it is paid the order becomes converted.
     PAYMENT_PENDING = "pending"
@@ -123,6 +125,10 @@ class EnquiryContact(models.Model):
     payment_status = models.CharField(max_length=16, choices=PAYMENT_STATUS_CHOICES, blank=True, default="")
     payment_amount_received = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     payment_due_on = models.DateField(null=True, blank=True)
+    # Credit period agreed with the customer: payment is due credit_period_days after credit_starts_on
+    # (invoice / dispatch date). Payment reminders wait until then.
+    credit_period_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    credit_starts_on = models.DateField(null=True, blank=True)
     payment_paid_on = models.DateField(null=True, blank=True)  # date the full payment was received
     payment_reference = models.CharField(max_length=120, blank=True, default="")  # UTR / cheque / receipt no.
     payment_updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")

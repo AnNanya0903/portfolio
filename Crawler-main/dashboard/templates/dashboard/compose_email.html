@@ -109,6 +109,13 @@
                     </div>
                     {% endif %}
 
+                    {% if credit_hold %}
+                    <div class="compose-notice compose-notice--warning" data-credit-period>
+                        <i class="bi bi-calendar-check"></i>
+                        <div>This order is within its credit period. Payment is due on {{ credit_hold|date:"d M Y" }}, so a payment reminder now may be too early. Automatic payment reminders wait until that date.</div>
+                    </div>
+                    {% endif %}
+
                     <div class="compose-section">
                         <div class="compose-section-title">Follow-up settings</div>
                         <div class="row g-3">
@@ -126,6 +133,13 @@
                                 <input type="date" class="form-control form-control-sm" id="nextFollowUpOn" name="next_follow_up_on"
                                        value="{{ next_follow_up_default }}" min="{{ next_follow_up_min }}">
                                 <div class="form-text">Leave empty for no reminder.</div>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label" for="followUpCc">CC</label>
+                                <input type="text" class="form-control form-control-sm" id="followUpCc" name="follow_up_cc"
+                                       value="{{ follow_up_cc }}" maxlength="1000" autocomplete="off"
+                                       placeholder="e.g. customerservice@avigiri.com, sales@avigiri.com">
+                                <div class="form-text">Separate addresses with commas. Automatic follow-ups for this enquiry use the same CC.</div>
                             </div>
                         </div>
                     </div>

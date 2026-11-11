@@ -25,7 +25,7 @@ from django.utils import timezone
 from dashboard.follow_up_templates import DEFAULT_STAGE, PAYMENT_STAGE, STAGE_KEYS, build_follow_up_body
 from dashboard.gmail_service import GmailAPIError, GmailService
 
-from . import services
+from . import payment_terms, services
 from .models import EnquiryContact, FollowUpSent
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,10 @@ def _skip_reason(enquiry_id: str, enquiry: Optional[Dict[str, Any]], latest: Fol
     accepted = str(enquiry.get("status") or "").strip().lower() == "accepted"
     if accepted and latest.stage != PAYMENT_STAGE:
         return "order accepted; send the first payment follow-up manually"
+    if accepted:
+        hold = payment_terms.credit_hold_until(enquiry_id, today)
+        if hold:
+            return f"within the credit period; payment is due on {hold.isoformat()}"
     if EnquiryContact.objects.filter(enquiry_id=enquiry_id, auto_follow_up_paused=True).exists():
         return "automatic follow-ups are paused for this enquiry"
     if not latest.next_follow_up_on:
@@ -162,11 +166,11 @@ def run_auto_follow_up(enquiry_id: str, today: Optional[date] = None) -> Dict[st
             enquiry_id=enquiry_id, status=FollowUpSent.STATUS_SENT, stage=PAYMENT_STAGE
         ).count()
     return _send(enquiry_id, enquiry, sender, today, thread_id=latest.gmail_thread_id,
-                 customer_email=latest.customer_email, stage=stage, attempt=count + 1)
+                 customer_email=latest.customer_email, stage=stage, attempt=count + 1, cc=latest.cc)
 
 
 def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thread_id: str,
-          customer_email: str, stage: str, attempt: int) -> Dict[str, Any]:
+          customer_email: str, stage: str, attempt: int, cc: str = "") -> Dict[str, Any]:
     """Reply in the conversation unless the customer wrote last; record the follow-up."""
     if not thread_id:
         return _result(enquiry_id, SKIPPED, "no confirmed Gmail conversation")
@@ -188,10 +192,14 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
     except GmailAPIError as exc:
         return _result(enquiry_id, FAILED, f"Gmail error: {exc}")
 
+    due_on, credit_days = payment_terms.payment_terms_for(enquiry_id) if stage == PAYMENT_STAGE else (None, None)
     body = build_follow_up_body(
         stage, attempt=attempt, reference=enquiry_id,
         subject=str(enquiry.get("subject") or ""), user=sender,
+        due_on=due_on, credit_days=credit_days, today=today,
     )
+    # Same CC as the last follow-up, minus the customer and our own sending addresses.
+    cc_list = [a for a in payment_terms.parse_cc(cc, exclude=customer_email)[0] if a not in own]
     subject = original.get("subject") or str(enquiry.get("subject") or "")
     next_on = next_follow_up_date(attempt, today)
     details = {
@@ -199,6 +207,7 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
         "attempt": attempt,
         "stage": stage,
         "next_follow_up_on": next_on.isoformat() if next_on else None,
+        "cc": cc_list,
     }
 
     if getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
@@ -223,12 +232,14 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
                 stage=stage,
                 next_follow_up_on=next_on,
                 source=FollowUpSent.SOURCE_AUTO,
+                cc=", ".join(cc_list),
             )
     except IntegrityError:
         return _result(enquiry_id, SKIPPED, "already handled today")
 
     try:
-        sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email)
+        sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email,
+                                cc=cc_list or None)
     except Exception as exc:  # Gmail API or network failure
         logger.warning("Auto follow-up failed for enquiry %s: %s", enquiry_id, exc)
         record.status = FollowUpSent.STATUS_FAILED

@@ -41,6 +41,7 @@ from .automation import AutomationService
 from .forms import ComposeReplyForm
 from .follow_up_templates import (
     DEFAULT_STAGE as DEFAULT_FOLLOW_UP_STAGE,
+    PAYMENT_STAGE,
     STAGE_CHOICES as FOLLOW_UP_STAGE_CHOICES,
     STAGE_KEYS as FOLLOW_UP_STAGE_KEYS,
     all_stage_bodies,
@@ -56,6 +57,7 @@ from .models import (
     KeywordPriorityMapping,
 )
 
+from enquiries import payment_terms
 from enquiries.models import EnquiryContact, FollowUpSent
 
 
@@ -1704,12 +1706,19 @@ def _follow_up_recipient(context):
     return address
 
 
+def _payment_terms_kwargs(context):
+    """due_on / credit_days / today for payment reminder text (credit period on the enquiry)."""
+    due_on, credit_days = payment_terms.payment_terms_for((context or {}).get('enquiry_id') or '')
+    return {'due_on': due_on, 'credit_days': credit_days, 'today': timezone.localdate()}
+
+
 def _follow_up_default_body(context, user=None, stage=DEFAULT_FOLLOW_UP_STAGE):
     return build_follow_up_body(
         stage,
         reference=(context or {}).get('enquiry_id') or '',
         subject=(context or {}).get('subject') or '',
         user=user,
+        **_payment_terms_kwargs(context),
     )
 
 
@@ -1737,6 +1746,7 @@ def _auto_follow_up_plan(context, user):
     limit = int(getattr(settings, 'FOLLOW_UP_MAX_COUNT', 4) or 0)
     gaps = list(getattr(settings, 'FOLLOW_UP_AUTO_GAP_DAYS', []) or [7])
     later_attempts = list(range(this_attempt + 1, limit + 1)) if limit else []
+    terms = _payment_terms_kwargs(context)
     stages = {}
     for key, _label in FOLLOW_UP_STAGE_CHOICES:
         plan = []
@@ -1752,7 +1762,7 @@ def _auto_follow_up_plan(context, user):
                 'final': attempt == limit,
                 'body': build_follow_up_body(
                     key, attempt=attempt, reference=enquiry_id,
-                    subject=(context or {}).get('subject') or '', user=user,
+                    subject=(context or {}).get('subject') or '', user=user, **terms,
                 ),
             })
         stages[key] = plan
@@ -1783,7 +1793,19 @@ def _email_address(value):
     return (parseaddr(value or '')[1] or '').strip().lower()
 
 
-def _start_follow_up_record(request, context, *, recipient, subject, body, stage='', next_follow_up_on=None):
+def _save_follow_up_cc(enquiry_id, cc_list, user):
+    """Remember the CC so the next follow-ups (manual and automatic) use it too."""
+    value = ", ".join(cc_list)
+    contact, _ = EnquiryContact.objects.get_or_create(enquiry_id=str(enquiry_id))
+    if contact.follow_up_cc == value:
+        return
+    contact.follow_up_cc = value
+    contact.updated_by = user
+    contact.save(update_fields=['follow_up_cc', 'updated_by', 'updated_at'])
+
+
+def _start_follow_up_record(request, context, *, recipient, subject, body, stage='', next_follow_up_on=None,
+                            cc_list=()):
     """Create the Pending history row. Returns None if this form was already submitted."""
     try:
         with transaction.atomic():
@@ -1800,6 +1822,7 @@ def _start_follow_up_record(request, context, *, recipient, subject, body, stage
                 submission_token=context.get('token') or None,
                 stage=stage or '',
                 next_follow_up_on=next_follow_up_on,
+                cc=", ".join(cc_list),
             )
     except IntegrityError:
         return None
@@ -1900,7 +1923,14 @@ def compose_email(request, email_id):
     follow_up_stage = suggested_stage
     next_follow_up_on, next_follow_up_error = None, ''
     auto_follow_up_choice = None  # None = not posted yet; True/False = the employee's choice
+    follow_up_cc, cc_list, cc_error = '', [], ''
+    credit_hold = None
+    if follow_up_context:
+        follow_up_cc = payment_terms.default_cc(follow_up_context.get('enquiry_id') or '')
+        credit_hold = payment_terms.credit_hold_until(follow_up_context.get('enquiry_id') or '')
     if request.method == 'POST' and follow_up_context:
+        follow_up_cc = (request.POST.get('follow_up_cc') or '').strip()
+        cc_list, cc_error = payment_terms.parse_cc(follow_up_cc, exclude=follow_up_recipient)
         follow_up_stage = request.POST.get('follow_up_stage') or DEFAULT_FOLLOW_UP_STAGE
         if follow_up_stage not in FOLLOW_UP_STAGE_KEYS:
             follow_up_stage = DEFAULT_FOLLOW_UP_STAGE
@@ -1927,6 +1957,8 @@ def compose_email(request, email_id):
         messages.error(request, "No confirmed customer email for this follow-up, so it was not sent.")
     elif request.method == 'POST' and follow_up_context and next_follow_up_error:
         messages.error(request, f"{next_follow_up_error} The follow-up was not sent.")
+    elif request.method == 'POST' and follow_up_context and cc_error:
+        messages.error(request, f"{cc_error} The follow-up was not sent.")
     elif request.method == 'POST' and form.is_valid():
         selected_tokens = form.cleaned_data.get('include_attachments') or []
         attachment_payloads = []
@@ -1976,6 +2008,7 @@ def compose_email(request, email_id):
                 body=form.cleaned_data['body'],
                 stage=follow_up_stage,
                 next_follow_up_on=next_follow_up_on,
+                cc_list=cc_list,
             )
             if record is None:
                 messages.warning(request, "This follow-up was already submitted, so it was not sent again.")
@@ -1987,6 +2020,7 @@ def compose_email(request, email_id):
                     attachments=attachment_payloads,
                     subject=form.cleaned_data.get('subject'),
                     to=follow_up_recipient,
+                    cc=cc_list or None,
                 )
             except Exception as exc:  # Gmail API or network failure
                 logger.warning("Follow-up send failed for enquiry %s: %s", record.enquiry_id, exc)
@@ -2006,10 +2040,13 @@ def compose_email(request, email_id):
                 record.save(update_fields=['status', 'gmail_message_id', 'gmail_thread_id', 'sent_at'])
                 if auto_follow_up_choice is not None:
                     _save_auto_follow_up_choice(record.enquiry_id, auto_follow_up_choice, request.user)
+                _save_follow_up_cc(record.enquiry_id, cc_list, request.user)
                 request.session.pop('follow_up_context', None)
                 messages.success(
                     request,
-                    f"Follow-up sent to {follow_up_recipient} and recorded for enquiry #{record.enquiry_id}."
+                    f"Follow-up sent to {follow_up_recipient}"
+                    + (f" (CC: {', '.join(cc_list)})" if cc_list else "")
+                    + f" and recorded for enquiry #{record.enquiry_id}."
                     + (" Next follow-ups will be sent automatically." if auto_follow_up_choice
                        else " Automatic follow-ups are off for this enquiry." if auto_follow_up_choice is False
                        else ""),
@@ -2063,10 +2100,15 @@ def compose_email(request, email_id):
                 reference=follow_up_context.get('enquiry_id') or '',
                 subject=follow_up_context.get('subject') or '',
                 user=request.user,
+                **_payment_terms_kwargs(follow_up_context),
             ),
+            # Inside a credit period the next payment reminder defaults to the due date.
             'next_follow_up_default': posted_next or (
+                credit_hold if credit_hold and follow_up_stage == PAYMENT_STAGE else
                 timezone.localdate() + timedelta(days=getattr(settings, 'FOLLOW_UP_DEFAULT_GAP_DAYS', 3))
             ).isoformat(),
+            'follow_up_cc': follow_up_cc,
+            'credit_hold': credit_hold,
             'next_follow_up_min': timezone.localdate().isoformat(),
             'customer_waiting': customer_waiting,
             'customer_waiting_since': customer_waiting_since,

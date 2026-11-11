@@ -35,7 +35,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
 from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, GmailLeadAnalysis, ShareLink
-from . import status_emails
+from . import payment_terms, status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
     COSTING_FIELD_ORDER,
@@ -1048,6 +1048,7 @@ def _follow_up_summaries(enquiry_ids: Iterable[str]) -> Dict[str, Dict[str, Any]
                 "due_state": None if due is None else ("overdue" if due < today else "today" if due == today else "later"),
                 "last_auto": row.source == FollowUpSent.SOURCE_AUTO,
                 "last_stage": row.stage,
+                "last_cc": row.cc,
             }
         else:
             summary["count"] += 1
@@ -1112,6 +1113,7 @@ def _attach_order_tracking(enquiry: MutableMapping[str, Any], contact: Optional[
     status = str(enquiry.get("status") or "").strip().lower()
     if status in ("accepted", "converted"):
         # Converted means the payment was received.
+        due = payment_terms.credit_due_date(contact)
         payment = EnquiryContact.PAYMENT_PAID if status == "converted" else (
             (contact.payment_status if contact else "") or EnquiryContact.PAYMENT_PENDING)
         enquiry["payment"] = {
@@ -1120,9 +1122,12 @@ def _attach_order_tracking(enquiry: MutableMapping[str, Any], contact: Optional[
             "amount": contact.payment_amount_received if contact else None,
             "paid_on": contact.payment_paid_on if contact else None,
             "reference": contact.payment_reference if contact else "",
-            "due": contact.payment_due_on if contact else None,
-            "overdue": bool(contact and contact.payment_due_on and payment != EnquiryContact.PAYMENT_PAID
-                            and contact.payment_due_on < timezone.localdate()),
+            "due": due,
+            "overdue": bool(due and payment != EnquiryContact.PAYMENT_PAID and due < timezone.localdate()),
+            "credit_days": contact.credit_period_days if contact else None,
+            "credit_starts_on": contact.credit_starts_on if contact else None,
+            "in_credit": bool(contact and contact.credit_period_days and due and payment != EnquiryContact.PAYMENT_PAID
+                              and due > timezone.localdate()),
         }
     else:
         enquiry["payment"] = None
@@ -1161,6 +1166,23 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
     if due_raw and due is None:
         messages.error(request, "Please enter a valid payment due date.")
         return
+    credit_raw = (request.POST.get("credit_period_days") or "").strip()
+    credit_days = None
+    if credit_raw:
+        if not credit_raw.isdigit() or int(credit_raw) > payment_terms.MAX_CREDIT_DAYS:
+            messages.error(request, f"Credit period must be a number of days between 0 and {payment_terms.MAX_CREDIT_DAYS}.")
+            return
+        credit_days = int(credit_raw) or None
+    credit_start_raw = (request.POST.get("credit_starts_on") or "").strip()
+    credit_start = parse_date(credit_start_raw) if credit_start_raw else None
+    if credit_start_raw and credit_start is None:
+        messages.error(request, "Please enter a valid credit start date (invoice / dispatch date).")
+        return
+    if credit_days:
+        credit_start = credit_start or timezone.localdate()
+        due = credit_start + timedelta(days=credit_days)  # the credit period sets the due date
+    else:
+        credit_start = None
     paid_on, reference = None, (request.POST.get("payment_reference") or "").strip()[:120]
     if value == EnquiryContact.PAYMENT_PAID:
         paid_raw = (request.POST.get("payment_paid_on") or "").strip()
@@ -1190,7 +1212,8 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
         conversions[enquiry_id] = "accepted"
         request.session[CONVERSION_SESSION_KEY] = conversions
         request.session.modified = True
-    _save_payment(enquiry_id, value, request.user, amount=amount, due=due, paid_on=paid_on, reference=reference)
+    _save_payment(enquiry_id, value, request.user, amount=amount, due=due, paid_on=paid_on, reference=reference,
+                  credit_days=credit_days, credit_start=credit_start)
     label = dict(EnquiryContact.PAYMENT_STATUS_CHOICES)[value]
     if value == EnquiryContact.PAYMENT_PAID:
         messages.success(request, f"Order #{enquiry_id}: {label}. The status is now Converted.")
@@ -1199,12 +1222,15 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
             payment_detail=status_emails.payment_detail_text(paid_on, reference),
         )
         _report_status_email(request, outcome, "payment received")
+    elif credit_days and due > timezone.localdate():
+        messages.success(request, f"Order #{enquiry_id}: {label}. Credit period {credit_days} days: payment is due on "
+                                  f"{due:%d %b %Y}, and payment reminders wait until then.")
     else:
         messages.success(request, f"Order #{enquiry_id}: {label}.")
 
 
 def _save_payment(enquiry_id: str, value: str, user, *, amount=None, due=None, paid_on=None, reference="",
-                  keep_details: bool = False) -> None:
+                  credit_days=None, credit_start=None, keep_details: bool = False) -> None:
     contact, _ = EnquiryContact.objects.get_or_create(enquiry_id=str(enquiry_id))
     contact.payment_status = value
     if not keep_details:
@@ -1212,6 +1238,8 @@ def _save_payment(enquiry_id: str, value: str, user, *, amount=None, due=None, p
         contact.payment_due_on = due
         contact.payment_paid_on = paid_on
         contact.payment_reference = reference
+        contact.credit_period_days = credit_days
+        contact.credit_starts_on = credit_start
     elif value != EnquiryContact.PAYMENT_PAID:
         contact.payment_paid_on = None
     contact.payment_updated_by = user if getattr(user, "is_authenticated", False) else None
@@ -1476,6 +1504,9 @@ def board(request: HttpRequest) -> HttpResponse:
                 if _follow_up_stopped_reason(enquiry, summary["count"]):
                     # closed/converted/rejected or limit reached: no more follow-ups are due
                     summary.update(due=None, due_state="closed" if status in FOLLOW_UP_CLOSED_STATUSES else "limit")
+                elif status == "accepted" and (enquiry.get("payment") or {}).get("in_credit"):
+                    # Inside the agreed credit period: no payment reminders until the due date.
+                    summary.update(due=enquiry["payment"]["due"], due_state="credit")
                 elif status == "accepted" and summary.get("last_stage") != PAYMENT_STAGE:
                     # Order accepted: earlier quote reminders no longer apply; payment follow-ups start manually.
                     summary.update(due=None, due_state="payment")

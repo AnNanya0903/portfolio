@@ -108,8 +108,23 @@ def sender_signature(user=None) -> str:
     return "\n".join(lines)
 
 
-def build_follow_up_body(stage: str, *, reference: str, subject: str, user=None, attempt: int = 1) -> str:
-    """Body for follow-up number `attempt` (1 = first; 4 or more = the final email)."""
+def _payment_terms_line(due_on, credit_days, today) -> str:
+    """One sentence about the agreed credit period / due date for payment reminders, or ''."""
+    if not due_on:
+        return ""
+    when = f"{due_on.day} {due_on:%B %Y}"
+    verb = "is" if today is None or due_on >= today else "was"
+    if credit_days:
+        return f"As per the agreed credit period of {credit_days} days, the payment {verb} due on {when}."
+    return f"As agreed, the payment {verb} due on {when}."
+
+
+def build_follow_up_body(stage: str, *, reference: str, subject: str, user=None, attempt: int = 1,
+                         due_on=None, credit_days=None, today=None) -> str:
+    """Body for follow-up number `attempt` (1 = first; 4 or more = the final email).
+
+    For payment reminders, `due_on` / `credit_days` add a sentence about the agreed credit period.
+    """
     key = stage if stage in STAGE_KEYS else DEFAULT_STAGE
     closing, final_closing = _CLOSINGS[key]
     if attempt <= 1:
@@ -123,18 +138,25 @@ def build_follow_up_body(stage: str, *, reference: str, subject: str, user=None,
         "subject": (subject or "").strip() or "your enquiry",
         "reference": (reference or "").strip() or "-",
     }
+    paragraph = paragraph.format(**values)
+    if key == PAYMENT_STAGE:
+        terms = _payment_terms_line(due_on, credit_days, today)
+        if terms:
+            paragraph = f"{paragraph} {terms}"
     return "\n\n".join([
         "Dear Sir/Madam,",
-        paragraph.format(**values),
+        paragraph,
         question,
         closing,
         sender_signature(user),
     ])
 
 
-def all_stage_bodies(*, reference: str, subject: str, user=None) -> Dict[str, str]:
+def all_stage_bodies(*, reference: str, subject: str, user=None, due_on=None, credit_days=None,
+                     today=None) -> Dict[str, str]:
     """Body text for every stage, used by the stage picker on the compose page."""
     return {
-        key: build_follow_up_body(key, reference=reference, subject=subject, user=user)
+        key: build_follow_up_body(key, reference=reference, subject=subject, user=user,
+                                  due_on=due_on, credit_days=credit_days, today=today)
         for key, _ in STAGE_CHOICES
     }

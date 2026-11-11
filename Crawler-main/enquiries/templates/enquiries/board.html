@@ -298,6 +298,7 @@
 
         <!-- Payment Filter (accepted / converted orders) -->
         <div class="d-flex align-items-center gap-2">
+          <datalist id="creditPeriodOptions"><option value="15"><option value="30"><option value="45"><option value="60"><option value="90"></datalist>
           <label for="paymentFilter" class="small text-muted mb-0">Payment</label>
           <select id="paymentFilter" name="payment" class="form-select form-select-sm" style="width: auto;">
             <option value="">All</option>
@@ -395,7 +396,7 @@
               {% elif enquiry.payment %}
               <details class="order-track-payment" data-payment-status="{{ enquiry.payment.status }}">
                 <summary class="order-chip order-chip--{% if enquiry.payment.status == 'paid' %}ok{% elif enquiry.payment.overdue %}alert{% else %}warn{% endif %}">
-                  {{ enquiry.payment.label }}{% if enquiry.payment.amount %} · {{ enquiry.payment.amount }} received{% endif %}{% if enquiry.payment.due and enquiry.payment.status != 'paid' %} · due {{ enquiry.payment.due|date:'d M' }}{% if enquiry.payment.overdue %} (overdue){% endif %}{% endif %}
+                  {{ enquiry.payment.label }}{% if enquiry.payment.amount %} · {{ enquiry.payment.amount }} received{% endif %}{% if enquiry.payment.credit_days and enquiry.payment.status != 'paid' %} · {{ enquiry.payment.credit_days }}-day credit{% endif %}{% if enquiry.payment.due and enquiry.payment.status != 'paid' %} · due {{ enquiry.payment.due|date:'d M' }}{% if enquiry.payment.overdue %} (overdue){% elif enquiry.payment.in_credit %} (in credit period){% endif %}{% endif %}
                 </summary>
                 <form method="post" class="order-track-form">
                   {% csrf_token %}
@@ -410,7 +411,12 @@
                   </select>
                   <label class="small text-muted" for="payAmount{{ enquiry.enquiry_id }}">Amount received</label>
                   <input id="payAmount{{ enquiry.enquiry_id }}" type="number" step="0.01" min="0" name="payment_amount_received" class="form-control form-control-sm" value="{{ enquiry.payment.amount|default_if_none:'' }}">
-                  <label class="small text-muted" for="payDue{{ enquiry.enquiry_id }}">Payment due on</label>
+                  <label class="small text-muted" for="payCredit{{ enquiry.enquiry_id }}">Credit period (days)</label>
+                  <input id="payCredit{{ enquiry.enquiry_id }}" type="number" min="0" max="365" step="1" name="credit_period_days" list="creditPeriodOptions" class="form-control form-control-sm" value="{{ enquiry.payment.credit_days|default_if_none:'' }}" placeholder="e.g. 30">
+                  <label class="small text-muted" for="payCreditStart{{ enquiry.enquiry_id }}">Credit starts on (invoice / dispatch date)</label>
+                  <input id="payCreditStart{{ enquiry.enquiry_id }}" type="date" name="credit_starts_on" class="form-control form-control-sm" value="{{ enquiry.payment.credit_starts_on|date:'Y-m-d' }}">
+                  <div class="small text-muted">With a credit period, the due date is worked out for you and payment reminders wait until then. Leave empty for immediate payment.</div>
+                  <label class="small text-muted" for="payDue{{ enquiry.enquiry_id }}">Payment due on (if no credit period)</label>
                   <input id="payDue{{ enquiry.enquiry_id }}" type="date" name="payment_due_on" class="form-control form-control-sm" value="{{ enquiry.payment.due|date:'Y-m-d' }}">
                   <label class="small text-muted" for="payPaidOn{{ enquiry.enquiry_id }}">Paid on (when Paid)</label>
                   <input id="payPaidOn{{ enquiry.enquiry_id }}" type="date" name="payment_paid_on" class="form-control form-control-sm">
@@ -452,7 +458,7 @@
             {% with fu=enquiry.follow_up %}
             {% if fu %}
             <div class="fu-block" data-last-follow-up
-                 title="Followed up {{ fu.count }} time{{ fu.count|pluralize }}, last on {{ fu.last_sent_at|date:'d M Y' }}{% if fu.last_sent_by %} by {{ fu.last_sent_by }}{% endif %}{% if fu.last_auto %} (sent automatically){% endif %}">
+                 title="Followed up {{ fu.count }} time{{ fu.count|pluralize }}, last on {{ fu.last_sent_at|date:'d M Y' }}{% if fu.last_sent_by %} by {{ fu.last_sent_by }}{% endif %}{% if fu.last_auto %} (sent automatically){% endif %}{% if fu.last_cc %}, CC: {{ fu.last_cc }}{% endif %}">
               <div class="fu-head">
                 <span class="fu-steps" aria-hidden="true">{% for done in fu.steps %}<span class="fu-step{% if done %} is-done{% endif %}"></span>{% endfor %}</span>
                 <span class="fu-count">{{ fu.count }}<span class="fu-of">/{{ fu.limit }}</span></span>
@@ -460,7 +466,9 @@
               </div>
               <div class="fu-meta">Last sent {{ fu.last_sent_at|date:'d M Y' }}</div>
               <div class="fu-foot">
-                {% if fu.due %}
+                {% if fu.due_state == 'credit' %}
+                  <span class="fu-chip fu-chip--later" data-follow-up-state="credit" title="Within the agreed credit period. Payment reminders start on the due date.">Credit period · due {{ fu.due|date:'d M' }}</span>
+                {% elif fu.due %}
                   <span class="fu-chip fu-chip--{{ fu.due_state }}" data-follow-up-due="{{ fu.due_state }}">
                     {% if fu.due_state == 'overdue' %}Overdue · {{ fu.due|date:'d M' }}{% elif fu.due_state == 'today' %}Due today{% else %}Next · {{ fu.due|date:'d M' }}{% endif %}
                   </span>
