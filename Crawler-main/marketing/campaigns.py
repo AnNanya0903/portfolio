@@ -286,7 +286,7 @@ def _sender_address(message: Mapping[str, Any]) -> str:
     return parseaddr(str(message.get("reply_to") or message.get("sender") or ""))[1].strip().lower()
 
 
-def check_replies(campaign: Campaign, user) -> Dict[str, int]:
+def check_replies(campaign: Campaign, user, *, notify_sender: bool = False, page_url: str = "") -> Dict[str, int]:
     """Look in Gmail for customer replies to this campaign's emails.
 
     A reply that contains "unsubscribe" turns on Do not contact for that lost enquiry.
@@ -321,6 +321,10 @@ def check_replies(campaign: Campaign, user) -> Dict[str, int]:
         snippet = str(reply.get("snippet") or "").strip()[:300]
         _log(recipient.enquiry_id, user,
              f"Customer replied to campaign \"{campaign.name}\"" + (f": \"{snippet}\"" if snippet else "."))
+        if notify_sender:
+            from .notify import notify_reply
+            notify_reply(campaign.sent_by, customer=recipient.customer_name or recipient.customer_email,
+                         campaign_name=campaign.name, url=page_url)
         if "unsubscribe" in text:
             lead, _ = MarketingLead.objects.get_or_create(enquiry_id=recipient.enquiry_id)
             if not lead.do_not_contact:
@@ -333,3 +337,39 @@ def check_replies(campaign: Campaign, user) -> Dict[str, int]:
     campaign.replies_checked_at = timezone.now()
     campaign.save(update_fields=["replies_checked_at", "updated_at"])
     return counts
+
+
+def reply_check_days() -> int:
+    return max(int(getattr(settings, "MARKETING_REPLY_CHECK_DAYS", 60) or 0), 1)
+
+
+def check_all_replies() -> List[Dict[str, Any]]:
+    """Scheduled run: check replies for every campaign sent in the last MARKETING_REPLY_CHECK_DAYS days.
+
+    Each campaign is checked with the Gmail account that sent it. One campaign's problem never stops the others.
+    """
+    from django.urls import reverse
+
+    since = timezone.now() - timedelta(days=reply_check_days())
+    results: List[Dict[str, Any]] = []
+    for campaign in (Campaign.objects.filter(status=Campaign.STATUS_SENT, sent_at__gte=since)
+                     .select_related("sent_by").order_by("sent_at")):
+        if not campaign.recipients.filter(status=CampaignRecipient.STATUS_SENT, replied_at__isnull=True).exists():
+            continue
+        item: Dict[str, Any] = {"campaign_id": campaign.pk, "name": campaign.name}
+        sender = campaign.sent_by
+        if sender is None or not sender.is_active:
+            results.append({**item, "result": "skipped", "note": "the person who sent it is no longer active"})
+            continue
+        try:
+            counts = check_replies(campaign, sender, notify_sender=True,
+                                   page_url=reverse("marketing:campaign_detail", args=[campaign.pk]))
+        except CampaignError as exc:
+            results.append({**item, "result": "failed", "note": str(exc)})
+            continue
+        except Exception as exc:  # e.g. Gmail outage; keep going with the next campaign
+            logger.exception("Reply check failed for campaign %s", campaign.pk)
+            results.append({**item, "result": "failed", "note": f"unexpected error: {exc}"})
+            continue
+        results.append({**item, "result": "checked", **counts})
+    return results

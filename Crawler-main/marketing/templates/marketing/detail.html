@@ -107,8 +107,19 @@
             <label for="reviveNote" class="form-label small">What did the customer say? (optional)</label>
             <textarea id="reviveNote" name="revive_note" rows="2" class="form-control form-control-sm mb-2"
                       placeholder="e.g. Ready to order if the price is 5% lower"></textarea>
+            <label for="assignTo" class="form-label small">Assign to and notify</label>
+            <select id="assignTo" name="assign_to" class="form-select form-select-sm mb-1">
+              <option value="">Nobody (don't notify)</option>
+              {% for member in team %}
+                <option value="{{ member.pk }}"{% if matched_salesperson and member.pk == matched_salesperson.pk %} selected{% endif %}>
+                  {{ member.get_full_name|default:member.username }}{% if member.email %} ({{ member.email }}){% endif %}</option>
+              {% endfor %}
+            </select>
+            <p class="mk-muted mb-2">
+              {% if row.assigned_to and not matched_salesperson %}The original salesperson "{{ row.assigned_to }}" is not a MagicWand user, so please choose who should take it.
+              {% else %}They get a phone notification (MagicWand app) and an email from your Gmail.{% endif %}</p>
             <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-arrow-repeat me-1"></i> Revive as new enquiry</button>
-            <p class="mk-muted mt-2 mb-0">Creates a new enquiry linked to this one, for the same salesperson.</p>
+            <p class="mk-muted mt-2 mb-0">Creates a new enquiry linked to this one.</p>
           </form>
         {% endif %}
 

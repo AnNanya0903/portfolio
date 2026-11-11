@@ -279,6 +279,10 @@ MARKETING_CAMPAIGN_DRY_RUN = config('MARKETING_CAMPAIGN_DRY_RUN', default=True, 
 MARKETING_CAMPAIGN_MAX_RECIPIENTS = config('MARKETING_CAMPAIGN_MAX_RECIPIENTS', default=50, cast=int)
 # Do not email the same address again within this many days of an earlier campaign email.
 MARKETING_CAMPAIGN_GAP_DAYS = config('MARKETING_CAMPAIGN_GAP_DAYS', default=30, cast=int)
+# Scheduled reply checks (n8n) look at campaigns sent in the last this many days.
+MARKETING_REPLY_CHECK_DAYS = config('MARKETING_REPLY_CHECK_DAYS', default=60, cast=int)
+# On Revive, also email the chosen salesperson (from the reviver's Gmail) besides the phone notification.
+MARKETING_REVIVE_NOTIFY_EMAIL = config('MARKETING_REVIVE_NOTIFY_EMAIL', default=True, cast=bool)
 N8N_API_TOKEN = config('N8N_API_TOKEN', default='')  # shared secret sent by n8n in X-N8N-Token
 
 # Material Test Certificate (MTC) generation (DOCX templates)

@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse
@@ -17,7 +18,7 @@ from django.utils import timezone
 from enquiries import services
 from enquiries.models import EnquiryContact, FollowUpSent
 
-from . import lost
+from . import lost, notify
 from .models import CampaignRecipient, MarketingActivity, MarketingLead
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,19 @@ def _revive(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], 
         return None
     note = (request.POST.get("revive_note") or "").strip()
     old_id = row["enquiry_id"]
+    original_salesperson = (enquiry.get("assigned_to") or "").strip()
+    salesperson = None
+    chosen = (request.POST.get("assign_to") or "").strip()
+    if chosen:
+        salesperson = get_user_model().objects.filter(pk=chosen, is_active=True).first() if chosen.isdigit() else None
+        if salesperson is None:
+            messages.error(request, "Choose a salesperson from the list.")
+            return None
+    # Keep the original wording when the same person is chosen; otherwise use the chosen person's name.
+    if salesperson is not None and notify.find_user(original_salesperson) != salesperson:
+        assigned_to = notify.display_name(salesperson)
+    else:
+        assigned_to = original_salesperson
     description = f"Revived by marketing from lost enquiry {old_id} ({row['kind_label']})."
     if note:
         description += f"\n\n{note}"
@@ -93,7 +107,7 @@ def _revive(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], 
         "description": description,
         "customer_reference": enquiry.get("customer_reference") or "",
         "project_name": enquiry.get("project_name") or None,
-        "assigned_to": enquiry.get("assigned_to") or None,
+        "assigned_to": assigned_to or None,
         "remarks": f"Revived from enquiry {old_id}.",
     }
     try:
@@ -111,12 +125,28 @@ def _revive(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], 
         lead.revived_by = request.user
         lead.updated_by = request.user
         lead.save()
-        _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Revived as new enquiry {new_id}." +
+        _log(lead, request.user, MarketingActivity.KIND_SYSTEM,
+             f"Revived as new enquiry {new_id}" + (f", assigned to {assigned_to}" if assigned_to else "") + "." +
              (f" {note}" if note else ""))
         if row["customer_email"]:
             EnquiryContact.objects.get_or_create(enquiry_id=new_id,
                                                  defaults={"customer_email": row["customer_email"],
                                                            "updated_by": request.user})
+
+    # Tell the salesperson. A problem here never undoes the revive; it is shown and logged.
+    done, problems = notify.notify_revived(
+        sender=request.user, salesperson=salesperson, customer=row["customer_name"], old_id=old_id,
+        new_id=new_id, note=note, enquiry_url=request.build_absolute_uri(reverse("enquiries:detail", args=[new_id])))
+    if salesperson is not None:
+        name = notify.display_name(salesperson)
+        if done:
+            _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"{name} was notified by {' and '.join(done)}.")
+        elif not problems:
+            problems = [f"{name} was not notified (phone notifications are not set up and email notices are off), "
+                        "so please tell them yourself"]
+    for problem in problems:
+        _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Notice: {problem}.")
+        messages.warning(request, f"Revived, but {problem}.")
     return new_id
 
 
@@ -185,6 +215,8 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "reason_choices": list(MarketingLead.REASON_CHOICES),
         "note_kinds": [(k, v) for k, v in MarketingActivity.KIND_CHOICES if k != MarketingActivity.KIND_SYSTEM],
         "can_revive": row["stage"] not in (lost.STAGE_REVIVED, lost.STAGE_DO_NOT_CONTACT),
+        "team": notify.team_members(),
+        "matched_salesperson": notify.find_user(enquiry.get("assigned_to") or ""),
         "wait_days": lost.wait_days(),
     }
     return render(request, "marketing/detail.html", context)
