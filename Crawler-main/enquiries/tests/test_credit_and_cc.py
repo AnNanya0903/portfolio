@@ -44,7 +44,7 @@ class ParseCcTests(TestCase):
 class CreditPeriodRuleTests(TestCase):
     def test_due_date_and_hold(self):
         today = timezone.localdate()
-        contact = EnquiryContact.objects.create(enquiry_id="E1", payment_status="pending",
+        contact = EnquiryContact.objects.create(enquiry_id="E1", payment_status="credit",
                                                 credit_period_days=30, credit_starts_on=today - timedelta(days=10))
         self.assertEqual(payment_terms.credit_due_date(contact), today + timedelta(days=20))
         self.assertEqual(payment_terms.credit_hold_until("E1"), today + timedelta(days=20))
@@ -52,6 +52,14 @@ class CreditPeriodRuleTests(TestCase):
         contact.payment_status = "paid"
         contact.save()
         self.assertIsNone(payment_terms.credit_hold_until("E1"))
+
+    def test_credit_days_without_credit_choice_do_not_hold(self):
+        EnquiryContact.objects.create(enquiry_id="E1", payment_status="pending", credit_period_days=30,
+                                      credit_starts_on=timezone.localdate())
+        self.assertIsNone(payment_terms.credit_hold_until("E1"))
+
+    def test_choice_is_in_the_payment_list(self):
+        self.assertEqual([k for k, _ in EnquiryContact.PAYMENT_STATUS_CHOICES], ["pending", "partial", "credit", "paid"])
 
     def test_no_credit_period_no_hold(self):
         EnquiryContact.objects.create(enquiry_id="E1", payment_due_on=timezone.localdate() + timedelta(days=5))
@@ -77,7 +85,8 @@ class CreditPeriodRuleTests(TestCase):
         latest = FollowUpSent.objects.create(enquiry_id="E1", customer_email="b@acme.example", sent_by=sales,
                                              status="sent", gmail_thread_id="t1", stage="payment_pending",
                                              next_follow_up_on=today)
-        EnquiryContact.objects.create(enquiry_id="E1", credit_period_days=30, credit_starts_on=today)
+        EnquiryContact.objects.create(enquiry_id="E1", payment_status="credit", credit_period_days=30,
+                                      credit_starts_on=today)
         enquiry = {"enquiry_id": "E1", "status": "accepted"}
         reason = auto_follow_up._skip_reason("E1", enquiry, latest, 1, today)
         self.assertIn("credit period", reason)
@@ -104,7 +113,7 @@ class BoardCreditTests(TestCase):
 
     def test_credit_period_sets_the_due_date_and_board_shows_it(self):
         start = timezone.localdate()
-        response = self._post(payment_status="pending", credit_period_days="45", credit_starts_on=start.isoformat())
+        response = self._post(payment_status="credit", credit_period_days="45", credit_starts_on=start.isoformat())
         contact = EnquiryContact.objects.get(enquiry_id="C1")
         self.assertEqual((contact.credit_period_days, contact.credit_starts_on), (45, start))
         self.assertEqual(contact.payment_due_on, start + timedelta(days=45))
@@ -116,23 +125,24 @@ class BoardCreditTests(TestCase):
         row = board.context["enquiries"][0]
         self.assertTrue(row["payment"]["in_credit"])
         self.assertEqual(row["follow_up"]["due_state"], "credit")
-        self.assertContains(board, "45-day credit")
+        self.assertContains(board, "Credit period (45 days)")
+        self.assertContains(board, '<option value="credit" selected>Credit period</option>')
         self.assertContains(board, "(in credit period)")
         self.assertContains(board, 'data-follow-up-state="credit"')
         self.assertContains(board, "CC: boss@avigiri.com")
 
     def test_credit_start_defaults_to_today_and_empty_clears_it(self):
-        self._post(payment_status="pending", credit_period_days="30")
+        self._post(payment_status="credit", credit_period_days="30")
         contact = EnquiryContact.objects.get(enquiry_id="C1")
         self.assertEqual(contact.credit_starts_on, timezone.localdate())
-        self._post(payment_status="partial", credit_period_days="")
+        self._post(payment_status="partial", credit_period_days="30")  # other choices ignore the credit boxes
         contact.refresh_from_db()
         self.assertIsNone(contact.credit_period_days)
         self.assertIsNone(contact.credit_starts_on)
 
     def test_bad_credit_period_is_rejected(self):
-        for value in ("-5", "abc", "400"):
-            response = self._post(payment_status="pending", credit_period_days=value)
+        for value in ("-5", "abc", "400", "0", ""):
+            response = self._post(payment_status="credit", credit_period_days=value)
             self.assertContains(response, "Credit period must be")
         self.assertFalse(EnquiryContact.objects.filter(enquiry_id="C1").exists())
 
@@ -217,7 +227,7 @@ class ComposeCcTests(TestCase):
 
     def test_credit_period_notice_and_due_date_default(self):
         today = timezone.localdate()
-        EnquiryContact.objects.create(enquiry_id="ENQ-7", payment_status="pending", credit_period_days=30,
+        EnquiryContact.objects.create(enquiry_id="ENQ-7", payment_status="credit", credit_period_days=30,
                                       credit_starts_on=today)
         page = self._compose()
         due = today + timedelta(days=30)

@@ -1126,8 +1126,7 @@ def _attach_order_tracking(enquiry: MutableMapping[str, Any], contact: Optional[
             "overdue": bool(due and payment != EnquiryContact.PAYMENT_PAID and due < timezone.localdate()),
             "credit_days": contact.credit_period_days if contact else None,
             "credit_starts_on": contact.credit_starts_on if contact else None,
-            "in_credit": bool(contact and contact.credit_period_days and due and payment != EnquiryContact.PAYMENT_PAID
-                              and due > timezone.localdate()),
+            "in_credit": bool(payment == EnquiryContact.PAYMENT_CREDIT and due and due > timezone.localdate()),
         }
     else:
         enquiry["payment"] = None
@@ -1166,23 +1165,20 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
     if due_raw and due is None:
         messages.error(request, "Please enter a valid payment due date.")
         return
-    credit_raw = (request.POST.get("credit_period_days") or "").strip()
-    credit_days = None
-    if credit_raw:
-        if not credit_raw.isdigit() or int(credit_raw) > payment_terms.MAX_CREDIT_DAYS:
-            messages.error(request, f"Credit period must be a number of days between 0 and {payment_terms.MAX_CREDIT_DAYS}.")
+    # "Credit period" in the Payment list: payment is due N days after the invoice / dispatch date.
+    credit_days, credit_start = None, None
+    if value == EnquiryContact.PAYMENT_CREDIT:
+        credit_raw = (request.POST.get("credit_period_days") or "").strip()
+        if not credit_raw.isdigit() or not 1 <= int(credit_raw) <= payment_terms.MAX_CREDIT_DAYS:
+            messages.error(request, f"Credit period must be a number of days between 1 and {payment_terms.MAX_CREDIT_DAYS}.")
             return
-        credit_days = int(credit_raw) or None
-    credit_start_raw = (request.POST.get("credit_starts_on") or "").strip()
-    credit_start = parse_date(credit_start_raw) if credit_start_raw else None
-    if credit_start_raw and credit_start is None:
-        messages.error(request, "Please enter a valid credit start date (invoice / dispatch date).")
-        return
-    if credit_days:
-        credit_start = credit_start or timezone.localdate()
+        credit_days = int(credit_raw)
+        credit_start_raw = (request.POST.get("credit_starts_on") or "").strip()
+        credit_start = parse_date(credit_start_raw) if credit_start_raw else timezone.localdate()
+        if credit_start is None:
+            messages.error(request, "Please enter a valid credit start date (invoice / dispatch date).")
+            return
         due = credit_start + timedelta(days=credit_days)  # the credit period sets the due date
-    else:
-        credit_start = None
     paid_on, reference = None, (request.POST.get("payment_reference") or "").strip()[:120]
     if value == EnquiryContact.PAYMENT_PAID:
         paid_raw = (request.POST.get("payment_paid_on") or "").strip()
@@ -1222,9 +1218,10 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
             payment_detail=status_emails.payment_detail_text(paid_on, reference),
         )
         _report_status_email(request, outcome, "payment received")
-    elif credit_days and due > timezone.localdate():
-        messages.success(request, f"Order #{enquiry_id}: {label}. Credit period {credit_days} days: payment is due on "
-                                  f"{due:%d %b %Y}, and payment reminders wait until then.")
+    elif credit_days:
+        messages.success(request, f"Order #{enquiry_id}: {label} of {credit_days} days. Payment is due on "
+                                  f"{due:%d %b %Y}" + (", and payment reminders wait until then."
+                                                       if due > timezone.localdate() else "."))
     else:
         messages.success(request, f"Order #{enquiry_id}: {label}.")
 

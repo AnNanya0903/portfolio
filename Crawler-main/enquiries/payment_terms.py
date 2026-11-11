@@ -20,7 +20,8 @@ def credit_due_date(contact: Optional[EnquiryContact]) -> Optional[date]:
     """Payment due date: end of the credit period if one is set, otherwise the entered due date."""
     if contact is None:
         return None
-    if contact.credit_period_days is not None and contact.credit_starts_on:
+    if (contact.payment_status == EnquiryContact.PAYMENT_CREDIT and contact.credit_period_days
+            and contact.credit_starts_on):
         return contact.credit_starts_on + timedelta(days=contact.credit_period_days)
     return contact.payment_due_on
 
@@ -31,7 +32,7 @@ def credit_hold_until(enquiry_id: str, today: Optional[date] = None) -> Optional
     Payment reminders are not sent before this date.
     """
     contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).first()
-    if contact is None or not contact.credit_period_days or contact.payment_status == EnquiryContact.PAYMENT_PAID:
+    if contact is None or not contact.credit_period_days or contact.payment_status != EnquiryContact.PAYMENT_CREDIT:
         return None
     due = credit_due_date(contact)
     today = today or timezone.localdate()
@@ -43,7 +44,8 @@ def payment_terms_for(enquiry_id: str) -> Tuple[Optional[date], Optional[int]]:
     contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).first()
     if contact is None:
         return None, None
-    return credit_due_date(contact), contact.credit_period_days or None
+    credit_days = contact.credit_period_days if contact.payment_status == EnquiryContact.PAYMENT_CREDIT else None
+    return credit_due_date(contact), credit_days or None
 
 
 def parse_cc(raw: str, *, exclude: str = "") -> Tuple[List[str], str]:

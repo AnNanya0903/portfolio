@@ -116,10 +116,12 @@ class EnquiryContact(models.Model):
     # Payment for an accepted order. Empty means "pending"; when it is paid the order becomes converted.
     PAYMENT_PENDING = "pending"
     PAYMENT_PARTIAL = "partial"
+    PAYMENT_CREDIT = "credit"  # payment on credit terms: due credit_period_days after credit_starts_on
     PAYMENT_PAID = "paid"
     PAYMENT_STATUS_CHOICES = (
         (PAYMENT_PENDING, "Payment pending"),
         (PAYMENT_PARTIAL, "Partially paid"),
+        (PAYMENT_CREDIT, "Credit period"),
         (PAYMENT_PAID, "Paid"),
     )
     payment_status = models.CharField(max_length=16, choices=PAYMENT_STATUS_CHOICES, blank=True, default="")
