@@ -1,0 +1,315 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ heading }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .quotation-matrix-intro {
+    background-color: rgba(13, 81, 143, 0.05);
+    border: 1px dashed rgba(13, 81, 143, 0.25);
+    border-radius: 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+  .matrix-scroll {
+    overflow-x: auto;
+    position: relative;
+  }
+  .enquiry-matrix {
+    min-width: 720px;
+    border-collapse: separate;
+    border-spacing: 0;
+    background-color: #fff;
+  }
+  .enquiry-matrix thead th {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background-color: #fff;
+  }
+  .matrix-header {
+    font-weight: 600;
+    white-space: nowrap;
+    text-align: center;
+  }
+  .matrix-header--die {
+    background-color: rgba(13, 81, 143, 0.08);
+  }
+  .matrix-header--mold {
+    background-color: rgba(37, 155, 36, 0.08);
+  }
+  .matrix-label {
+    background-color: #f6f8fb;
+    font-weight: 600;
+    position: sticky;
+    left: 0;
+    z-index: 2;
+  }
+  .enquiry-matrix thead .matrix-label {
+    z-index: 5;
+  }
+  .matrix-cell--na {
+    background-color: #f9fafb;
+    text-align: center;
+    color: #adb5bd;
+  }
+  .matrix-textarea {
+    min-height: 2.75rem;
+  }
+</style>
+{% endblock %}
+
+{% block auth_content %}
+<div class="mb-4">
+  <a class="btn btn-link px-0" href="{{ back_url }}">
+    <i class="bi bi-arrow-left"></i> Back
+  </a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center">
+    <div>
+      <h1 class="h5 mb-0">{{ heading }}</h1>
+      <p class="text-muted mb-0">Upload the final PDF and we’ll generate a secure link. A password is created for you, and you can then email the link to the customer.</p>
+    </div>
+    <span class="badge text-bg-light">
+      {% if subdivision %}
+        {{ subdivision.subdivision_id }}
+      {% else %}
+        {{ enquiry.enquiry_id }}
+      {% endif %}
+    </span>
+  </div>
+  <div class="card-body">
+    {% if hidden_errors %}
+      <div class="alert alert-danger">
+        <strong>Some configuration values need attention:</strong>
+        <ul class="mb-0">
+          {% for msg in hidden_errors %}<li>{{ msg }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+    {% if column_matrix.columns %}
+      <div class="matrix-scroll mb-4">
+        <table class="table table-sm table-bordered enquiry-matrix">
+          <thead>
+            <tr>
+              <th class="matrix-label">Parameter</th>
+              {% for column in column_matrix.columns %}
+                <th class="matrix-header {% if column.group == 'die' %}matrix-header--die{% else %}matrix-header--mold{% endif %}">
+                  {{ column.title|default:column.code }}
+                </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in column_matrix.rows %}
+              <tr>
+                <th class="matrix-label">{{ row.label }}</th>
+                {% for cell in row.cells %}
+                  {% if not cell.enabled %}
+                    <td class="matrix-cell matrix-cell--na">—</td>
+                  {% else %}
+                    <td class="matrix-cell">
+                      {% if cell.value is None or cell.value == '' %}
+                        <span class="text-muted">—</span>
+                      {% elif row.type == 'percent' %}
+                        {{ cell.value|floatformat:2 }}%
+                      {% elif row.type == 'number' or row.type == 'currency' %}
+                        {{ cell.value|floatformat:2 }}
+                      {% else %}
+                        {{ cell.value }}
+                      {% endif %}
+                    </td>
+                  {% endif %}
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+    <form method="post" action="{% url 'enquiries:generate_link' %}" data-loader="false" novalidate enctype="multipart/form-data">
+      {% csrf_token %}
+      <input type="hidden" name="mode" value="{{ preview_mode }}">
+      <input type="hidden" name="save" value="true">
+      <input type="hidden" name="enquiry_id" value="{{ enquiry.enquiry_id }}">
+      {% for key, value in additional_values.items %}
+        <input type="hidden" name="{{ key }}" value="{{ value }}">
+      {% endfor %}
+
+      <div class="row g-3 d-none">
+        {% for field in fields %}
+          <div class="{{ field.column_class|default:'col-12 col-md-6 col-xl-4' }}">
+            <input type="hidden" name="all_fields" value="{{ field.name }}">
+            <input type="hidden" name="include_fields" value="{{ field.name }}">
+            {% if field.type == 'checkbox' %}
+              <div class="d-flex justify-content-between align-items-start gap-3 mt-2">
+                <div class="form-check m-0">
+                  <input
+                    type="checkbox"
+                    class="{{ field.input_class|default:'form-check-input' }}"
+                    id="id_{{ field.name }}"
+                    name="{{ field.name }}"
+                    value="{{ field.value|default:'on' }}"
+                    {% for attr_name, attr_value in field.attrs.items %} {{ attr_name }}="{{ attr_value }}"{% endfor %}
+                    {% if field.checked %}checked{% endif %}
+                  >
+                  <label class="form-check-label" for="id_{{ field.name }}">{{ field.label }}</label>
+                  {% if field.help_text %}
+                    <div class="form-text">{{ field.help_text }}</div>
+                  {% endif %}
+                  {% if field.errors %}
+                    <div class="invalid-feedback d-block">
+                      {% for err in field.errors %}<div>{{ err }}</div>{% endfor %}
+                    </div>
+                  {% endif %}
+                </div>
+                <div class="form-check form-check-inline mb-0 pt-1">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    id="include_{{ field.name }}"
+                    name="include_fields"
+                    value="{{ field.name }}"
+                  >
+                  <label class="form-check-label small" for="include_{{ field.name }}">Include</label>
+                </div>
+              </div>
+            {% else %}
+              <div class="d-flex justify-content-between align-items-center mb-1">
+                <label class="form-label mb-0" for="id_{{ field.name }}">{{ field.label }}</label>
+                <div class="form-check form-check-inline mb-0">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    id="include_{{ field.name }}"
+                    name="include_fields"
+                    value="{{ field.name }}"
+                  >
+                  <label class="form-check-label small" for="include_{{ field.name }}">Include</label>
+                </div>
+              </div>
+              {% if field.type == 'textarea' %}
+                <textarea
+                  class="{{ field.input_class|default:'form-control' }}"
+                  id="id_{{ field.name }}"
+                  name="{{ field.name }}"
+                  rows="{{ field.rows|default:3 }}"
+                  {% for attr_name, attr_value in field.attrs.items %} {{ attr_name }}="{{ attr_value }}"{% endfor %}
+                >{{ field.value }}</textarea>
+              {% elif field.type == 'select' %}
+                <select
+                  class="{{ field.input_class|default:'form-select' }}"
+                  id="id_{{ field.name }}"
+                  name="{{ field.name }}"
+                  {% for attr_name, attr_value in field.attrs.items %} {{ attr_name }}="{{ attr_value }}"{% endfor %}
+                >
+                  {% for choice_value, choice_label in field.choices %}
+                    <option value="{{ choice_value }}" {% if choice_value|stringformat:'s' == field.value|stringformat:'s' %}selected{% endif %}>{{ choice_label }}</option>
+                  {% endfor %}
+                </select>
+              {% else %}
+                <input
+                  type="{{ field.type|default:'text' }}"
+                  class="{{ field.input_class|default:'form-control' }}"
+                  id="id_{{ field.name }}"
+                  name="{{ field.name }}"
+                  {% if field.step %}step="{{ field.step }}"{% endif %}
+                  {% for attr_name, attr_value in field.attrs.items %} {{ attr_name }}="{{ attr_value }}"{% endfor %}
+                  value="{{ field.value }}"
+                >
+              {% endif %}
+              {% if field.help_text %}
+                <div class="form-text">{{ field.help_text }}</div>
+              {% endif %}
+              {% if field.errors %}
+                <div class="invalid-feedback d-block">
+                  {% for err in field.errors %}<div>{{ err }}</div>{% endfor %}
+                </div>
+              {% endif %}
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="mt-4">
+        {% if requires_pdf_upload %}
+          <div class="alert alert-warning" role="alert">
+            Upload a PDF to generate this share link.
+          </div>
+          {% if share_error == 'pdf' %}
+            <div class="alert alert-danger" role="alert">Please upload a valid PDF.</div>
+          {% endif %}
+          <div class="mb-3">
+            <label class="form-label" for="sharePdfField">PDF for share link</label>
+            <input type="file" class="form-control" id="sharePdfField" name="share_pdf" accept="application/pdf" required>
+          </div>
+        {% else %}
+          <div class="alert alert-info" role="alert">
+            Existing enquiry PDF will be used for the share link.
+          </div>
+        {% endif %}
+        {% if share_error == 'password' %}
+          <div class="alert alert-danger" role="alert">Password is required.</div>
+        {% endif %}
+        <div class="mb-3">
+          <label class="form-label" for="sharePasswordField">Share link password</label>
+          <div class="input-group">
+            <input type="text" class="form-control font-monospace" id="sharePasswordField" name="share_password" placeholder="AG-… (created automatically)" autocomplete="off" spellcheck="false" value="" data-auto-password>
+            <button class="btn btn-outline-secondary" type="button" data-new-password="sharePasswordField" title="Create a new password">
+              <i class="bi bi-arrow-repeat"></i>
+            </button>
+            <button class="btn btn-outline-secondary" type="button" data-toggle-password="sharePasswordField" title="Hide or show">
+              <i class="bi bi-eye-slash"></i>
+            </button>
+          </div>
+          <div class="form-text">Created automatically; you can change it. The customer needs this password to open the PDF, and it is included in the email to the customer.</div>
+        </div>
+      </div>
+
+      <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-link-45deg me-1"></i>Generate Link
+        </button>
+        <a class="btn btn-outline-secondary" href="{% url 'enquiries:detail' enquiry.enquiry_id %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+  {{ block.super }}
+  <script src="{% static 'js/enquiry-calculations.js' %}"></script>
+  <script>
+    // Share link password: filled in automatically as AG- plus 8 characters (no look-alikes such as 0/O or 1/l).
+    (function () {
+      const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+      const make = function () {
+        const values = new Uint32Array(8);
+        window.crypto.getRandomValues(values);
+        return 'AG-' + Array.from(values, function (v) { return alphabet[v % alphabet.length]; }).join('');
+      };
+      document.querySelectorAll('[data-auto-password]').forEach(function (input) {
+        if (!input.value) input.value = make();
+      });
+      document.addEventListener('click', function (event) {
+        const button = event.target.closest('[data-new-password]');
+        if (!button) return;
+        const input = document.getElementById(button.getAttribute('data-new-password'));
+        if (input) input.value = make();
+      });
+    })();
+    document.addEventListener('click', function (event) {
+      const toggleBtn = event.target.closest('[data-toggle-password]');
+      if (!toggleBtn) return;
+      const targetId = toggleBtn.getAttribute('data-toggle-password');
+      const input = document.getElementById(targetId);
+      if (!input) return;
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      toggleBtn.innerHTML = showing ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>';
+    });
+  </script>
+{% endblock %}

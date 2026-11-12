@@ -2970,6 +2970,15 @@ def _create_share_link_from_values(
     }
 
 
+SHARE_PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/I
+SHARE_PASSWORD_PREFIX = "AG-"  # every generated password starts with AG (AVIGIRI)
+
+
+def generate_share_password(length: int = 8) -> str:
+    """A share-link password like AG-hmD52xna: AG- plus random characters that are easy to read or type."""
+    return SHARE_PASSWORD_PREFIX + "".join(secrets.choice(SHARE_PASSWORD_ALPHABET) for _ in range(length))
+
+
 @login_required
 def generate_link(request: HttpRequest) -> HttpResponse:
     """Generate a signed shareable link with selected fields.
@@ -3021,9 +3030,8 @@ def generate_link(request: HttpRequest) -> HttpResponse:
         )
         return _render_preview_response(request, form, mode, error_message="Please correct the highlighted errors and try again.")
 
-    share_password = (request.POST.get("share_password") or "").strip()
-    if not share_password:
-        return _render_preview_response(request, form, mode, error_message="Please provide a password to protect the share link.", share_error="password")
+    # The preview page fills in a password automatically; if it still arrives empty, create one here.
+    share_password = (request.POST.get("share_password") or "").strip() or generate_share_password()
 
     api_root = _get_api_root()
     enquiry_id = request.POST.get("enquiry_id") or request.POST.get("parent_enquiry_id") or ""
