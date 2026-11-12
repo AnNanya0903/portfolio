@@ -19,6 +19,7 @@ SERVICE_DEFINITIONS: Dict[str, str] = {
     "design": "Design library",
     "enquiries": "Enquiries",
     "marketing": "Marketing",
+    "kyc": "KYC",
     "deskera": "Deskera",
     "mrp": "Manufacturing",
     "accounts": "Accounts",

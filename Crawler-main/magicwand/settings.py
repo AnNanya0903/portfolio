@@ -131,6 +131,7 @@ LOCAL_APPS = [
     'dashboard',  # Gmail dashboard functionality
     'enquiries',  # Enquiry management shell
     'marketing',  # Lost enquiries (Rejected / No response) and win-back
+    'kyc',  # Customer master: customer codes and contacts by team
     'compounding',  # Compounding production plan board
     'discussion',  # Discussion forum
     'docscanner',  # Phone camera document scanning + AI extraction

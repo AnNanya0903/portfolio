@@ -886,6 +886,22 @@
     </div>
     {% endif %}
 
+    {% if mw_service_access.kyc|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'kyc:list' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-blue"><i class="bi bi-person-vcard"></i></div>
+                <h5 class="text-dark">KYC</h5>
+                <p class="text-muted small">Customer codes, company details and contacts for each team.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="status-pill bg-primary-subtle text-primary">Customer master</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
     {% if mw_service_access.deskera|default:False %}
     <div class="col-md-6 col-xl-4">
         <a href="javascript:void(0)" onclick="openAiPortal('deskera')" class="text-decoration-none">

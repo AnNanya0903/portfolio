@@ -44,6 +44,7 @@ urlpatterns = [
     path('design-library/download/<path:file_path>/', views.design_library_download, name='design_library_download'),
     path('enquiries/', include('enquiries.urls')),
     path('marketing/', include('marketing.urls')),
+    path('kyc/', include('kyc.urls')),
     path('compounding/', include('compounding.urls')),
     path('discussion/', include('discussion.urls')),
     path('documents/', include('docscanner.urls')),
