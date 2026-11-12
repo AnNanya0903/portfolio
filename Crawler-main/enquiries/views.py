@@ -2970,13 +2970,15 @@ def _create_share_link_from_values(
     }
 
 
-SHARE_PASSWORD_PREFIX = "Avigiri"
-SHARE_PASSWORD_DIGITS = 5
+SHARE_PASSWORD_PREFIX = "AG-"
+SHARE_PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/I
+SHARE_PASSWORD_LENGTH = 8  # characters after the prefix
 
 
 def generate_share_password() -> str:
-    """A different password for every share link: Avigiri plus 5 random digits, e.g. Avigiri48213."""
-    return SHARE_PASSWORD_PREFIX + "".join(secrets.choice("0123456789") for _ in range(SHARE_PASSWORD_DIGITS))
+    """A different password for every share link: AG- plus 8 random letters and digits, e.g. AG-hmD52xna."""
+    return SHARE_PASSWORD_PREFIX + "".join(
+        secrets.choice(SHARE_PASSWORD_ALPHABET) for _ in range(SHARE_PASSWORD_LENGTH))
 
 
 @login_required

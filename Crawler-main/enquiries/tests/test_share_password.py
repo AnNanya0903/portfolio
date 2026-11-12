@@ -1,4 +1,4 @@
-"""Every share link gets its own password: Avigiri plus 5 random digits (preview page, or the server if empty)."""
+"""Every share link gets its own password: AG- plus 8 letters and digits (preview page, or the server if empty)."""
 import re
 from unittest.mock import patch
 
@@ -8,27 +8,32 @@ from django.template.loader import get_template
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from enquiries.views import SHARE_PASSWORD_PREFIX, generate_share_password
+from enquiries.views import SHARE_PASSWORD_ALPHABET, SHARE_PASSWORD_PREFIX, generate_share_password
 
 STATIC = dict(STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage")
 ENQUIRY = {"enquiry_id": "ENQ-7", "status": "open", "subject": "Viton gaskets", "customer_name": "Deccan Chemicals",
            "customer_reference": "", "remarks": "", "attachments": []}
-PATTERN = re.compile(r"^Avigiri\d{5}$")
+PATTERN = re.compile(r"^AG-[A-Za-z0-9]{8}$")
 
 
 class GeneratePasswordTests(TestCase):
-    def test_password_is_avigiri_plus_five_digits_and_differs_per_link(self):
-        self.assertEqual(SHARE_PASSWORD_PREFIX, "Avigiri")
+    def test_password_is_ag_plus_letters_and_digits_and_differs_per_link(self):
+        self.assertEqual(SHARE_PASSWORD_PREFIX, "AG-")
         passwords = [generate_share_password() for _ in range(200)]
         for password in passwords:
             self.assertRegex(password, PATTERN)
-        self.assertGreater(len(set(passwords)), 150)  # random, not one fixed password
+            self.assertTrue(set(password[3:]) <= set(SHARE_PASSWORD_ALPHABET))
+        self.assertEqual(len(set(passwords)), 200)  # random, not one fixed password
+        self.assertTrue(any(c.isdigit() for c in SHARE_PASSWORD_ALPHABET))
+        self.assertTrue(any(c.isalpha() for c in SHARE_PASSWORD_ALPHABET))
+        for look_alike in "0O1lI":
+            self.assertNotIn(look_alike, SHARE_PASSWORD_ALPHABET)
 
     def test_preview_page_creates_a_new_password_each_time(self):
         source = get_template("enquiries/preview.html").template.source
         self.assertIn('value="" data-auto-password', source)  # nothing fixed in the page
         self.assertIn("if (!input.value) input.value = make();", source)
-        self.assertIn("return 'Avigiri' +", source)
+        self.assertIn("return 'AG-' +", source)
         self.assertIn("data-new-password", source)
         self.assertNotIn("Avigiri12345", source)
 
@@ -53,7 +58,6 @@ class GenerateLinkPasswordTests(TestCase):
         for response in (first, second):
             self.assertRegex(response.context["share_password"], PATTERN)
             self.assertContains(response, response.context["share_password"])
-        # Two links getting the same 5 digits by chance is a 1 in 100,000 event.
         self.assertNotEqual(first.context["share_password"], second.context["share_password"])
 
     def test_typed_password_is_kept(self):
