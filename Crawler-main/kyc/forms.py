@@ -85,3 +85,50 @@ class CustomerContactForm(forms.ModelForm):
         if data.get("is_purchaser") and not data.get("email") and "email" not in self.errors:
             self.add_error("email", "The purchaser needs an email address: enquiry emails go to this person.")
         return data
+
+
+DOCUMENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"}
+DOCUMENT_MAX_BYTES = 15 * 1024 * 1024
+SHEET_MAX_BYTES = 5 * 1024 * 1024
+
+
+class DocumentUploadForm(forms.Form):
+    document = forms.FileField(
+        required=False, label="Photo or PDF of the KYC form",
+        widget=forms.ClearableFileInput(attrs={"class": "form-control form-control-sm",
+                                               "accept": "image/jpeg,image/png,image/webp,image/heic,application/pdf"}))
+    pasted_text = forms.CharField(
+        required=False, max_length=20000, label="Or paste the details as text",
+        widget=forms.Textarea(attrs={**_TEXT, "rows": 8,
+                                     "placeholder": "Paste from an email, a Word file or an old sheet"}))
+
+    def clean_document(self):
+        document = self.cleaned_data.get("document")
+        if not document:
+            return document
+        if (getattr(document, "content_type", "") or "").lower() not in DOCUMENT_TYPES:
+            raise forms.ValidationError("Upload a photo (JPG, PNG, WEBP, HEIC) or a PDF.")
+        if document.size > DOCUMENT_MAX_BYTES:
+            raise forms.ValidationError("This file is larger than 15 MB.")
+        return document
+
+    def clean(self):
+        data = super().clean()
+        if not data.get("document") and not (data.get("pasted_text") or "").strip() and not self.errors:
+            raise forms.ValidationError("Choose a photo or PDF, or paste the details as text.")
+        return data
+
+
+class SheetUploadForm(forms.Form):
+    sheet = forms.FileField(
+        label="Excel or CSV file",
+        widget=forms.ClearableFileInput(attrs={"class": "form-control form-control-sm", "accept": ".xlsx,.csv"}))
+
+    def clean_sheet(self):
+        sheet = self.cleaned_data["sheet"]
+        if sheet.size > SHEET_MAX_BYTES:
+            raise forms.ValidationError("This file is larger than 5 MB.")
+        return sheet
+
+
+ContactFormSet = forms.formset_factory(CustomerContactForm, extra=0, can_delete=True)

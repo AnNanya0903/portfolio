@@ -7,6 +7,8 @@ payment reminders to accounts, drawings to technical, escalations to top managem
 from django.conf import settings
 from django.db import models
 
+from docscanner.storage import document_scan_storage
+
 User = settings.AUTH_USER_MODEL
 
 
@@ -86,3 +88,34 @@ class CustomerContact(models.Model):
 
     def __str__(self) -> str:
         return f"{self.customer.code}:{self.category}:{self.name}"
+
+
+class KycDocument(models.Model):
+    """An existing KYC form (photo, PDF or pasted text) that a customer's details were read from.
+
+    Uploaded first, read automatically, then checked by a person. `customer` is empty until that
+    person saves the customer.
+    """
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, null=True, blank=True, related_name="documents")
+    file = models.FileField(upload_to="kyc/%Y/%m/", storage=document_scan_storage, blank=True)
+    original_name = models.CharField(max_length=255, blank=True, default="")
+    content_type = models.CharField(max_length=120, blank=True, default="")
+    size_bytes = models.BigIntegerField(default=0)
+    pasted_text = models.TextField(blank=True, default="")
+    # {"customer": {...}, "contacts": [{...}]} as read from the document; empty when it could not be read.
+    extracted_data = models.JSONField(default=dict, blank=True)
+    error_message = models.CharField(max_length=500, blank=True, default="")
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "kyc_document"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"KycDocument:{self.pk}:{self.original_name or 'pasted text'}"
+
+    @property
+    def is_image(self) -> bool:
+        return self.content_type.startswith("image/")

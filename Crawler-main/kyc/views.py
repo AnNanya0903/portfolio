@@ -82,6 +82,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     return render(request, "kyc/detail.html", {
         "customer": customer,
         "groups": groups,
+        "documents": list(customer.documents.select_related("uploaded_by")),
         "has_purchaser": any(c.is_purchaser for c in contacts),
         "missing_teams": [g["label"] for g in groups if not any(c.email for c in g["contacts"])],
     })

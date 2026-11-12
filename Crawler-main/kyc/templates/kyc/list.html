@@ -11,6 +11,8 @@
     <p class="page-subtitle">Every customer, with its customer code and the contacts for each team.</p>
   </div>
   <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary" href="{% url 'kyc:import_sheet' %}"><i class="bi bi-file-earmark-spreadsheet me-1"></i> Import from Excel</a>
+    <a class="btn btn-outline-secondary" href="{% url 'kyc:import_new' %}"><i class="bi bi-camera me-1"></i> Import from a document</a>
     <a class="btn btn-primary shadow-sm" href="{% url 'kyc:new' %}"><i class="bi bi-plus-lg me-1"></i> New customer</a>
   </div>
 </div>

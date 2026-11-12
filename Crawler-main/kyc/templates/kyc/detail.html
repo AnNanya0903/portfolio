@@ -48,6 +48,29 @@
         </div>
       </div>
     </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Documents <span class="kyc-muted">({{ documents|length }})</span></h6>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:import_new' %}?customer={{ customer.pk }}"
+           aria-label="Add a document"><i class="bi bi-plus-lg"></i> Add</a>
+      </div>
+      <div>
+        {% for document in documents %}
+          <div class="kyc-contact">
+            {% if document.file %}
+              <a class="text-decoration-none kyc-value" target="_blank" rel="noopener" href="{% url 'kyc:document_file' document.pk %}">
+                <i class="bi bi-paperclip"></i> {{ document.original_name|default:"Document" }}</a>
+            {% else %}
+              <span class="kyc-value"><i class="bi bi-text-paragraph"></i> Pasted text</span>
+            {% endif %}
+            <div class="kyc-muted">{{ document.created_at|date:"d M Y" }}{% if document.uploaded_by %} · {{ document.uploaded_by.get_full_name|default:document.uploaded_by.username }}{% endif %}</div>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No documents yet.</div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 
   <div class="col-lg-8 d-flex flex-column gap-4">

@@ -2,7 +2,7 @@ from django.urls import path
 
 from magicwand.access import require_service_access
 
-from . import views
+from . import import_views, views
 
 app_name = "kyc"
 
@@ -11,6 +11,12 @@ _kyc = require_service_access("kyc")
 urlpatterns = [
     path("", _kyc(views.customer_list), name="list"),
     path("new/", _kyc(views.customer_new), name="new"),
+    path("import/", _kyc(import_views.import_new), name="import_new"),
+    path("import/sheet/", _kyc(import_views.import_sheet), name="import_sheet"),
+    path("import/sheet/template/", _kyc(import_views.sheet_template), name="sheet_template"),
+    path("import/<int:doc_id>/", _kyc(import_views.import_review), name="import_review"),
+    path("import/<int:doc_id>/discard/", _kyc(import_views.import_discard), name="import_discard"),
+    path("documents/<int:doc_id>/file/", _kyc(import_views.document_file), name="document_file"),
     path("<int:pk>/", _kyc(views.customer_detail), name="detail"),
     path("<int:pk>/edit/", _kyc(views.customer_edit), name="edit"),
     path("<int:pk>/contacts/new/", _kyc(views.contact_new), name="contact_new"),
