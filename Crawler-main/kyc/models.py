@@ -17,11 +17,13 @@ class Customer(models.Model):
     KYC_SENT = "sent"
     KYC_VERIFIED = "verified"
     KYC_CHANGES = "changes"
+    KYC_REJECTED = "rejected"
     KYC_STATUS_CHOICES = (
         (KYC_DRAFT, "Not verified"),
         (KYC_SENT, "Sent to customer"),
         (KYC_VERIFIED, "Verified by customer"),
         (KYC_CHANGES, "Customer asked for changes"),
+        (KYC_REJECTED, "Rejected by customer"),
     )
 
     # Stored in capitals without spaces, so "av-001" and "AV-001" are the same customer.
@@ -119,3 +121,58 @@ class KycDocument(models.Model):
     @property
     def is_image(self) -> bool:
         return self.content_type.startswith("image/")
+
+
+class KycVerification(models.Model):
+    """One email asking the customer to check the details we hold, and what they answered.
+
+    The email has a private link (`token`) to a page with the details and three answers:
+    all correct, changes needed, or reject.
+    """
+
+    STATUS_PENDING = "pending"
+    STATUS_SENT = "sent"
+    STATUS_DRY_RUN = "dry_run"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "Sending"),
+        (STATUS_SENT, "Sent"),
+        (STATUS_DRY_RUN, "Test mode (not sent)"),
+        (STATUS_FAILED, "Failed"),
+    )
+
+    RESPONSE_CONFIRMED = "confirmed"
+    RESPONSE_CHANGES = "changes"
+    RESPONSE_REJECTED = "rejected"
+    RESPONSE_CHOICES = (
+        (RESPONSE_CONFIRMED, "All details are correct"),
+        (RESPONSE_CHANGES, "Some details need to change"),
+        (RESPONSE_REJECTED, "Rejected"),
+    )
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="verifications")
+    token = models.CharField(max_length=64, unique=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    note = models.CharField(max_length=500, blank=True, default="")  # why it was not sent
+    sent_to = models.CharField(max_length=1000, blank=True, default="")  # comma-separated addresses
+    cc = models.CharField(max_length=1000, blank=True, default="")
+    subject = models.CharField(max_length=300, blank=True, default="")
+    body = models.TextField(blank=True, default="")
+    gmail_message_id = models.CharField(max_length=255, blank=True, default="")
+    sent_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    sent_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    response = models.CharField(max_length=10, choices=RESPONSE_CHOICES, blank=True, default="")
+    response_comment = models.TextField(blank=True, default="")
+    responded_at = models.DateTimeField(null=True, blank=True)
+    # The details as the customer saw them when they answered.
+    response_snapshot = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "kyc_verification"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"KycVerification:{self.customer_id}:{self.status}:{self.response or 'no answer'}"

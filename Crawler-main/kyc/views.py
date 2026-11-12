@@ -9,6 +9,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from . import verification
 from .forms import CustomerContactForm, CustomerForm
 from .models import Customer, CustomerContact
 
@@ -83,6 +84,9 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "customer": customer,
         "groups": groups,
         "documents": list(customer.documents.select_related("uploaded_by")),
+        "verifications": [{"row": v, "state": verification.link_state(v)}
+                          for v in customer.verifications.select_related("sent_by")[:5]],
+        "has_email": any(c.email for c in contacts),
         "has_purchaser": any(c.is_purchaser for c in contacts),
         "missing_teams": [g["label"] for g in groups if not any(c.email for c in g["contacts"])],
     })

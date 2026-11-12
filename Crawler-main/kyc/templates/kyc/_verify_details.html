@@ -1,0 +1,20 @@
+<dl class="row mb-0 small">
+  <dt class="col-sm-4 kyc-label">Company</dt><dd class="col-sm-8 kyc-value">{{ customer.name }}</dd>
+  <dt class="col-sm-4 kyc-label">Address</dt>
+  <dd class="col-sm-8 kyc-value">{% if customer.address %}{{ customer.address|linebreaksbr }}<br>{% endif %}{{ customer.city }}{% if customer.city and customer.state %}, {% endif %}{{ customer.state }} {{ customer.pincode }}{% if customer.country %}<br>{{ customer.country }}{% endif %}</dd>
+  <dt class="col-sm-4 kyc-label">GSTIN</dt><dd class="col-sm-8 kyc-value">{{ customer.gstin|default:"—" }}</dd>
+  <dt class="col-sm-4 kyc-label">PAN</dt><dd class="col-sm-8 kyc-value">{{ customer.pan|default:"—" }}</dd>
+  <dt class="col-sm-4 kyc-label">Company phone</dt><dd class="col-sm-8 kyc-value">{{ customer.phone|default:"—" }}</dd>
+  <dt class="col-sm-4 kyc-label">Website</dt><dd class="col-sm-8 kyc-value">{{ customer.website|default:"—" }}</dd>
+</dl>
+{% for group in groups %}
+  <h3 class="h6 mt-4 mb-2">{{ group.label }}</h3>
+  {% for contact in group.contacts %}
+    <div class="small kyc-value mb-2">
+      <strong>{{ contact.name }}</strong>{% if contact.designation %}, {{ contact.designation }}{% endif %}{% if contact.is_purchaser %} <span class="kyc-chip kyc-chip--purchaser">Purchaser</span>{% endif %}
+      <div>{{ contact.email }}{% if contact.email and contact.phone %} · {% endif %}{{ contact.phone }}</div>
+    </div>
+  {% endfor %}
+{% empty %}
+  <p class="kyc-muted mt-3 mb-0">No contact persons on record.</p>
+{% endfor %}

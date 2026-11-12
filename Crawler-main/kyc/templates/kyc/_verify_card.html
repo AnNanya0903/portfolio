@@ -1,0 +1,59 @@
+{% include 'kyc/_styles.html' %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    {% if state == 'missing' %}
+      <div class="card shadow-sm"><div class="card-body">
+        <h1 class="h5 mb-2">This link is not valid</h1>
+        <p class="text-muted mb-0">Please use the link from our latest email, or reply to that email and we will help you.</p>
+      </div></div>
+
+    {% elif state == 'expired' %}
+      <div class="card shadow-sm"><div class="card-body">
+        <h1 class="h5 mb-2">This link no longer works</h1>
+        <p class="text-muted mb-0">It has expired or was replaced by a newer email. Please use the link from our latest email, or reply to it and we will send a new one.</p>
+      </div></div>
+
+    {% elif state == 'answered' %}
+      <div class="card shadow-sm"><div class="card-body">
+        <h1 class="h5 mb-2">Thank you</h1>
+        <p class="mb-2">
+          {% if row.response == 'confirmed' %}You confirmed that the details we hold for {{ customer.name }} are correct.
+          {% elif row.response == 'changes' %}We have received the changes for {{ customer.name }} and will update our records.
+          {% else %}We have recorded your answer for {{ customer.name }} and will contact you.{% endif %}
+        </p>
+        <p class="text-muted small mb-0">Answered on {{ row.responded_at|date:"d M Y" }}. You can close this page.</p>
+      </div></div>
+
+    {% else %}
+      {% if state == 'preview' %}
+        <div class="kyc-test-banner mb-3"><strong>Preview.</strong> This email was not sent, so the answer buttons are switched off.</div>
+      {% endif %}
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h1 class="h5 mb-2">Please check your company details</h1>
+          <p class="text-muted small">These are the details AVIGIRI holds for {{ customer.name }}. Please check them and choose an answer below.</p>
+          {% include 'kyc/_verify_details.html' %}
+        </div>
+      </div>
+
+      <form method="post" class="card shadow-sm mt-3" novalidate>
+        {% csrf_token %}
+        <div class="card-body d-flex flex-column gap-3">
+          <h2 class="h6 mb-0">Your answer</h2>
+          <div>
+            <label class="form-label small" for="kycVerifyComment">What needs to change, or any comment <span class="kyc-muted">(needed only if something is wrong)</span></label>
+            <textarea name="comment" id="kycVerifyComment" rows="4" maxlength="4000" class="form-control"
+                      {% if state == 'preview' %}disabled{% endif %}>{{ form.comment.value|default:"" }}</textarea>
+            {% for e in form.comment.errors %}<div class="text-danger small" role="alert">{{ e }}</div>{% endfor %}
+            {% for e in form.response.errors %}<div class="text-danger small" role="alert">Please choose one of the answers below.</div>{% endfor %}
+          </div>
+          <div class="d-flex gap-2 flex-wrap">
+            <button type="submit" name="response" value="confirmed" class="btn btn-success" {% if state == 'preview' %}disabled{% endif %}>All details are correct</button>
+            <button type="submit" name="response" value="changes" class="btn btn-outline-primary" {% if state == 'preview' %}disabled{% endif %}>Some details need to change</button>
+            <button type="submit" name="response" value="rejected" class="btn btn-outline-danger" {% if state == 'preview' %}disabled{% endif %}>These details are not ours</button>
+          </div>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</div>

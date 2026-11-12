@@ -2,7 +2,7 @@ from django.urls import path
 
 from magicwand.access import require_service_access
 
-from . import import_views, views
+from . import import_views, verify_views, views
 
 app_name = "kyc"
 
@@ -17,7 +17,10 @@ urlpatterns = [
     path("import/<int:doc_id>/", _kyc(import_views.import_review), name="import_review"),
     path("import/<int:doc_id>/discard/", _kyc(import_views.import_discard), name="import_discard"),
     path("documents/<int:doc_id>/file/", _kyc(import_views.document_file), name="document_file"),
+    # Public: the private link in the verification email. No sign-in, so no access check.
+    path("verify/<str:token>/", verify_views.verify, name="verify"),
     path("<int:pk>/", _kyc(views.customer_detail), name="detail"),
+    path("<int:pk>/verification/send/", _kyc(verify_views.verification_send), name="verification_send"),
     path("<int:pk>/edit/", _kyc(views.customer_edit), name="edit"),
     path("<int:pk>/contacts/new/", _kyc(views.contact_new), name="contact_new"),
     path("<int:pk>/contacts/<int:contact_id>/edit/", _kyc(views.contact_edit), name="contact_edit"),

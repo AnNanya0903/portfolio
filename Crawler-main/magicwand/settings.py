@@ -275,6 +275,9 @@ FOLLOW_UP_AUTO_GAP_DAYS = [
 ]
 FOLLOW_UP_ACK_WITHIN_DAYS = config('FOLLOW_UP_ACK_WITHIN_DAYS', default=2, cast=int)  # acknowledge enquiries this recent (0 = off)
 FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=7, cast=int)  # close this long after the last follow-up (0 = off)
+# KYC verification emails. Test mode is on by default: nothing is sent until this is set to False.
+KYC_VERIFICATION_DRY_RUN = config('KYC_VERIFICATION_DRY_RUN', default=True, cast=bool)
+KYC_VERIFICATION_LINK_DAYS = config('KYC_VERIFICATION_LINK_DAYS', default=30, cast=int)  # how long the link works
 # Marketing portal: days to wait after an enquiry is lost before contacting the customer again.
 MARKETING_WAIT_DAYS = config('MARKETING_WAIT_DAYS', default=30, cast=int)
 # Marketing campaign emails. Test mode is on by default: nothing is sent until this is set to False.

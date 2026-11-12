@@ -132,3 +132,36 @@ class SheetUploadForm(forms.Form):
 
 
 ContactFormSet = forms.formset_factory(CustomerContactForm, extra=0, can_delete=True)
+
+
+class VerificationSendForm(forms.Form):
+    """Which of the customer's contacts get the verification email."""
+
+    recipients = forms.MultipleChoiceField(
+        label="Send to", widget=forms.CheckboxSelectMultiple,
+        error_messages={"required": "Choose at least one person to send the email to."})
+
+    def __init__(self, *args, contacts=(), **kwargs):
+        super().__init__(*args, **kwargs)
+        seen = {}
+        for contact in contacts:
+            if contact.email and contact.email not in seen:
+                role = " (purchaser)" if contact.is_purchaser else ""
+                seen[contact.email] = f"{contact.name}{role} · {contact.get_category_display()} · {contact.email}"
+        self.fields["recipients"].choices = list(seen.items())
+        if not self.is_bound:
+            purchasers = [c.email for c in contacts if c.is_purchaser and c.email]
+            self.fields["recipients"].initial = purchasers or list(seen)
+
+
+class VerificationResponseForm(forms.Form):
+    """The customer's answer on the public page."""
+
+    response = forms.ChoiceField(choices=[("confirmed", ""), ("changes", ""), ("rejected", "")])
+    comment = forms.CharField(required=False, max_length=4000, widget=forms.Textarea)
+
+    def clean(self):
+        data = super().clean()
+        if data.get("response") == "changes" and not (data.get("comment") or "").strip():
+            self.add_error("comment", "Please tell us what needs to change.")
+        return data

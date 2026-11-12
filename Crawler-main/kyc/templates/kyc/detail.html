@@ -51,6 +51,38 @@
 
     <div class="card border-0 shadow-sm mt-4">
       <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Verification by customer</h6>
+        {% if has_email %}
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:verification_send' customer.pk %}">
+            <i class="bi bi-envelope"></i> {% if verifications %}Send again{% else %}Send{% endif %}</a>
+        {% endif %}
+      </div>
+      <div>
+        {% for item in verifications %}
+          {% with v=item.row %}
+          <div class="kyc-contact">
+            <div>
+              {% if v.response %}<span class="kyc-chip kyc-chip--{{ v.response }}">{{ v.get_response_display }}</span>
+              {% else %}<span class="kyc-chip kyc-chip--{{ v.status }}">{{ v.get_status_display }}</span>
+                {% if item.state == 'open' %}<span class="kyc-muted ms-1">waiting for the customer</span>{% endif %}
+                {% if item.state == 'expired' and v.status == 'sent' %}<span class="kyc-muted ms-1">link no longer works</span>{% endif %}
+              {% endif %}
+            </div>
+            <div class="kyc-muted">{{ v.created_at|date:"d M Y" }}{% if v.sent_by %} · {{ v.sent_by.get_full_name|default:v.sent_by.username }}{% endif %}{% if v.sent_to %} · to {{ v.sent_to }}{% endif %}</div>
+            {% if v.responded_at %}<div class="kyc-muted">Answered {{ v.responded_at|date:"d M Y" }}</div>{% endif %}
+            {% if v.response_comment %}<div class="kyc-value small mt-1">“{{ v.response_comment|linebreaksbr }}”</div>{% endif %}
+            {% if v.note and not v.response %}<div class="kyc-muted">{{ v.note }}</div>{% endif %}
+            {% if item.state == 'preview' %}<a class="small" target="_blank" rel="noopener" href="{% url 'kyc:verify' v.token %}">See the page the customer would get</a>{% endif %}
+          </div>
+          {% endwith %}
+        {% empty %}
+          <div class="kyc-contact kyc-muted">{% if has_email %}Not sent to the customer yet.{% else %}Add a contact with an email address to send the details for verification.{% endif %}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
         <h6 class="mb-0">Documents <span class="kyc-muted">({{ documents|length }})</span></h6>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:import_new' %}?customer={{ customer.pk }}"
            aria-label="Add a document"><i class="bi bi-plus-lg"></i> Add</a>
