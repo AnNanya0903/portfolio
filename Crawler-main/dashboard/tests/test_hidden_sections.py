@@ -10,6 +10,8 @@ from magicwand.context_processors import service_access
 
 STATIC = dict(STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage")
 KEEP = {"enquiries", "marketing", "kyc"}
+HIDE_OTHERS = {"gmail_ai", "design", "deskera", "mrp", "accounts", "compounding_planning", "compounding_board",
+               "discussion", "document_scanner", "gasket_counter"}
 
 
 class HiddenSectionTests(TestCase):
@@ -22,7 +24,13 @@ class HiddenSectionTests(TestCase):
         request.user = self.user
         return service_access(request)["mw_service_access"]
 
-    def test_default_setting_keeps_only_enquiries_marketing_and_kyc(self):
+    def test_default_setting_shows_every_section(self):
+        from django.conf import settings
+        self.assertEqual(settings.MAGICWAND_HIDDEN_SERVICES, set())
+        self.assertTrue(all(self._flags().values()))
+
+    @override_settings(MAGICWAND_HIDDEN_SERVICES=HIDE_OTHERS)
+    def test_setting_can_keep_only_enquiries_marketing_and_kyc(self):
         shown = {slug for slug, on in self._flags().items() if on}
         self.assertEqual(shown, KEEP)
 
@@ -41,7 +49,7 @@ class HiddenSectionTests(TestCase):
         shown = {slug for slug, on in self._flags().items() if on}
         self.assertEqual(shown, {"kyc"})
 
-    @override_settings(**STATIC)
+    @override_settings(MAGICWAND_HIDDEN_SERVICES=HIDE_OTHERS, **STATIC)
     def test_menus_show_kept_sections_and_no_empty_headings(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
         for text in ("Enquiries", "Marketing", "KYC", "Core ERP"):
@@ -52,8 +60,8 @@ class HiddenSectionTests(TestCase):
                      "</i> Gasket Counter", "</i> Forum"):
             self.assertNotIn(text, page, text)
 
-    @override_settings(MAGICWAND_HIDDEN_SERVICES=set(), **STATIC)
-    def test_menus_show_every_section_when_nothing_is_hidden(self):
+    @override_settings(**STATIC)
+    def test_menus_show_every_section_by_default(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
         for text in (">Operations</summary>", ">Integrations</summary>", ">Intelligence</summary>",
                      ">Utilities</summary>", ">Collaboration</summary>",
