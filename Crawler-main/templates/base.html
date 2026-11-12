@@ -92,6 +92,7 @@
                     </div>
                     </details>
 
+                    {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board %}
                     <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Operations</summary>
                     <div class="sidebar-section-links">
@@ -128,7 +129,9 @@
                     {% endif %}
                     </div>
                     </details>
+                    {% endif %}
 
+                    {% if mw_service_access.deskera or mw_service_access.mrp %}
                     <details class="sidebar-section" {% if 'deskera' in request.path or '/mrp/integrations/' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Integrations</summary>
                     <div class="sidebar-section-links">
@@ -144,7 +147,9 @@
                     {% endif %}
                     </div>
                     </details>
+                    {% endif %}
 
+                    {% if mw_service_access.gmail_ai %}
                     <details class="sidebar-section" {% if 'gmail' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Intelligence</summary>
                     <div class="sidebar-section-links">
@@ -155,7 +160,9 @@
                     {% endif %}
                     </div>
                     </details>
+                    {% endif %}
 
+                    {% if mw_service_access.accounts or mw_service_access.document_scanner or mw_service_access.gasket_counter %}
                     <details class="sidebar-section" {% if 'accounts-portal' in request.path or 'accounts-service' in request.path or 'documents' in request.path or 'gasket-counter' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Utilities</summary>
                     <div class="sidebar-section-links">
@@ -176,7 +183,9 @@
                     {% endif %}
                     </div>
                     </details>
+                    {% endif %}
 
+                    {% if mw_service_access.discussion %}
                     <details class="sidebar-section" {% if 'discussion' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Collaboration</summary>
                     <div class="sidebar-section-links">
@@ -187,6 +196,7 @@
                     {% endif %}
                     </div>
                     </details>
+                    {% endif %}
                 </nav>
 
                 <div class="copilot-mobile-footer">
@@ -242,6 +252,7 @@
                 </div>
                 </details>
 
+                {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board %}
                 <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Operations</summary>
                 <div class="sidebar-section-links">
@@ -278,7 +289,9 @@
                 {% endif %}
                 </div>
                 </details>
+                {% endif %}
 
+                {% if mw_service_access.deskera or mw_service_access.mrp %}
                 <details class="sidebar-section" {% if 'deskera' in request.path or '/mrp/integrations/' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Integrations</summary>
                 <div class="sidebar-section-links">
@@ -294,7 +307,9 @@
                 {% endif %}
                 </div>
                 </details>
+                {% endif %}
 
+                {% if mw_service_access.gmail_ai %}
                 <details class="sidebar-section" {% if 'gmail' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Intelligence</summary>
                 <div class="sidebar-section-links">
@@ -305,7 +320,9 @@
                 {% endif %}
                 </div>
                 </details>
+                {% endif %}
 
+                {% if mw_service_access.accounts or mw_service_access.document_scanner or mw_service_access.gasket_counter %}
                 <details class="sidebar-section" {% if 'accounts-portal' in request.path or 'accounts-service' in request.path or 'documents' in request.path or 'gasket-counter' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Utilities</summary>
                 <div class="sidebar-section-links">
@@ -326,7 +343,9 @@
                 {% endif %}
                 </div>
                 </details>
+                {% endif %}
 
+                {% if mw_service_access.discussion %}
                 <details class="sidebar-section" {% if 'discussion' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Collaboration</summary>
                 <div class="sidebar-section-links">
@@ -337,6 +356,7 @@
                 {% endif %}
                 </div>
                 </details>
+                {% endif %}
             </nav>
 
             <div class="sidebar-footer mt-auto pt-4 border-top border-secondary-subtle">

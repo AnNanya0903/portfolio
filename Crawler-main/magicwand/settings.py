@@ -275,6 +275,16 @@ FOLLOW_UP_AUTO_GAP_DAYS = [
 ]
 FOLLOW_UP_ACK_WITHIN_DAYS = config('FOLLOW_UP_ACK_WITHIN_DAYS', default=2, cast=int)  # acknowledge enquiries this recent (0 = off)
 FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=7, cast=int)  # close this long after the last follow-up (0 = off)
+# Sections hidden from the sidebar and the home page for everyone (comma-separated module slugs, see
+# magicwand/access.py). They are only hidden: their pages still open from a direct link or bookmark.
+# Set MAGICWAND_HIDDEN_SERVICES to an empty value to show every section again.
+MAGICWAND_HIDDEN_SERVICES = {
+    slug.strip() for slug in config(
+        'MAGICWAND_HIDDEN_SERVICES',
+        default='gmail_ai,design,deskera,mrp,accounts,compounding_planning,compounding_board,'
+                'discussion,document_scanner,gasket_counter',
+    ).split(',') if slug.strip()
+}
 # KYC verification emails. Test mode is on by default: nothing is sent until this is set to False.
 KYC_VERIFICATION_DRY_RUN = config('KYC_VERIFICATION_DRY_RUN', default=True, cast=bool)
 KYC_VERIFICATION_LINK_DAYS = config('KYC_VERIFICATION_LINK_DAYS', default=30, cast=int)  # how long the link works
