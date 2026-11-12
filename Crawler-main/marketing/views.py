@@ -44,6 +44,7 @@ def board(request: HttpRequest) -> HttpResponse:
     context = {
         "rows": rows,
         "summary": lost.summarise(leads),
+        "accepted_count": MarketingLead.objects.filter(accepted_at__isnull=False).count(),
         "filtered_count": len(rows),
         "chosen": chosen,
         "has_filters": any(chosen.values()),
@@ -153,6 +154,53 @@ def _revive(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], 
     return new_id
 
 
+def _mark_accepted(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], lead: MarketingLead) -> bool:
+    """The customer said yes to the original quote: set this same enquiry to Accepted in the Enquiries portal."""
+    enquiry_id = row["enquiry_id"]
+    if lead.revived_enquiry_id:
+        messages.error(request, f"This enquiry was already revived as {lead.revived_enquiry_id}. "
+                                "Accept that enquiry in the Enquiries portal instead.")
+        return False
+    note = " ".join((request.POST.get("accept_note") or "").split())[:500]
+    line = f"Won back by marketing on {timezone.localdate():%d %b %Y} (was {row['kind_label']})."
+    if note:
+        line += f" {note}"
+    remarks = str(enquiry.get("remarks") or "").strip()
+    try:
+        services.update_enquiry(_api_root(), enquiry_id,
+                                {"status": "accepted", "remarks": f"{remarks}\n{line}" if remarks else line},
+                                request=request)
+    except services.EnquiryServiceError as exc:
+        messages.error(request, f"Could not set the enquiry to Accepted: {exc}")
+        return False
+    lead.accepted_at = timezone.now()
+    lead.accepted_by = request.user
+    lead.updated_by = request.user
+    lead.save(update_fields=["accepted_at", "accepted_by", "updated_by", "updated_at"])
+    _log(lead, request.user, MarketingActivity.KIND_SYSTEM,
+         "Marked as accepted. The enquiry is now Accepted in the Enquiries portal." + (f" {note}" if note else ""))
+
+    assigned_to = str(enquiry.get("assigned_to") or "").strip()
+    salesperson = notify.find_user(assigned_to)
+    done, problems = notify.notify_accepted(
+        sender=request.user, salesperson=salesperson, customer=row["customer_name"], enquiry_id=enquiry_id,
+        note=note, enquiry_url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])))
+    if salesperson is None:
+        who = f'the salesperson "{assigned_to}" is not a MagicWand user' if assigned_to else "no salesperson is assigned"
+        problems = [f"{who}, so nobody was notified; please tell sales yourself"]
+    elif done:
+        _log(lead, request.user, MarketingActivity.KIND_SYSTEM,
+             f"{notify.display_name(salesperson)} was notified by {' and '.join(done)}.")
+    elif not problems and salesperson != request.user:
+        problems = [f"{notify.display_name(salesperson)} was not notified (phone notifications are not set up and "
+                    "email notices are off), so please tell them yourself"]
+    for problem in problems:
+        _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Notice: {problem}.")
+        messages.warning(request, f"Accepted, but {problem}.")
+    messages.success(request, f"Enquiry {enquiry_id} is now Accepted. It has moved to the Enquiries portal.")
+    return True
+
+
 def _handle_post(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any]) -> HttpResponse:
     enquiry_id = row["enquiry_id"]
     action = request.POST.get("action") or ""
@@ -200,6 +248,9 @@ def _handle_post(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, A
         new_id = _revive(request, enquiry, row, lead)
         if new_id:
             messages.success(request, f"Revived. New enquiry {new_id} was created for sales.")
+    elif action == "mark_accepted":
+        if _mark_accepted(request, enquiry, row, lead):
+            return redirect("marketing:board")  # it is no longer a lost enquiry
     else:
         messages.error(request, "Unknown action.")
     return redirect(detail_url)

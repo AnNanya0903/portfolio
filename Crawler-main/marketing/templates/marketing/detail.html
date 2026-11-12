@@ -109,6 +109,21 @@
     <div class="card border-0 shadow-sm mb-4">
       <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Win back</h6></div>
       <div class="card-body">
+        {% if row.stage != 'revived' %}
+          <form method="post" class="mb-3"
+                onsubmit="return confirm('Set enquiry {{ row.enquiry_id }} to Accepted? It will leave Marketing and continue in the Enquiries portal.');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="mark_accepted">
+            <div class="fw-semibold small mb-1">Customer accepted the original quote?</div>
+            <label for="acceptNote" class="form-label small">What did the customer say? (optional)</label>
+            <input id="acceptNote" name="accept_note" maxlength="500" class="form-control form-control-sm mb-2"
+                   placeholder="e.g. Confirmed the order by phone">
+            <button class="btn btn-success btn-sm" type="submit"><i class="bi bi-check2-circle me-1"></i> Mark as accepted</button>
+            <p class="mk-muted mt-2 mb-0">Sets this same enquiry to Accepted in the Enquiries portal (same number, quote and history)
+              and notifies {% if matched_salesperson %}{{ matched_salesperson.get_full_name|default:matched_salesperson.username }}{% else %}the salesperson{% endif %}.</p>
+          </form>
+          <hr>
+        {% endif %}
         {% if row.stage == 'revived' %}
           <p class="mb-0">Revived as enquiry
             <a href="{% url 'enquiries:detail' row.revived_enquiry_id %}">{{ row.revived_enquiry_id }}</a>
@@ -116,6 +131,7 @@
             {% if row.lead.revived_by %}by {{ row.lead.revived_by.get_full_name|default:row.lead.revived_by.username }}{% endif %}.
           </p>
         {% elif can_revive %}
+          <div class="fw-semibold small mb-1">Customer wants a new quote?</div>
           {% if row.stage == 'waiting' %}
             <div class="alert alert-warning py-2 small">The waiting period has not ended yet (until {{ row.ready_on|date:"d M Y" }}).
               Revive only if the customer contacted you first.</div>

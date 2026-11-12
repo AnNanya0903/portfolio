@@ -193,3 +193,71 @@ class ScheduledReplyCheckTests(TestCase):
             results = campaigns.check_all_replies()
         gmail_cls.assert_not_called()
         self.assertEqual(results[0]["result"], "skipped")
+
+
+@override_settings(**BASE)
+class MarkAcceptedTests(TestCase):
+    """Marketing sets a lost enquiry to Accepted: same enquiry, back in the Enquiries portal."""
+
+    def setUp(self):
+        self.mk = User.objects.create_user("mk", "mk@ourcompany.example", "x", first_name="Meera")
+        self.priya = User.objects.create_user("priya", "priya@ourcompany.example", "x",
+                                              first_name="Priya", last_name="Sharma")
+        self.client.force_login(self.mk)
+        self.enquiry = {"enquiry_id": "E1", "status": "rejected", "customer_name": "Acme", "subject": "Seal",
+                        "customer_reference": "", "assigned_to": "Priya Sharma", "remarks": "Old note",
+                        "received_at_dt": timezone.now() - timedelta(days=90)}
+        self.url = reverse("marketing:detail", args=["E1"])
+
+    def _run(self, data=None, update_error=None, push=1):
+        with patch("enquiries.services.fetch_enquiry", return_value=self.enquiry), \
+                patch("enquiries.services.update_enquiry", side_effect=update_error, return_value={}) as update, \
+                patch("marketing.campaigns.send_new_email") as send, \
+                patch("push_notifications.services.send_push_to_users", return_value=push), \
+                patch("marketing.notify.GmailService"), \
+                patch("enquiries.services.list_enquiries", return_value=[]):
+            response = self.client.post(self.url, {"action": "mark_accepted", **(data or {})}, follow=True)
+        return response, update, send
+
+    def test_sets_the_same_enquiry_to_accepted_and_notifies_sales(self):
+        response, update, send = self._run({"accept_note": "Confirmed by phone"})
+        args = update.call_args.args
+        self.assertEqual(args[1], "E1")
+        self.assertEqual(args[2]["status"], "accepted")
+        self.assertTrue(args[2]["remarks"].startswith("Old note\nWon back by marketing on "))
+        self.assertIn("Confirmed by phone", args[2]["remarks"])
+        lead = MarketingLead.objects.get(enquiry_id="E1")
+        self.assertIsNotNone(lead.accepted_at)
+        self.assertEqual(lead.accepted_by, self.mk)
+        self.assertEqual(send.call_args.args[1], "priya@ourcompany.example")
+        self.assertIn("E1 accepted", send.call_args.args[2])
+        self.assertContains(response, "Enquiry E1 is now Accepted")
+        self.assertEqual(response.redirect_chain[0][0], reverse("marketing:board"))
+        self.assertEqual(response.context["accepted_count"], 1)
+        self.assertTrue(MarketingActivity.objects.filter(text="Priya Sharma was notified by phone and email.").exists())
+
+    def test_enquiry_service_error_changes_nothing(self):
+        from enquiries.services import EnquiryServiceError
+        response, update, send = self._run(update_error=EnquiryServiceError("down"))
+        self.assertContains(response, "Could not set the enquiry to Accepted")
+        self.assertIsNone(MarketingLead.objects.get(enquiry_id="E1").accepted_at)
+        send.assert_not_called()
+
+    def test_revived_enquiry_cannot_also_be_accepted(self):
+        MarketingLead.objects.create(enquiry_id="E1", revived_enquiry_id="E50")
+        response, update, send = self._run()
+        update.assert_not_called()
+        self.assertContains(response, "already revived as E50")
+
+    def test_unknown_salesperson_is_reported(self):
+        self.enquiry["assigned_to"] = "Someone Else"
+        response, update, send = self._run()
+        update.assert_called_once()
+        send.assert_not_called()
+        self.assertContains(response, "please tell sales yourself")
+
+    def test_detail_page_has_the_button(self):
+        with patch("enquiries.services.fetch_enquiry", return_value=self.enquiry):
+            page = self.client.get(self.url)
+        self.assertContains(page, "Mark as accepted")
+        self.assertContains(page, 'value="mark_accepted"')

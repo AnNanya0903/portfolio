@@ -29,6 +29,9 @@ class MarketingLead(models.Model):
     revived_enquiry_id = models.CharField(max_length=128, blank=True, default="")
     revived_at = models.DateTimeField(null=True, blank=True)
     revived_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    # Won back without a new enquiry: marketing set this same enquiry to Accepted.
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    accepted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

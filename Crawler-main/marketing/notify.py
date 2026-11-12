@@ -93,6 +93,45 @@ def notify_revived(*, sender, salesperson, customer: str, old_id: str, new_id: s
     return done, problems
 
 
+def notify_accepted(*, sender, salesperson, customer: str, enquiry_id: str, note: str, enquiry_url: str) -> tuple:
+    """Phone notification and email to the salesperson: their lost enquiry is now Accepted.
+
+    Returns (how they were told, e.g. ["phone", "email"]; problems to show).
+    """
+    if salesperson is None:
+        return [], []
+    done: List[str] = []
+    if _push(salesperson, f"Enquiry {enquiry_id} accepted",
+             f"{customer or 'The customer'} accepted the quote. Please continue with the order.", enquiry_url):
+        done.append("phone")
+    if not getattr(settings, "MARKETING_REVIVE_NOTIFY_EMAIL", True):
+        return done, []
+    address = (salesperson.email or "").strip()
+    if not address:
+        return done, [f"{display_name(salesperson)} has no email address in MagicWand"]
+    if address.lower() == (getattr(sender, "email", "") or "").strip().lower():
+        return done, []
+    body = "\n\n".join(filter(None, [
+        f"Hi {salesperson.first_name or display_name(salesperson)},",
+        f"Good news: {customer or 'the customer'} has accepted enquiry {enquiry_id}, which was lost earlier. "
+        "Marketing has set it to Accepted, so please continue with the order and payment.",
+        f"Note from marketing: {note}" if note else "",
+        f"Open the enquiry: {enquiry_url}",
+        f"Sent by {display_name(sender)} from the MagicWand Marketing portal.",
+    ]))
+    from .campaigns import send_new_email  # avoid an import loop
+    problems: List[str] = []
+    try:
+        send_new_email(GmailService(sender), address, f"Enquiry {enquiry_id} accepted: {customer}".strip(), body)
+        done.append("email")
+    except GmailAPIError as exc:
+        problems.append(f"could not email {display_name(salesperson)}: {exc}")
+    except Exception as exc:
+        logger.exception("Accepted email to %s failed", address)
+        problems.append(f"could not email {display_name(salesperson)}: {exc}")
+    return done, problems
+
+
 def notify_reply(user, *, customer: str, campaign_name: str, url: str) -> None:
     if user is not None:
         _push(user, "Customer replied", f"{customer or 'A customer'} replied to \"{campaign_name}\".", url)
