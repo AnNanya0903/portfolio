@@ -27,6 +27,7 @@ from django.utils import timezone
 from dashboard.follow_up_templates import PAYMENT_STAGE, sender_signature
 from dashboard.gmail_service import GmailAPIError, GmailService
 
+from . import customer_emails
 from .models import CustomerStatusEmail, FollowUpSent
 
 logger = logging.getLogger(__name__)
@@ -215,7 +216,9 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
         if getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
             return _finish(row, CustomerStatusEmail.STATUS_DRY_RUN, "test mode: nothing was sent", **fields)
 
-        sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email)
+        cc = customer_emails.with_customer_cc(enquiry_id, [], to=customer_email, own=own)  # other customer emails
+        sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email,
+                                cc=cc or None)
         fields["gmail_message_id"] = (sent or {}).get("id") or ""
         fields["gmail_thread_id"] = (sent or {}).get("threadId") or fields["gmail_thread_id"]
         return _finish(row, CustomerStatusEmail.STATUS_SENT, "", sent_at=timezone.now(), **fields)

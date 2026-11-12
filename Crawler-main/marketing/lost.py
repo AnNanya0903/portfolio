@@ -186,9 +186,12 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
                                 .exclude(customer_email="").order_by("sent_at")
                                 .values_list("enquiry_id", "customer_email")):
         emails[enquiry_id] = address  # latest wins
-    for enquiry_id, address in EnquiryContact.objects.filter(enquiry_id__in=list(found)).exclude(
-            customer_email="").values_list("enquiry_id", "customer_email"):
-        emails[enquiry_id] = address  # the address sales saved wins
+    others: Dict[str, List[str]] = {}
+    for enquiry_id, address, more in EnquiryContact.objects.filter(enquiry_id__in=list(found)).values_list(
+            "enquiry_id", "customer_email", "other_customer_emails"):
+        if address:
+            emails[enquiry_id] = address  # the address sales saved wins
+        others[enquiry_id] = [a.strip().lower() for a in (more or "").split(",") if a.strip()]
 
     leads: List[Dict[str, Any]] = []
     for enquiry_id, item in found.items():
@@ -223,6 +226,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "project_name": enquiry.get("project_name") or "",
             "assigned_to": enquiry.get("assigned_to") or "",
             "customer_email": emails.get(enquiry_id, ""),
+            # More customer addresses, CC'd on campaign emails (never the main address again).
+            "other_emails": [a for a in others.get(enquiry_id, []) if a != emails.get(enquiry_id, "").lower()],
             "kind": item["kind"],
             "kind_label": KIND_LABELS[item["kind"]],
             "reason_key": reason_key,
@@ -279,7 +284,7 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
         if query:
             haystack = " ".join(str(row[k]) for k in (
                 "enquiry_id", "customer_name", "raw_customer_name", "subject", "project_name", "customer_email",
-                "assigned_to",
+                "assigned_to", "other_emails",
             )).lower()
             if query not in haystack:
                 continue

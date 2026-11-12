@@ -240,3 +240,18 @@ class CustomerNameAndReasonTests(TestCase):
                 patch("enquiries.services.create_enquiry", return_value={"enquiry_id": "E10"}) as create:
             self.client.post(url, {"action": "revive"})
         self.assertEqual(create.call_args.args[1]["customer_name"], "Abhinandan Skyline Systems")
+
+
+@override_settings(**SETTINGS)
+class ReviveCopiesEmailsTests(TestCase):
+    def test_revive_copies_other_customer_emails(self):
+        user = get_user_model().objects.create_user("mk2", "mk2@example.com", "x")
+        self.client.force_login(user)
+        EnquiryContact.objects.create(enquiry_id="E1", customer_email="one@acme.example",
+                                      other_customer_emails="two@acme.example")
+        enquiry = _enquiry("E1", "rejected", customer_name="Acme")
+        with patch("enquiries.services.fetch_enquiry", return_value=enquiry), \
+                patch("enquiries.services.create_enquiry", return_value={"enquiry_id": "E70"}):
+            self.client.post(reverse("marketing:detail", args=["E1"]), {"action": "revive"})
+        new = EnquiryContact.objects.get(enquiry_id="E70")
+        self.assertEqual((new.customer_email, new.other_customer_emails), ("one@acme.example", "two@acme.example"))

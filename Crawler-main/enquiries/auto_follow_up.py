@@ -25,7 +25,7 @@ from django.utils import timezone
 from dashboard.follow_up_templates import DEFAULT_STAGE, PAYMENT_STAGE, STAGE_KEYS, build_follow_up_body
 from dashboard.gmail_service import GmailAPIError, GmailService
 
-from . import payment_terms, services
+from . import customer_emails, payment_terms, services
 from .models import EnquiryContact, FollowUpSent
 
 logger = logging.getLogger(__name__)
@@ -198,8 +198,10 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
         subject=str(enquiry.get("subject") or ""), user=sender,
         due_on=due_on, credit_days=credit_days, today=today,
     )
-    # Same CC as the last follow-up, minus the customer and our own sending addresses.
-    cc_list = [a for a in payment_terms.parse_cc(cc, exclude=customer_email)[0] if a not in own]
+    # The other customer emails, then the same CC as the last follow-up; never the customer or our own addresses.
+    cc_list = customer_emails.with_customer_cc(
+        enquiry_id, payment_terms.parse_cc(cc, exclude=customer_email)[0], to=customer_email, own=own,
+        limit=payment_terms.MAX_CC)
     subject = original.get("subject") or str(enquiry.get("subject") or "")
     next_on = next_follow_up_date(attempt, today)
     details = {

@@ -47,7 +47,7 @@
               {% for item in audience.recipients %}
                 <tr>
                   <td>{{ item.row.customer_name|default:"—" }}</td>
-                  <td>{{ item.email }}</td>
+                  <td>{{ item.email }}{% if item.cc %}<div class="mk-muted">CC: {{ item.cc|join:", " }}</div>{% endif %}</td>
                   <td><a href="{% url 'marketing:detail' item.row.enquiry_id %}">{{ item.row.enquiry_id }}</a>
                     <div class="mk-muted">{{ item.row.kind_label }}{% if item.row.reason_label %} · {{ item.row.reason_label }}{% endif %}</div></td>
                 </tr>
@@ -154,7 +154,7 @@
                 <tr>
                   <td>{{ r.customer_name|default:"—" }}
                     <div class="mk-muted"><a href="{% url 'marketing:detail' r.enquiry_id %}">{{ r.enquiry_id }}</a></div></td>
-                  <td>{{ r.customer_email }}</td>
+                  <td>{{ r.customer_email }}{% if r.cc %}<div class="mk-muted">CC: {{ r.cc }}</div>{% endif %}</td>
                   <td><span class="mk-chip mk-chip--{{ r.status }}">{{ r.get_status_display }}</span>
                     {% if r.note %}<div class="mk-muted">{{ r.note }}</div>{% endif %}</td>
                   <td>{% if r.replied_at %}<span class="mk-chip mk-chip--replied">{{ r.replied_at|date:"d M Y" }}</span>{% else %}—{% endif %}</td>

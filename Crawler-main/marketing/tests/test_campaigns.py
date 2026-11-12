@@ -275,3 +275,26 @@ class CampaignPageTests(TestCase):
         Campaign.objects.create(name="Spring offer", subject="S", body="B" * 30)
         response = self.client.get(reverse("marketing:campaign_list"))
         self.assertContains(response, "Spring offer")
+
+
+@override_settings(**LIVE)
+class CampaignCcTests(TestCase):
+    def test_other_customer_emails_are_ccd_except_do_not_contact(self):
+        user = get_user_model().objects.create_user("mk", "mk@ourcompany.example", "x")
+        enquiries = [_rejected("E1", "buyer@acme.example", name="Acme"), _rejected("E2", "boss@acme.example")]
+        EnquiryContact.objects.filter(enquiry_id="E1").update(
+            other_customer_emails="boss@acme.example, cto@acme.example")
+        MarketingLead.objects.create(enquiry_id="E2", do_not_contact=True)  # boss@ asked not to be emailed
+        leads = lost.build_lost_leads(enquiries)
+        audience = campaigns.build_audience(leads, {})
+        self.assertEqual([(r["email"], r["cc"]) for r in audience["recipients"]],
+                         [("buyer@acme.example", ["cto@acme.example"])])
+        campaign = Campaign.objects.create(name="C", subject="S", body="Dear {greeting}, hello there friends.")
+        gmail = _gmail()
+        with patch("marketing.campaigns.GmailService", return_value=gmail):
+            campaigns.send_campaign(campaign, user, leads, expected_count=1)
+        send = gmail.service.users.return_value.messages.return_value.send
+        raw = base64.urlsafe_b64decode(send.call_args.kwargs["body"]["raw"]).decode()
+        self.assertIn("Cc: cto@acme.example", raw)
+        self.assertNotIn("boss@acme.example", raw)
+        self.assertEqual(campaign.recipients.get().cc, "cto@acme.example")

@@ -142,7 +142,7 @@
                 <td>
                   <a class="mk-row-link fw-semibold" href="{% url 'marketing:detail' row.enquiry_id %}">{% if row.customer_name %}{{ row.customer_name }}{% else %}<span class="text-muted fw-normal">Name not recorded</span>{% endif %}</a>
                   {% if row.customer_name_source == 'email' %}<div class="mk-muted">from email address</div>{% endif %}
-                  {% if row.customer_email %}<div class="mk-muted">{{ row.customer_email }}</div>{% endif %}
+                  {% if row.customer_email %}<div class="mk-muted">{{ row.customer_email }}{% if row.other_emails %} <span title="{{ row.other_emails|join:', ' }}">+{{ row.other_emails|length }}</span>{% endif %}</div>{% endif %}
                 </td>
                 <td>
                   <a class="mk-row-link" href="{% url 'marketing:detail' row.enquiry_id %}">{{ row.enquiry_id }}</a>

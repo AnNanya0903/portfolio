@@ -111,6 +111,7 @@ class CampaignRecipient(models.Model):
     campaign = models.ForeignKey(Campaign, on_delete=models.CASCADE, related_name="recipients")
     customer_email = models.EmailField()
     customer_name = models.CharField(max_length=320, blank=True, default="")
+    cc = models.CharField(max_length=1000, blank=True, default="")  # the customer's other emails, copied in
     enquiry_id = models.CharField(max_length=128, db_index=True)  # the lost enquiry this customer came from
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
     note = models.CharField(max_length=500, blank=True, default="")

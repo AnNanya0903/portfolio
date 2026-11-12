@@ -70,9 +70,13 @@ def parse_cc(raw: str, *, exclude: str = "") -> Tuple[List[str], str]:
 
 
 def default_cc(enquiry_id: str) -> str:
-    """CC to prefill on the compose page: what this enquiry used last, else FOLLOW_UP_DEFAULT_CC."""
+    """CC to prefill on the compose page: the enquiry's other customer emails, then what this enquiry used
+    last (else FOLLOW_UP_DEFAULT_CC)."""
+    from .customer_emails import with_customer_cc
+
     contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).only("follow_up_cc").first()
     if contact and contact.follow_up_cc:
-        return contact.follow_up_cc
-    addresses, _ = parse_cc(getattr(settings, "FOLLOW_UP_DEFAULT_CC", "") or "")
-    return ", ".join(addresses)
+        addresses, _ = parse_cc(contact.follow_up_cc)
+    else:
+        addresses, _ = parse_cc(getattr(settings, "FOLLOW_UP_DEFAULT_CC", "") or "")
+    return ", ".join(with_customer_cc(enquiry_id, addresses, limit=MAX_CC))

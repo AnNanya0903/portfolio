@@ -154,7 +154,10 @@
               <input type="text" name="customer_name" class="form-control form-control-sm" maxlength="255" placeholder="Customer name (optional)" />
             </div>
             <div class="col-sm-4">
-              <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email (optional)" />
+              <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email 1 (optional)" aria-label="Customer email 1" />
+            </div>
+            <div class="col-sm-4 offset-sm-8">
+              <input type="email" name="other_customer_email" class="form-control form-control-sm" placeholder="Customer email 2 (optional, CC)" aria-label="Customer email 2" />
             </div>
           </div>
           <div id="createSheetResult" class="small text-muted"></div>
@@ -192,7 +195,10 @@
                 <input type="text" name="customer_name" class="form-control form-control-sm" maxlength="255" placeholder="Customer name (optional)" />
             </div>
             <div class="col-sm-5">
-                <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email (optional)" />
+                <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email 1 (optional)" aria-label="Customer email 1" />
+            </div>
+            <div class="col-sm-5 offset-sm-7">
+                <input type="email" name="other_customer_email" class="form-control form-control-sm" placeholder="Customer email 2 (optional, CC)" aria-label="Customer email 2" />
             </div>
           </div>
         </form>
@@ -358,6 +364,7 @@
           <td class="customer-cell">
             {{ enquiry.customer_name|default:'—' }}
             {% if enquiry.customer_email_saved %}<div class="small text-muted text-truncate" style="max-width:180px;">{{ enquiry.customer_email_saved }}</div>{% endif %}
+            {% for other in enquiry.other_customer_emails_saved %}<div class="small text-muted text-truncate" style="max-width:180px;" title="Copied (CC) on every email">CC: {{ other }}</div>{% endfor %}
             {% if enquiry.kyc_customer %}
               <div class="small">{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' enquiry.kyc_customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ enquiry.kyc_customer.code }}</a>{% else %}<span class="text-muted">{{ enquiry.kyc_customer.code }}</span>{% endif %}</div>
             {% elif enquiry.kyc_suggestion %}
@@ -383,8 +390,18 @@
                 <input id="custCode{{ enquiry.enquiry_id }}" type="text" name="customer_code" maxlength="32" class="form-control form-control-sm" value="{% if enquiry.kyc_customer %}{{ enquiry.kyc_customer.code }}{% endif %}" placeholder="Pick to fill in name and email" list="kycCustomerOptions" autocomplete="off" data-kyc-code>
                 <label class="small text-muted" for="custName{{ enquiry.enquiry_id }}">Customer name</label>
                 <input id="custName{{ enquiry.enquiry_id }}" type="text" name="customer_name" maxlength="255" required class="form-control form-control-sm" value="{{ enquiry.customer_name }}" placeholder="Company or person">
-                <label class="small text-muted" for="custEmail{{ enquiry.enquiry_id }}">Customer email</label>
+                <label class="small text-muted" for="custEmail{{ enquiry.enquiry_id }}">Customer email 1 (main)</label>
                 <input id="custEmail{{ enquiry.enquiry_id }}" type="email" name="customer_email" class="form-control form-control-sm" value="{{ enquiry.customer_email_saved }}" placeholder="name@company.com">
+                <input type="hidden" name="other_customer_emails_sent" value="1">
+                <label class="small text-muted" for="custEmail2{{ enquiry.enquiry_id }}">Customer email 2 (CC on every email)</label>
+                <div class="d-flex flex-column gap-1" data-other-emails>
+                  {% for other in enquiry.other_customer_emails_saved %}
+                    <input {% if forloop.first %}id="custEmail2{{ enquiry.enquiry_id }}"{% endif %} type="email" name="other_customer_email" class="form-control form-control-sm" value="{{ other }}" placeholder="second@company.com">
+                  {% empty %}
+                    <input id="custEmail2{{ enquiry.enquiry_id }}" type="email" name="other_customer_email" class="form-control form-control-sm" placeholder="second@company.com">
+                  {% endfor %}
+                </div>
+                <button type="button" class="btn btn-link btn-sm p-0 align-self-start" data-add-other-email>+ Add another email</button>
                 <button type="submit" class="btn btn-primary btn-sm mt-1">Save</button>
               </form>
             </details>
@@ -1197,5 +1214,25 @@
       input.addEventListener("change", () => fill(input));
     });
   })();
+</script>
+<script>
+  // "+ Add another email" in Edit customer: one more Customer email box (the server allows up to 5 besides the main one).
+  document.querySelectorAll("[data-add-other-email]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const list = button.form && button.form.querySelector("[data-other-emails]");
+      if (!list) return;
+      const boxes = list.querySelectorAll("input[name='other_customer_email']");
+      if (boxes.length >= 5) { button.disabled = true; return; }
+      const box = document.createElement("input");
+      box.type = "email";
+      box.name = "other_customer_email";
+      box.className = "form-control form-control-sm";
+      box.placeholder = "another@company.com";
+      box.setAttribute("aria-label", "Customer email " + (boxes.length + 2));
+      list.appendChild(box);
+      box.focus();
+      if (boxes.length + 1 >= 5) button.disabled = true;
+    });
+  });
 </script>
 {% endblock %}

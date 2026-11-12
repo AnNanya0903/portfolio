@@ -35,7 +35,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
 from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, GmailLeadAnalysis, ShareLink
-from . import payment_terms, status_emails
+from . import customer_emails, payment_terms, status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
     COSTING_FIELD_ORDER,
@@ -1121,6 +1121,14 @@ def _board_update_customer(request: HttpRequest, api_root: str, enquiry_id: str)
     if email and not _is_valid_email(email):
         messages.error(request, "Please enter a valid customer email address.")
         return
+    # Only the Edit customer form sends the other-email boxes; "Link to code" keeps what was saved.
+    edit_others = "other_customer_emails_sent" in request.POST
+    others, others_error = customer_emails.parse(request.POST.getlist("other_customer_email"), main=email)
+    if others_error:
+        messages.error(request, others_error)
+        return
+    if others and not email:
+        email, others = others[0], others[1:]  # the first address given becomes the main contact
     try:
         services.update_enquiry(api_root, enquiry_id, {"customer_name": name}, request=request)
     except services.EnquiryServiceError as exc:
@@ -1135,7 +1143,9 @@ def _board_update_customer(request: HttpRequest, api_root: str, enquiry_id: str)
             defaults={"customer_email": email,
                       "updated_by": request.user if getattr(request.user, "is_authenticated", False) else None},
         )
-    detail = f" ({email})" if email else ""
+    if edit_others:
+        customer_emails.save_others(enquiry_id, others, request.user)
+    detail = f" ({', '.join([email] + others)})" if email else ""
     if kyc_customer is not None:
         detail += f", customer code {kyc_customer.code}"
     messages.success(request, f"Customer for enquiry #{enquiry_id} set to {name}{detail}.")
@@ -1552,6 +1562,8 @@ def board(request: HttpRequest) -> HttpResponse:
                     " ".join(str(enquiry.get("customer_name") or "").split()).lower())
             enquiry["customer_email_saved"] = ((contact.customer_email if contact else "")
                                                or str(enquiry.get("customer_email") or "").strip())
+            enquiry["other_customer_emails_saved"] = customer_emails.split(
+                contact.other_customer_emails if contact else "")
             _attach_order_tracking(enquiry, contacts.get(str(enquiry.get("enquiry_id"))),
                                    status_email_rows.get(str(enquiry.get("enquiry_id")), {}))
             summary = summaries.get(str(enquiry.get("enquiry_id")))
@@ -2144,6 +2156,12 @@ def _create_google_sheet_enquiry(request: HttpRequest, *, sheet_title: str) -> D
         customer_email = customer_email or kyc_links.contact_email(kyc_customer)
     if customer_email and not _is_valid_email(customer_email):
         raise ValueError("Please enter a valid customer email address.")
+    other_emails, other_error = customer_emails.parse(request.POST.getlist("other_customer_email"),
+                                                      main=customer_email)
+    if other_error:
+        raise ValueError(other_error)
+    if other_emails and not customer_email:
+        customer_email, other_emails = other_emails[0], other_emails[1:]
 
     gmail_service = GmailService(request.user)
     credentials = gmail_service.build_authorized_credentials()
@@ -2204,6 +2222,7 @@ def _create_google_sheet_enquiry(request: HttpRequest, *, sheet_title: str) -> D
         request=request,
     )
     _save_customer_email((created_enquiry or {}).get("enquiry_id"), customer_email, request.user)
+    customer_emails.save_others((created_enquiry or {}).get("enquiry_id"), other_emails, request.user)
     if kyc_customer is not None:
         kyc_links.set_link((created_enquiry or {}).get("enquiry_id"), kyc_customer, request.user)
     return {
@@ -2297,8 +2316,14 @@ def _create_pdf_enquiry(
         if kyc_customer is not None:
             customer_name = customer_name or kyc_customer.name[:255]
             customer_email = customer_email or kyc_links.contact_email(kyc_customer)
+        other_emails, other_error = customer_emails.parse(request.POST.getlist("other_customer_email"),
+                                                          main=customer_email)
+        if other_error:
+            raise ValueError(other_error)
+        if other_emails and not customer_email:
+            customer_email, other_emails = other_emails[0], other_emails[1:]
     else:
-        customer_name, customer_email, kyc_customer = "", "", None
+        customer_name, customer_email, kyc_customer, other_emails = "", "", None, []
         pdf_name = (getattr(pdf_file, "name", "") or "").lower()
         if not pdf_name.endswith(".pdf"):
             raise ValueError("Please upload a PDF file.")
@@ -2332,6 +2357,7 @@ def _create_pdf_enquiry(
     )
     enquiry_id = (created or {}).get("enquiry_id")
     _save_customer_email(enquiry_id, customer_email, request.user)
+    customer_emails.save_others(enquiry_id, other_emails, request.user)
     if kyc_customer is not None:
         kyc_links.set_link(enquiry_id, kyc_customer, request.user)
     return {

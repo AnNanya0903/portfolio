@@ -68,6 +68,8 @@
         </form>
         <dl class="mk-facts">
           <dt>Customer email</dt><dd>{{ row.customer_email|default:"—" }}</dd>
+          {% if row.other_emails %}<dt>Other customer emails</dt><dd>{{ row.other_emails|join:", " }}
+            <div class="mk-muted">CC'd on campaign emails. Change them in the Enquiries portal (Edit customer).</div></dd>{% endif %}
           <dt>Project</dt><dd>{{ row.project_name|default:"—" }}</dd>
           <dt>Quoted price</dt><dd>{{ row.price|default:"—" }}</dd>
           <dt>Salesperson</dt><dd>{{ row.assigned_to|default:"—" }}</dd>

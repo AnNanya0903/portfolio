@@ -133,6 +133,7 @@ def _revive(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], 
         if row["customer_email"]:
             EnquiryContact.objects.get_or_create(enquiry_id=new_id,
                                                  defaults={"customer_email": row["customer_email"],
+                                                           "other_customer_emails": ", ".join(row["other_emails"]),
                                                            "updated_by": request.user})
 
     # Tell the salesperson. A problem here never undoes the revive; it is shown and logged.

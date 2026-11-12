@@ -125,8 +125,10 @@ def build_audience(leads: List[Dict[str, Any]], filters: Mapping[str, Any]) -> D
     """Who would get this campaign now: {"recipients": [...], "skipped": [...]}. Each item has the lead row."""
     rows, _ = lost.filter_leads(leads, {key: filters.get(key, "") for key in AUDIENCE_FILTER_KEYS})
     # Do not contact applies to the email address, whichever lost enquiry it was set on.
-    blocked = {str(r["customer_email"]).strip().lower() for r in leads
-               if r["stage"] == lost.STAGE_DO_NOT_CONTACT and r["customer_email"]}
+    blocked = set()
+    for r in leads:
+        if r["stage"] == lost.STAGE_DO_NOT_CONTACT:
+            blocked |= {str(a).strip().lower() for a in [r["customer_email"]] + list(r.get("other_emails") or []) if a}
     recent = {}
     if gap_days():
         since = timezone.now() - timedelta(days=gap_days())
@@ -160,7 +162,9 @@ def build_audience(leads: List[Dict[str, Any]], filters: Mapping[str, Any]) -> D
             skipped.append({"row": row, "reason": reason})
             continue
         chosen_emails[address] = row["enquiry_id"]
-        recipients.append({"row": row, "email": address})
+        # The customer's other emails are CC'd, except any address that is Do not contact.
+        cc = [a for a in row.get("other_emails") or [] if a not in blocked and a != address][:5]
+        recipients.append({"row": row, "email": address, "cc": cc})
     return {"recipients": recipients, "skipped": skipped}
 
 
@@ -169,12 +173,15 @@ def _log(enquiry_id: str, user, text: str) -> None:
     MarketingActivity.objects.create(lead=lead, kind=MarketingActivity.KIND_EMAIL, text=text, created_by=user)
 
 
-def send_new_email(gmail: GmailService, to: str, subject: str, body: str) -> Dict[str, Any]:
+def send_new_email(gmail: GmailService, to: str, subject: str, body: str,
+                   cc: Optional[List[str]] = None) -> Dict[str, Any]:
     """Send a new email (not a reply) from the signed-in Gmail account."""
     if not gmail.service and not gmail.authenticate():
         raise GmailAPIError("Gmail sign-in failed")
     message = EmailMessage()
     message["To"] = to
+    if cc:
+        message["Cc"] = ", ".join(cc)
     message["Subject"] = subject
     message["Message-ID"] = make_msgid()
     message.set_content(body)
@@ -225,7 +232,7 @@ def send_campaign(campaign: Campaign, user, leads: List[Dict[str, Any]], expecte
                         CampaignRecipient.objects.create(
                             campaign=campaign, customer_email=item["email"], enquiry_id=row["enquiry_id"],
                             customer_name=(row["customer_name"] or row["raw_customer_name"] or "")[:320],
-                            subject=subject, body=body)
+                            cc=", ".join(item.get("cc") or []), subject=subject, body=body)
                 except IntegrityError:
                     continue
             locked.status = Campaign.STATUS_SENT
@@ -268,7 +275,8 @@ def send_campaign(campaign: Campaign, user, leads: List[Dict[str, Any]], expecte
             counts["dry_run"] += 1
             continue
         try:
-            sent = send_new_email(gmail, recipient.customer_email, recipient.subject, recipient.body)
+            cc = [a.strip() for a in (recipient.cc or "").split(",") if a.strip()]
+            sent = send_new_email(gmail, recipient.customer_email, recipient.subject, recipient.body, cc=cc or None)
         except GmailAPIError as exc:
             recipient.status = CampaignRecipient.STATUS_FAILED
             recipient.note = str(exc)[:500]

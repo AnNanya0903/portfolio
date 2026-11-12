@@ -112,6 +112,8 @@ class EnquiryContact(models.Model):
     customer_email = models.EmailField(blank=True)
     auto_follow_up_paused = models.BooleanField(default=False)  # sales paused automatic follow-ups
     follow_up_cc = models.CharField(max_length=1000, blank=True, default="")  # CC used for this enquiry's follow-ups
+    # More customer addresses besides customer_email (comma separated). CC'd on every email to the customer.
+    other_customer_emails = models.CharField(max_length=1000, blank=True, default="")
 
     # Payment for an accepted order. Empty means "pending"; when it is paid the order becomes converted.
     PAYMENT_PENDING = "pending"
