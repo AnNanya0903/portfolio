@@ -5,11 +5,11 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Q
-from django.http import HttpRequest, HttpResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from . import verification
+from . import links, verification
 from .forms import CustomerContactForm, CustomerForm
 from .models import Customer, CustomerContact
 
@@ -87,6 +87,8 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "verifications": [{"row": v, "state": verification.link_state(v)}
                           for v in customer.verifications.select_related("sent_by")[:5]],
         "has_email": any(c.email for c in contacts),
+        "enquiry_links": list(customer.enquiry_links.all()[:50]),
+        "enquiry_link_count": customer.enquiry_links.count(),
         "has_purchaser": any(c.is_purchaser for c in contacts),
         "missing_teams": [g["label"] for g in groups if not any(c.email for c in g["contacts"])],
     })
@@ -145,3 +147,9 @@ def contact_delete(request: HttpRequest, pk: int, contact_id: int) -> HttpRespon
     contact.delete()
     messages.success(request, f"{name} removed.")
     return redirect("kyc:detail", pk=pk)
+
+
+@login_required
+def customer_search(request: HttpRequest) -> JsonResponse:
+    """Customers for the customer-code picker on the enquiry forms."""
+    return JsonResponse({"customers": links.search(request.GET.get("q") or "")})

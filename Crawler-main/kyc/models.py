@@ -176,3 +176,19 @@ class KycVerification(models.Model):
 
     def __str__(self) -> str:
         return f"KycVerification:{self.customer_id}:{self.status}:{self.response or 'no answer'}"
+
+
+class EnquiryCustomer(models.Model):
+    """Which KYC customer an enquiry belongs to. Enquiries live in the enquiry service, so only the id is kept."""
+
+    enquiry_id = models.CharField(max_length=128, unique=True)
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="enquiry_links")
+    linked_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "kyc_enquiry_customer"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"EnquiryCustomer:{self.enquiry_id}:{self.customer_id}"

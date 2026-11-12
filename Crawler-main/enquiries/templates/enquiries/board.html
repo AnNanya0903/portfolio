@@ -53,6 +53,10 @@
   .order-track { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; min-width: 150px; }
   .order-track-payment > summary { list-style: none; cursor: pointer; display: inline-block; }
   .order-track-payment > summary::-webkit-details-marker { display: none; }
+  .customer-edit > summary { list-style: none; cursor: pointer; font-size: 0.72rem; color: #2563eb; display: inline-block; margin-top: 2px; }
+  .customer-edit > summary::-webkit-details-marker { display: none; }
+  .customer-edit-form { display: grid; gap: 3px; margin-top: 6px; padding: 8px; max-width: 220px;
+    background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
   .order-chip { font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
   .order-chip--warn { background: #fffbeb; color: #b45309; }
   .order-chip--alert { background: #fef2f2; color: #dc2626; }
@@ -143,10 +147,13 @@
             </button>
           </div>
           <div class="row g-2 mb-2">
-            <div class="col-sm-6">
+            <div class="col-sm-4">
+              <input type="text" name="customer_code" class="form-control form-control-sm" maxlength="32" placeholder="Customer code" list="kycCustomerOptions" autocomplete="off" aria-label="Customer code (fills in name and email)" data-kyc-code />
+            </div>
+            <div class="col-sm-4">
               <input type="text" name="customer_name" class="form-control form-control-sm" maxlength="255" placeholder="Customer name (optional)" />
             </div>
-            <div class="col-sm-6">
+            <div class="col-sm-4">
               <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email (optional)" />
             </div>
           </div>
@@ -177,6 +184,9 @@
             </div>
             <div class="col-sm-2">
                 <button class="btn btn-primary btn-sm w-100" type="submit">Upload</button>
+            </div>
+            <div class="col-sm-2">
+                <input type="text" name="customer_code" class="form-control form-control-sm" maxlength="32" placeholder="Code" list="kycCustomerOptions" autocomplete="off" aria-label="Customer code (fills in name and email)" data-kyc-code />
             </div>
             <div class="col-sm-5">
                 <input type="text" name="customer_name" class="form-control form-control-sm" maxlength="255" placeholder="Customer name (optional)" />
@@ -345,7 +355,40 @@
                 #{{ enquiry.enquiry_id }}
               {% endif %}
           </td>
-          <td>{{ enquiry.customer_name|default:'—' }}</td>
+          <td class="customer-cell">
+            {{ enquiry.customer_name|default:'—' }}
+            {% if enquiry.customer_email_saved %}<div class="small text-muted text-truncate" style="max-width:180px;">{{ enquiry.customer_email_saved }}</div>{% endif %}
+            {% if enquiry.kyc_customer %}
+              <div class="small">{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' enquiry.kyc_customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ enquiry.kyc_customer.code }}</a>{% else %}<span class="text-muted">{{ enquiry.kyc_customer.code }}</span>{% endif %}</div>
+            {% elif enquiry.kyc_suggestion %}
+              <form method="post" class="small">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_customer">
+                <input type="hidden" name="enquiry_id" value="{{ enquiry.enquiry_id }}">
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <input type="hidden" name="customer_name" value="{{ enquiry.customer_name }}">
+                <input type="hidden" name="customer_email" value="{{ enquiry.customer_email_saved }}">
+                <input type="hidden" name="customer_code" value="{{ enquiry.kyc_suggestion.code }}">
+                <button type="submit" class="btn btn-link btn-sm p-0" title="Same company name as KYC customer {{ enquiry.kyc_suggestion.code }}">Link to {{ enquiry.kyc_suggestion.code }}</button>
+              </form>
+            {% endif %}
+            <details class="customer-edit" data-customer-edit>
+              <summary>Edit customer</summary>
+              <form method="post" class="customer-edit-form">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_customer">
+                <input type="hidden" name="enquiry_id" value="{{ enquiry.enquiry_id }}">
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <label class="small text-muted" for="custCode{{ enquiry.enquiry_id }}">Customer code</label>
+                <input id="custCode{{ enquiry.enquiry_id }}" type="text" name="customer_code" maxlength="32" class="form-control form-control-sm" value="{% if enquiry.kyc_customer %}{{ enquiry.kyc_customer.code }}{% endif %}" placeholder="Pick to fill in name and email" list="kycCustomerOptions" autocomplete="off" data-kyc-code>
+                <label class="small text-muted" for="custName{{ enquiry.enquiry_id }}">Customer name</label>
+                <input id="custName{{ enquiry.enquiry_id }}" type="text" name="customer_name" maxlength="255" required class="form-control form-control-sm" value="{{ enquiry.customer_name }}" placeholder="Company or person">
+                <label class="small text-muted" for="custEmail{{ enquiry.enquiry_id }}">Customer email</label>
+                <input id="custEmail{{ enquiry.enquiry_id }}" type="email" name="customer_email" class="form-control form-control-sm" value="{{ enquiry.customer_email_saved }}" placeholder="name@company.com">
+                <button type="submit" class="btn btn-primary btn-sm mt-1">Save</button>
+              </form>
+            </details>
+          </td>
           <td>
             <div class="fw-medium">{{ enquiry.subject|default:'(No Subject)' }}</div>
           </td>
@@ -1097,6 +1140,61 @@
             button.disabled = false;
           });
       });
+    });
+  })();
+</script>
+
+<datalist id="kycCustomerOptions"></datalist>
+<script>
+  // Customer code picker: typing a code or company name lists KYC customers; choosing one fills in
+  // the customer name and email of the same form.
+  (function () {
+    const options = document.getElementById("kycCustomerOptions");
+    const inputs = document.querySelectorAll("input[data-kyc-code]");
+    if (!options || !inputs.length) return;
+    const endpoint = "{% url 'kyc:customer_search' %}";
+    const known = new Map();
+    let timer = null;
+    let latest = 0;
+
+    const search = (text) => {
+      const request = ++latest;
+      fetch(endpoint + "?q=" + encodeURIComponent(text), { credentials: "same-origin", headers: { Accept: "application/json" } })
+        .then((response) => (response.ok ? response.json() : { customers: [] }))
+        .then((data) => {
+          if (request !== latest) return;
+          options.replaceChildren();
+          (data.customers || []).forEach((customer) => {
+            known.set(customer.code.toUpperCase(), customer);
+            const option = document.createElement("option");
+            option.value = customer.code;
+            option.label = customer.name + (customer.city ? " - " + customer.city : "");
+            options.appendChild(option);
+          });
+        })
+        .catch(() => {});
+    };
+
+    const fill = (input) => {
+      const customer = known.get(input.value.replace(/\s+/g, "").toUpperCase());
+      if (!customer || !input.form) return;
+      const name = input.form.querySelector("input[name='customer_name']");
+      const email = input.form.querySelector("input[name='customer_email']");
+      if (name) {
+        name.value = customer.name;
+        name.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (email && customer.email) email.value = customer.email;
+    };
+
+    inputs.forEach((input) => {
+      input.addEventListener("focus", () => { if (!options.children.length) search(input.value.trim()); });
+      input.addEventListener("input", () => {
+        fill(input);
+        window.clearTimeout(timer);
+        timer = window.setTimeout(() => search(input.value.trim()), 200);
+      });
+      input.addEventListener("change", () => fill(input));
     });
   })();
 </script>

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from magicwand.access import require_service_access
+from magicwand.access import require_any_service_access, require_service_access
 
 from . import import_views, verify_views, views
 
@@ -11,6 +11,9 @@ _kyc = require_service_access("kyc")
 urlpatterns = [
     path("", _kyc(views.customer_list), name="list"),
     path("new/", _kyc(views.customer_new), name="new"),
+    # The picker is used on the enquiries board, so enquiry users may search too.
+    path("api/customers/", require_any_service_access(["kyc", "enquiries"], deny="json")(views.customer_search),
+         name="customer_search"),
     path("import/", _kyc(import_views.import_new), name="import_new"),
     path("import/sheet/", _kyc(import_views.import_sheet), name="import_sheet"),
     path("import/sheet/template/", _kyc(import_views.sheet_template), name="sheet_template"),

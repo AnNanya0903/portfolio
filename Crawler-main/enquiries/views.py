@@ -54,6 +54,7 @@ from .constants import (
 )
 from .pdf_preview import generate_preview_pdf
 from dashboard.follow_up_templates import PAYMENT_STAGE
+from kyc import links as kyc_links
 from dashboard.gmail_service import GmailService, GmailAPIError
 from dashboard.ai_service import AIReplyRequest, AIReplyService, AIServiceError
 
@@ -1102,6 +1103,56 @@ def toggle_auto_follow_up(request: HttpRequest, enquiry_id: str) -> HttpResponse
     return redirect(next_url)
 
 
+def _board_update_customer(request: HttpRequest, api_root: str, enquiry_id: str) -> None:
+    """Set the customer name (enquiry service) and email (MagicWand database) from the board."""
+    name = " ".join((request.POST.get("customer_name") or "").split())[:255]
+    email = (request.POST.get("customer_email") or "").strip().lower()
+    try:
+        kyc_customer = _kyc_customer_from_post(request)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return
+    if kyc_customer is not None:  # a picked customer code fills in what was left empty
+        name = name or kyc_customer.name[:255]
+        email = email or kyc_links.contact_email(kyc_customer)
+    if not name:
+        messages.error(request, "Please enter the customer name.")
+        return
+    if email and not _is_valid_email(email):
+        messages.error(request, "Please enter a valid customer email address.")
+        return
+    try:
+        services.update_enquiry(api_root, enquiry_id, {"customer_name": name}, request=request)
+    except services.EnquiryServiceError as exc:
+        messages.error(request, f"Unable to update the customer: {exc}")
+        return
+    if "customer_code" in request.POST:  # an emptied code removes the link
+        kyc_links.set_link(enquiry_id, kyc_customer, request.user)
+    contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).first()
+    if email or (contact and contact.customer_email):
+        EnquiryContact.objects.update_or_create(
+            enquiry_id=str(enquiry_id),
+            defaults={"customer_email": email,
+                      "updated_by": request.user if getattr(request.user, "is_authenticated", False) else None},
+        )
+    detail = f" ({email})" if email else ""
+    if kyc_customer is not None:
+        detail += f", customer code {kyc_customer.code}"
+    messages.success(request, f"Customer for enquiry #{enquiry_id} set to {name}{detail}.")
+
+
+def _kyc_customer_from_post(request: HttpRequest):
+    """The KYC customer whose code was picked on the form; None when no code was given."""
+    code = (request.POST.get("customer_code") or "").strip()
+    if not code:
+        return None
+    customer = kyc_links.customer_for_code(code)
+    if customer is None:
+        raise ValueError(f"Customer code {kyc_links.normalize_code(code)} is not in KYC. "
+                         "Pick it from the list, or leave the code empty.")
+    return customer
+
+
 def _saved_customer_email(enquiry_id: str) -> str:
     contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).only("customer_email").first()
     return (contact.customer_email if contact else "") or ""
@@ -1335,6 +1386,12 @@ def board(request: HttpRequest) -> HttpResponse:
                     messages.error(request, f"Unable to update subject: {exc}")
                 else:
                     messages.success(request, f"Updated subject for enquiry {enquiry_id}.")
+        elif action == "update_customer":
+            enquiry_id = (request.POST.get("enquiry_id") or "").strip()
+            if not enquiry_id:
+                messages.error(request, "Missing enquiry identifier.")
+            else:
+                _board_update_customer(request, api_root, enquiry_id)
         elif action in {"update_payment", "retry_status_email"}:
             enquiry_id = (request.POST.get("enquiry_id") or "").strip()
             if not enquiry_id:
@@ -1483,8 +1540,18 @@ def board(request: HttpRequest) -> HttpResponse:
         contacts = {c.enquiry_id: c for c in EnquiryContact.objects.filter(enquiry_id__in=page_ids)}
         paused_ids = {eid for eid, c in contacts.items() if c.auto_follow_up_paused}
         status_email_rows = status_emails.latest_status_emails(page_ids)
+        kyc_customers = kyc_links.customers_for(page_ids)
+        kyc_suggestions = kyc_links.suggestions_for(
+            e.get("customer_name") for e in enquiries_page if str(e.get("enquiry_id")) not in kyc_customers)
         for enquiry in enquiries_page:
             enquiry["auto_paused"] = str(enquiry.get("enquiry_id")) in paused_ids
+            contact = contacts.get(str(enquiry.get("enquiry_id")))
+            enquiry["kyc_customer"] = kyc_customers.get(str(enquiry.get("enquiry_id")))
+            if enquiry["kyc_customer"] is None:  # same company name as exactly one KYC customer: offer the link
+                enquiry["kyc_suggestion"] = kyc_suggestions.get(
+                    " ".join(str(enquiry.get("customer_name") or "").split()).lower())
+            enquiry["customer_email_saved"] = ((contact.customer_email if contact else "")
+                                               or str(enquiry.get("customer_email") or "").strip())
             _attach_order_tracking(enquiry, contacts.get(str(enquiry.get("enquiry_id"))),
                                    status_email_rows.get(str(enquiry.get("enquiry_id")), {}))
             summary = summaries.get(str(enquiry.get("enquiry_id")))
@@ -2071,6 +2138,10 @@ def _create_google_sheet_enquiry(request: HttpRequest, *, sheet_title: str) -> D
         sheet_title = "New Enquiry"
     customer_name = " ".join((request.POST.get("customer_name") or "").split())[:255]
     customer_email = (request.POST.get("customer_email") or "").strip().lower()
+    kyc_customer = _kyc_customer_from_post(request)
+    if kyc_customer is not None:
+        customer_name = customer_name or kyc_customer.name[:255]
+        customer_email = customer_email or kyc_links.contact_email(kyc_customer)
     if customer_email and not _is_valid_email(customer_email):
         raise ValueError("Please enter a valid customer email address.")
 
@@ -2133,6 +2204,8 @@ def _create_google_sheet_enquiry(request: HttpRequest, *, sheet_title: str) -> D
         request=request,
     )
     _save_customer_email((created_enquiry or {}).get("enquiry_id"), customer_email, request.user)
+    if kyc_customer is not None:
+        kyc_links.set_link((created_enquiry or {}).get("enquiry_id"), kyc_customer, request.user)
     return {
         "sheet_url": sheet_url,
         "spreadsheet_id": spreadsheet_id,
@@ -2220,8 +2293,12 @@ def _create_pdf_enquiry(
         title = title or form.cleaned_data.get("title")
         customer_name = (form.cleaned_data.get("customer_name") or "").strip()
         customer_email = (form.cleaned_data.get("customer_email") or "").strip().lower()
+        kyc_customer = _kyc_customer_from_post(request)
+        if kyc_customer is not None:
+            customer_name = customer_name or kyc_customer.name[:255]
+            customer_email = customer_email or kyc_links.contact_email(kyc_customer)
     else:
-        customer_name, customer_email = "", ""
+        customer_name, customer_email, kyc_customer = "", "", None
         pdf_name = (getattr(pdf_file, "name", "") or "").lower()
         if not pdf_name.endswith(".pdf"):
             raise ValueError("Please upload a PDF file.")
@@ -2255,6 +2332,8 @@ def _create_pdf_enquiry(
     )
     enquiry_id = (created or {}).get("enquiry_id")
     _save_customer_email(enquiry_id, customer_email, request.user)
+    if kyc_customer is not None:
+        kyc_links.set_link(enquiry_id, kyc_customer, request.user)
     return {
         "title": resolved_title,
         "enquiry_id": enquiry_id,
