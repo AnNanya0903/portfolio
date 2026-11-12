@@ -2971,7 +2971,8 @@ def _create_share_link_from_values(
 
 
 SHARE_PASSWORD_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"  # no 0/O, 1/l/I
-SHARE_PASSWORD_PREFIX = "AG-"  # every generated password starts with AG (AVIGIRI)
+SHARE_PASSWORD_PREFIX = "AG-"  # the 🔄 button's random passwords start with AG (AVIGIRI)
+SHARE_PASSWORD_DEFAULT = "Avigiri12345"  # filled in on the preview page and used when the box is left empty
 
 
 def generate_share_password(length: int = 8) -> str:
@@ -3030,8 +3031,8 @@ def generate_link(request: HttpRequest) -> HttpResponse:
         )
         return _render_preview_response(request, form, mode, error_message="Please correct the highlighted errors and try again.")
 
-    # The preview page fills in a password automatically; if it still arrives empty, create one here.
-    share_password = (request.POST.get("share_password") or "").strip() or generate_share_password()
+    # The preview page fills in the default password; if the box still arrives empty, use the default here.
+    share_password = (request.POST.get("share_password") or "").strip() or SHARE_PASSWORD_DEFAULT
 
     api_root = _get_api_root()
     enquiry_id = request.POST.get("enquiry_id") or request.POST.get("parent_enquiry_id") or ""
