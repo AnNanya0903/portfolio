@@ -99,7 +99,9 @@ class MarketingViewTests(TestCase):
         self.client.force_login(self.user)
         EnquiryContact.objects.create(enquiry_id="E1", customer_email="buyer@acme.example")
         self.rejected = _enquiry("E1", "rejected", customer_name="Acme", assigned_to="Priya",
-                                 rejection_reason="Too expensive", final_price_per_piece=12.5, currency="USD")
+                                 remarks=("Internal note\nRejection reason (via share link): Too expensive\n"
+                                          "compared with our current supplier"),
+                                 final_price_per_piece=12.5, currency="USD")
         self.accepted = _enquiry("E2", "accepted", customer_name="Beta")
 
     def _list(self):
@@ -115,7 +117,7 @@ class MarketingViewTests(TestCase):
         self.assertContains(response, "Acme")
         self.assertContains(response, "buyer@acme.example")
         self.assertContains(response, "USD 12.50/pc")
-        self.assertContains(response, "Too expensive")
+        self.assertContains(response, "Too expensive compared with our current supplier")  # whole reason
         self.assertNotContains(response, "Beta")
         self.assertEqual(response.context["summary"]["rejected"], 1)
 
@@ -191,3 +193,50 @@ class MarketingViewTests(TestCase):
         self.client.logout()
         response = self.client.get(reverse("marketing:board"))
         self.assertEqual(response.status_code, 302)
+
+
+@override_settings(**SETTINGS)
+class CustomerNameAndReasonTests(TestCase):
+    def test_reason_keeps_every_line_after_the_marker(self):
+        remarks = ("Sales note\nRejection reason (via share link): Dear Naveen,\n\n"
+                   "Pricing is higher than our current supplier.\nRegards")
+        self.assertEqual(lost.customer_reason_from_remarks(remarks),
+                         "Dear Naveen, Pricing is higher than our current supplier. Regards")
+        self.assertEqual(lost.customer_reason_from_remarks("Rejection reason (via share link): old\n"
+                                                           "Rejection reason (via share link): new"), "new")
+        self.assertEqual(lost.customer_reason_from_remarks("no reason here"), "")
+
+    def test_subject_like_names(self):
+        for name in ("Fwd: PI required - ABHINANDAN SKYLINE SYSTEMS", "Re: RFQ-EPDM_Lip Damping Profiles",
+                     "RFQ-123 seals", "PO#4411", "x" * 90):
+            self.assertTrue(lost.looks_like_subject(name), name)
+        for name in ("Acme Rubber Pvt Ltd", "Jäger Gummi und Kunststoff GmbH", "PO Industries", "Reliance", ""):
+            self.assertFalse(lost.looks_like_subject(name), name)
+        self.assertTrue(lost.looks_like_subject("Seal profile enquiry for new project", "Seal profile enquiry for new project"))
+
+    def test_display_name_order(self):
+        show = lost.customer_display
+        self.assertEqual(show("Acme", "S", "a@acme.example", "Acme Rubber Ltd")["name"], "Acme Rubber Ltd")
+        self.assertEqual(show("Acme", "S", "a@acme.example")["greeting"], "Acme")
+        subject_name = show("Fwd: PI required", "Fwd: PI required", "buyer@skyline.co.in")
+        self.assertEqual((subject_name["name"], subject_name["source"], subject_name["greeting"]),
+                         ("skyline.co.in", "email", ""))
+        self.assertEqual(show("Fwd: PI required", "S", "someone@gmail.com")["name"], "")
+
+    def test_marketing_can_correct_the_name(self):
+        user = get_user_model().objects.create_user("mk", "mk@example.com", "x")
+        self.client.force_login(user)
+        enquiry = _enquiry("E9", "rejected", customer_name="Fwd: PI required - SKYLINE", subject="Fwd: PI required - SKYLINE")
+        url = reverse("marketing:detail", args=["E9"])
+        with patch("enquiries.services.fetch_enquiry", return_value=enquiry):
+            page = self.client.get(url)
+            self.assertContains(page, "Name not recorded")
+            self.client.post(url, {"action": "set_customer_name", "customer_name": "  Abhinandan  Skyline Systems "})
+        self.assertEqual(MarketingLead.objects.get(enquiry_id="E9").customer_name, "Abhinandan Skyline Systems")
+        row = lost.build_lost_leads([enquiry])[0]
+        self.assertEqual((row["customer_name"], row["greeting_name"]),
+                         ("Abhinandan Skyline Systems", "Abhinandan Skyline Systems"))
+        with patch("enquiries.services.fetch_enquiry", return_value=enquiry), \
+                patch("enquiries.services.create_enquiry", return_value={"enquiry_id": "E10"}) as create:
+            self.client.post(url, {"action": "revive"})
+        self.assertEqual(create.call_args.args[1]["customer_name"], "Abhinandan Skyline Systems")

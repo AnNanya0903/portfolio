@@ -44,11 +44,20 @@ def _gmail(sent_ids=("msg-1", "thread-1")):
 class AudienceTests(TestCase):
     def test_render_email_fills_in_customer_and_adds_opt_out(self):
         subject, body = campaigns.render_email("Offer for {enquiry_subject}", "Dear {customer_name}, ref {reference}.",
-                                               {"customer_name": "Acme", "subject": "Seal", "enquiry_id": "E1"})
+                                               {"greeting_name": "Acme", "subject": "Seal", "enquiry_id": "E1"})
         self.assertEqual(subject, "Offer for Seal")
         self.assertTrue(body.startswith("Dear Acme, ref E1."))
         self.assertIn("unsubscribe", body)
         self.assertIn("AVIGIRI Team", body)
+
+    def test_greeting_never_uses_a_subject_or_domain(self):
+        _, known = campaigns.render_email("S", "Dear {greeting}, from {customer_name}.", {"greeting_name": "Acme"})
+        self.assertTrue(known.startswith("Dear Acme team, from Acme."))
+        _, unknown = campaigns.render_email("S", "Dear {greeting}, from {customer_name}.",
+                                            {"greeting_name": "", "customer_name": "acme.example"})
+        self.assertTrue(unknown.startswith("Dear Sir/Madam, from your company."))
+        for template in campaigns.STARTER_TEMPLATES.values():
+            self.assertIn("Dear {greeting},", template["body"])
 
     def test_only_ready_customers_with_email(self):
         enquiries = [

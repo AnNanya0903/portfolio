@@ -100,7 +100,9 @@ def _revive(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], 
     if note:
         description += f"\n\n{note}"
     values = {
-        "customer_name": enquiry.get("customer_name") or row["customer_name"] or "Unknown customer",
+        # A name marketing corrected wins over a name that is really an email subject.
+        "customer_name": (lead.customer_name or enquiry.get("customer_name") or row["customer_name"]
+                          or "Unknown customer")[:255],
         "subject": enquiry.get("subject") or row["subject"] or f"Revived enquiry {old_id}",
         "channel": "other",
         "priority": "medium",
@@ -177,6 +179,15 @@ def _handle_post(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, A
             _log(lead, request.user, MarketingActivity.KIND_SYSTEM,
                  f"Reason set to: {lost.REASON_LABELS.get(reason, 'not recorded')}.")
             messages.success(request, "Reason saved.")
+    elif action == "set_customer_name":
+        name = " ".join((request.POST.get("customer_name") or "").split())[:255]
+        if name != lead.customer_name:
+            lead.customer_name = name
+            lead.updated_by = request.user
+            lead.save(update_fields=["customer_name", "updated_by", "updated_at"])
+            _log(lead, request.user, MarketingActivity.KIND_SYSTEM,
+                 f"Customer name set to: {name}." if name else "Customer name cleared.")
+            messages.success(request, "Customer name saved.")
     elif action == "toggle_do_not_contact":
         lead.do_not_contact = not lead.do_not_contact
         lead.updated_by = request.user

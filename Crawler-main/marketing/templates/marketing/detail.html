@@ -25,7 +25,7 @@
 <div class="page-header">
   <div>
     <a href="{% url 'marketing:board' %}" class="mk-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Marketing</a>
-    <h2 class="page-title mb-1">{{ row.customer_name|default:"Unknown customer" }}</h2>
+    <h2 class="page-title mb-1">{{ row.customer_name|default:"Name not recorded" }}</h2>
     <div class="d-flex flex-wrap gap-2 align-items-center">
       <span class="mk-chip mk-chip--{{ row.kind }}">{{ row.kind_label }}</span>
       <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
@@ -49,6 +49,23 @@
     <div class="card border-0 shadow-sm mb-4">
       <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">What was lost</h6></div>
       <div class="card-body">
+        <form method="post" class="mb-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="set_customer_name">
+          <label for="customerName" class="form-label small mb-1">Customer name</label>
+          <div class="d-flex gap-2">
+            <input id="customerName" name="customer_name" maxlength="255" class="form-control form-control-sm"
+                   value="{{ row.lead.customer_name }}" placeholder="{% if row.customer_name_source == 'enquiry' %}{{ row.customer_name }}{% else %}Type the company name{% endif %}">
+            <button class="btn btn-outline-primary btn-sm" type="submit">Save</button>
+          </div>
+          <div class="mk-muted mt-1">
+            {% if row.customer_name_source == 'marketing' %}Corrected by marketing.
+            {% elif row.customer_name_source == 'enquiry' %}From the enquiry. Type a name only to correct it.
+            {% elif row.raw_customer_name %}The enquiry's name looks like an email subject ("{{ row.raw_customer_name|truncatechars:60 }}"), so please type the real company name.
+            {% else %}The enquiry has no customer name.{% endif %}
+            Campaign emails greet "Sir/Madam" until a real name is known.
+          </div>
+        </form>
         <dl class="mk-facts">
           <dt>Customer email</dt><dd>{{ row.customer_email|default:"—" }}</dd>
           <dt>Project</dt><dd>{{ row.project_name|default:"—" }}</dd>

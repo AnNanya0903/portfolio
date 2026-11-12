@@ -10,6 +10,7 @@ Marketing waits MARKETING_WAIT_DAYS after the loss before the lead is "Ready to 
 """
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
@@ -37,6 +38,52 @@ STAGE_LABELS = {
 }
 
 REASON_LABELS = dict(MarketingLead.REASON_CHOICES)
+
+SHARE_REASON_MARKER = "Rejection reason (via share link):"
+# Email-subject starts that show a "customer name" is really an email subject or document title.
+_SUBJECT_PREFIX = re.compile(r"^\s*(re|fw|fwd|aw|wg|rfq|rfi|po|pi|enquiry|inquiry|quotation|quote)\b\s*[:#_\-]", re.I)
+_PERSONAL_MAIL = {"gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.in", "outlook.com", "hotmail.com",
+                  "live.com", "icloud.com", "rediffmail.com", "aol.com", "proton.me", "protonmail.com"}
+
+
+def customer_reason_from_remarks(remarks: str) -> str:
+    """Everything the customer typed on the share link (the last time), not only its first line."""
+    text = str(remarks or "")
+    at = text.rfind(SHARE_REASON_MARKER)
+    if at < 0:
+        return ""
+    reason = " ".join(text[at + len(SHARE_REASON_MARKER):].split())
+    return reason[:1000]
+
+
+def looks_like_subject(name: str, subject: str = "") -> bool:
+    """True when a stored "customer name" is really an email subject or file title."""
+    value = " ".join(str(name or "").split())
+    if not value:
+        return False
+    if subject and value.lower() == " ".join(str(subject).split()).lower() and len(value) > 30:
+        return True
+    return bool(_SUBJECT_PREFIX.match(value)) or len(value) > 80
+
+
+def company_from_email(address: str) -> str:
+    """The company part of a work email address (buyer@acme.co.in -> acme.co.in); '' for personal mail."""
+    domain = str(address or "").rsplit("@", 1)[-1].strip().lower() if "@" in str(address or "") else ""
+    return "" if not domain or domain in _PERSONAL_MAIL else domain
+
+
+def customer_display(enquiry_name: str, subject: str, email: str, marketing_name: str = "") -> Dict[str, str]:
+    """Best customer name to show, where it came from, and the name to greet the customer with in an email."""
+    marketing_name = " ".join(str(marketing_name or "").split())
+    if marketing_name:
+        return {"name": marketing_name, "source": "marketing", "greeting": marketing_name}
+    enquiry_name = " ".join(str(enquiry_name or "").split())
+    if enquiry_name and not looks_like_subject(enquiry_name, subject):
+        return {"name": enquiry_name, "source": "enquiry", "greeting": enquiry_name}
+    company = company_from_email(email)
+    if company:
+        return {"name": company, "source": "email", "greeting": ""}
+    return {"name": "", "source": "", "greeting": ""}
 
 
 def wait_days() -> int:
@@ -163,10 +210,15 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         if not reason_key and item["kind"] == NO_RESPONSE:
             reason_key = "no_reply"
         received = _local_date(enquiry.get("received_at_dt"))
+        who = customer_display(enquiry.get("customer_name"), enquiry.get("subject"), emails.get(enquiry_id, ""),
+                               lead.customer_name if lead else "")
 
         leads.append({
             "enquiry_id": enquiry_id,
-            "customer_name": enquiry.get("customer_name") or "",
+            "customer_name": who["name"],
+            "customer_name_source": who["source"],  # marketing / enquiry / email / "" (not recorded)
+            "greeting_name": who["greeting"],  # only a real name; campaigns fall back to "Sir/Madam"
+            "raw_customer_name": enquiry.get("customer_name") or "",
             "subject": enquiry.get("subject") or "",
             "project_name": enquiry.get("project_name") or "",
             "assigned_to": enquiry.get("assigned_to") or "",
@@ -175,7 +227,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "kind_label": KIND_LABELS[item["kind"]],
             "reason_key": reason_key,
             "reason_label": REASON_LABELS.get(reason_key, ""),
-            "customer_reason": enquiry.get("rejection_reason") or "",  # given by the customer on the share link
+            "customer_reason": customer_reason_from_remarks(enquiry.get("remarks")),  # typed on the share link
             "price": _price_text(enquiry),
             "follow_up_count": item["follow_ups"]["count"],
             "last_follow_up": item["follow_ups"]["last"],
@@ -226,7 +278,8 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
             continue
         if query:
             haystack = " ".join(str(row[k]) for k in (
-                "enquiry_id", "customer_name", "subject", "project_name", "customer_email", "assigned_to",
+                "enquiry_id", "customer_name", "raw_customer_name", "subject", "project_name", "customer_email",
+                "assigned_to",
             )).lower()
             if query not in haystack:
                 continue

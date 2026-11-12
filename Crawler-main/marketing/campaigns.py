@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 AUDIENCE_FILTER_KEYS = ("q", "kind", "reason", "fin_year")  # stage is always "Ready to contact"
 
 PLACEHOLDERS = {
-    "{customer_name}": "the customer's company name",
+    "{greeting}": "\"Acme team\", or \"Sir/Madam\" when the name is not known (use after \"Dear\")",
+    "{customer_name}": "the customer's company name, or \"your company\"",
     "{enquiry_subject}": "what they enquired about",
     "{reference}": "the lost enquiry number",
 }
@@ -48,7 +49,7 @@ STARTER_TEMPLATES: Dict[str, Dict[str, str]] = {
     "price": {
         "label": "Revised price offer",
         "subject": "A revised offer for {enquiry_subject}",
-        "body": ("Dear {customer_name} team,\n\n"
+        "body": ("Dear {greeting},\n\n"
                  "Some time ago you asked us about {enquiry_subject} (our reference {reference}). "
                  "We have since reviewed our costs and can now offer a better price for this requirement.\n\n"
                  "If the requirement is still open, please reply to this email and we will send you an "
@@ -57,7 +58,7 @@ STARTER_TEMPLATES: Dict[str, Dict[str, str]] = {
     "capability": {
         "label": "New capability",
         "subject": "New capabilities at AVIGIRI",
-        "body": ("Dear {customer_name} team,\n\n"
+        "body": ("Dear {greeting},\n\n"
                  "Thank you for your earlier enquiry about {enquiry_subject} (our reference {reference}). "
                  "We wanted to let you know that we have added new capabilities which may suit your needs.\n\n"
                  "If you have a current or upcoming requirement, please reply to this email and our team "
@@ -66,7 +67,7 @@ STARTER_TEMPLATES: Dict[str, Dict[str, str]] = {
     "checking_in": {
         "label": "Checking in",
         "subject": "Checking in on {enquiry_subject}",
-        "body": ("Dear {customer_name} team,\n\n"
+        "body": ("Dear {greeting},\n\n"
                  "We are checking in about your earlier enquiry for {enquiry_subject} (our reference {reference}). "
                  "If you have a new or revised requirement, we would be glad to quote again.\n\n"
                  "Please reply to this email with any details and our team will get back to you."),
@@ -100,8 +101,11 @@ def _valid_email(value: str) -> bool:
 
 def render_email(subject: str, body: str, row: Mapping[str, Any]) -> Tuple[str, str]:
     """Fill the placeholders and add the opt-out line and the signature."""
+    # Only a real customer name is used to greet; an email subject or a bare domain never is.
+    name = (row.get("greeting_name") or "").strip()
     values = {
-        "{customer_name}": (row.get("customer_name") or "").strip() or "Sir/Madam",
+        "{greeting}": f"{name} team" if name else "Sir/Madam",
+        "{customer_name}": name or "your company",
         "{enquiry_subject}": (row.get("subject") or "").strip() or "your requirement",
         "{reference}": str(row.get("enquiry_id") or "").strip() or "-",
     }
@@ -220,7 +224,8 @@ def send_campaign(campaign: Campaign, user, leads: List[Dict[str, Any]], expecte
                     with transaction.atomic():
                         CampaignRecipient.objects.create(
                             campaign=campaign, customer_email=item["email"], enquiry_id=row["enquiry_id"],
-                            customer_name=(row["customer_name"] or "")[:320], subject=subject, body=body)
+                            customer_name=(row["customer_name"] or row["raw_customer_name"] or "")[:320],
+                            subject=subject, body=body)
                 except IntegrityError:
                     continue
             locked.status = Campaign.STATUS_SENT

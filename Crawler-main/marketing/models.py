@@ -22,6 +22,8 @@ class MarketingLead(models.Model):
     )
 
     enquiry_id = models.CharField(max_length=128, unique=True)
+    # Customer name typed by marketing, used when the enquiry's name is missing or is really an email subject.
+    customer_name = models.CharField(max_length=255, blank=True, default="")
     lost_reason = models.CharField(max_length=20, choices=REASON_CHOICES, blank=True, default="")
     do_not_contact = models.BooleanField(default=False)
     revived_enquiry_id = models.CharField(max_length=128, blank=True, default="")
