@@ -1,6 +1,7 @@
 import re
 
 from django import forms
+from django.core.validators import validate_email
 
 from .models import Customer, CustomerContact
 
@@ -89,7 +90,18 @@ class CustomerContactForm(forms.ModelForm):
         return self.cleaned_data["name"].strip()
 
     def clean_email(self):
-        return (self.cleaned_data.get("email") or "").strip().lower()
+        raw = (self.cleaned_data.get("email") or "").strip()
+        if not raw:
+            return raw
+        addresses = []
+        for part in raw.split(","):
+            part = part.strip().lower()
+            if not part:
+                continue
+            validate_email(part)
+            if part not in addresses:
+                addresses.append(part)
+        return ", ".join(addresses)
 
     def clean(self):
         data = super().clean()

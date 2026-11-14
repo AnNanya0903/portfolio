@@ -11,7 +11,7 @@ import secrets
 from datetime import timedelta
 from email.message import EmailMessage
 from email.utils import make_msgid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from django.conf import settings
 from django.db import transaction
@@ -44,6 +44,17 @@ def link_days() -> int:
 def default_cc() -> List[str]:
     raw = getattr(settings, "FOLLOW_UP_DEFAULT_CC", "") or ""
     return [a.strip() for a in raw.split(",") if "@" in a]
+
+
+def _split_addresses(values: Iterable[str]) -> List[str]:
+    """Flatten a list of address strings, splitting each on commas, lowercased and deduplicated."""
+    found: List[str] = []
+    for value in values:
+        for part in str(value or "").split(","):
+            part = part.strip().lower()
+            if part and "@" in part and part not in found:
+                found.append(part)
+    return sorted(found)
 
 
 def build_body(customer: Customer, link: str, valid_until) -> str:
@@ -102,7 +113,7 @@ def send_verification(customer: Customer, to: List[str], user, build_link) -> Ky
     Never raises for a sending problem: the returned row says what happened (status and note).
     """
     now = timezone.now()
-    to = sorted({a.strip().lower() for a in to if a and "@" in a})
+    to = _split_addresses(to)
     cc = [a for a in default_cc() if a.lower() not in to]
     valid_until = now + timedelta(days=link_days())
     token = secrets.token_urlsafe(32)

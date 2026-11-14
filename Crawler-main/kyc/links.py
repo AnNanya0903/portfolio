@@ -29,7 +29,7 @@ def contact_email(customer: Customer) -> str:
     for pick in (lambda c: c.is_purchaser, lambda c: c.category == "sales_marketing"):
         for contact in contacts:
             if pick(contact):
-                return contact.email
+                return contact.email_address
     return ""
 
 

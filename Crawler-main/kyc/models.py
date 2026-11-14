@@ -4,6 +4,8 @@ Each customer has one customer code, which is the identity everything else maps 
 quotations, emails). Contacts are grouped by team so automatic emails reach the right people:
 payment reminders to accounts, drawings to technical, escalations to top management.
 """
+from typing import List
+
 from django.conf import settings
 from django.db import models
 
@@ -92,11 +94,21 @@ class CustomerContact(models.Model):
     category = models.CharField("Team", max_length=20, choices=CATEGORY_CHOICES)
     name = models.CharField(max_length=200)
     designation = models.CharField(max_length=200, blank=True, default="")
-    email = models.EmailField(blank=True, default="")
+    email = models.CharField(max_length=254, blank=True, default="")
     phone = models.CharField(max_length=40, blank=True, default="")
     # The purchaser is the person enquiry and quotation emails go to.
     is_purchaser = models.BooleanField("Purchaser", default=False)
     notes = models.CharField(max_length=500, blank=True, default="")
+
+    def email_addresses(self) -> List[str]:
+        """The individual addresses stored in this contact's (comma-separated) email field."""
+        return [part.strip() for part in (self.email or "").split(",") if part.strip()]
+
+    @property
+    def email_address(self) -> str:
+        """First address, for places that need a single recipient (enquiry To, search)."""
+        addresses = self.email_addresses()
+        return addresses[0] if addresses else ""
 
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
