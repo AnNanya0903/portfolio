@@ -98,9 +98,13 @@ def kyc_campaign_emails(customer) -> List[str]:
     # Purchaser first (the same contact KYC uses as the main enquiry email), then the Sales team.
     for pick in (lambda c: c.is_purchaser, lambda c: c.category == CustomerContact.CATEGORY_SALES):
         for contact in contacts:
-            address = (contact.email or "").strip().lower()
-            if address and pick(contact) and address not in out:
-                out.append(address)
+            if not pick(contact):
+                continue
+            # A contact may hold several comma-separated addresses.
+            for part in str(contact.email or "").split(","):
+                address = part.strip().lower()
+                if address and address not in out:
+                    out.append(address)
     return out
 
 

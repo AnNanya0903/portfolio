@@ -68,6 +68,12 @@ class MarketingUsesKycTests(TestCase):
         item = next(r for r in campaigns.build_audience(rows, {})["recipients"] if r["row"]["enquiry_id"] == "E1")
         self.assertEqual(item["cc"], [])  # meera is Do not contact, so she is not CC'd
 
+    def test_contact_with_several_emails(self):
+        CustomerContact.objects.filter(name="Meera").update(email="meera@acme.example, Sales@Acme.example")
+        row = lost.build_lost_leads([_enquiry("E1")])[0]
+        self.assertEqual(row["customer_email"], "tech@acme.example")
+        self.assertEqual(row["other_emails"], ["meera@acme.example", "sales@acme.example"])
+
     def test_search_finds_the_kyc_code(self):
         rows, _ = lost.filter_leads(lost.build_lost_leads([_enquiry("E1"), _enquiry("E2")]), {"q": "av-0001"})
         self.assertEqual([r["enquiry_id"] for r in rows], ["E1"])
