@@ -78,6 +78,47 @@ SUMMARY_PERIOD_CHOICES = {
 }
 
 
+# The enquiry service works in UTC; the summary shows times in Indian time.
+SUMMARY_DISPLAY_TIME_ZONE = "Asia/Kolkata"
+_SUMMARY_PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _tidy_summary(data: MutableMapping[str, Any]) -> None:
+    """Make the service's summary read correctly on the page.
+
+    - generated_at comes as naive UTC: mark it as UTC so it is shown in Indian time;
+    - priorities in their natural order (high, medium, low) instead of alphabetical;
+    - closed_status_enquiries: enquiries whose status is "closed", so the counts on the page add up to
+      the total (the service's closed_enquiries means "not open" and already includes accepted etc.).
+    """
+    generated = data.get("generated_at_dt")
+    if isinstance(generated, datetime) and timezone.is_naive(generated):
+        data["generated_at_dt"] = timezone.make_aware(generated, timezone.utc)
+    metrics = data.get("metrics")
+    if not isinstance(metrics, MutableMapping):
+        return
+    by_priority = metrics.get("by_priority")
+    if isinstance(by_priority, Mapping):
+        metrics["by_priority"] = dict(sorted(
+            by_priority.items(),
+            key=lambda item: (_SUMMARY_PRIORITY_ORDER.get(str(item[0]).strip().lower(), 9), str(item[0])),
+        ))
+    by_status = metrics.get("by_status")
+    try:
+        if isinstance(by_status, Mapping):
+            closed = int(by_status.get("closed") or 0)
+        else:
+            closed = max(
+                int(metrics.get("total_enquiries") or 0) - int(metrics.get("open_enquiries") or 0)
+                - sum(int(metrics.get(key) or 0)
+                      for key in ("accepted_enquiries", "rejected_enquiries", "converted_enquiries")),
+                0,
+            )
+    except (TypeError, ValueError):
+        closed = 0
+    metrics["closed_status_enquiries"] = closed
+
+
 def _normalize_summary_filter_datetime(value: Any) -> Optional[datetime]:
     if not isinstance(value, datetime):
         return None
@@ -2685,8 +2726,14 @@ def summary(request: HttpRequest) -> HttpResponse:
         except services.EnquiryServiceError as exc:
             messages.error(request, f"Unable to load filtered enquiries: {exc}")
 
+    if data:
+        _tidy_summary(data)
+    for enquiry in filtered_enquiries:
+        enquiry["received_at_dt"] = _normalize_summary_filter_datetime(enquiry.get("received_at_dt"))
+
     context = {
         "summary": data,
+        "summary_time_zone": SUMMARY_DISPLAY_TIME_ZONE,
         "summary_period_choices": SUMMARY_PERIOD_CHOICES,
         "summary_selected_period": selected_period,
         "summary_start_date": start_date,
