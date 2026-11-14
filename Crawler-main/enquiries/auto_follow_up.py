@@ -24,6 +24,7 @@ from django.utils import timezone
 
 from dashboard.follow_up_templates import DEFAULT_STAGE, PAYMENT_STAGE, STAGE_KEYS, build_follow_up_body
 from dashboard.gmail_service import GmailAPIError, GmailService
+from kyc import routing as kyc_routing
 
 from . import customer_emails, payment_terms, services
 from .models import EnquiryContact, FollowUpSent
@@ -202,6 +203,9 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
     cc_list = customer_emails.with_customer_cc(
         enquiry_id, payment_terms.parse_cc(cc, exclude=customer_email)[0], to=customer_email, own=own,
         limit=payment_terms.MAX_CC)
+    # Linked to a KYC customer: copy the team this stage concerns, and top management once it has escalated.
+    cc_list = kyc_routing.add_cc(cc_list, enquiry_id, stage, attempt, to=customer_email, own=own,
+                                 limit=payment_terms.MAX_CC)
     subject = original.get("subject") or str(enquiry.get("subject") or "")
     next_on = next_follow_up_date(attempt, today)
     details = {

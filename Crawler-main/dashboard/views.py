@@ -1793,6 +1793,25 @@ def _email_address(value):
     return (parseaddr(value or '')[1] or '').strip().lower()
 
 
+def _routed_cc_by_stage(enquiry_id, base_cc, recipient):
+    """CC to suggest per follow-up stage, and a line saying who was added (enquiries linked to a KYC customer).
+
+    Returns ({stage: "a@x, b@y"}, {stage: note}); without a KYC link every stage keeps `base_cc`.
+    """
+    from kyc import routing as kyc_routing
+
+    base, _ = payment_terms.parse_cc(base_cc, exclude=recipient)
+    sent = FollowUpSent.objects.filter(enquiry_id=str(enquiry_id), status=FollowUpSent.STATUS_SENT)
+    total, payment = sent.count(), sent.filter(stage=PAYMENT_STAGE).count()
+    cc, notes = {}, {}
+    for key, _label in FOLLOW_UP_STAGE_CHOICES:
+        attempt = (payment if key == PAYMENT_STAGE else total) + 1  # payment reminders are numbered on their own
+        cc[key] = ', '.join(kyc_routing.add_cc(base, enquiry_id, key, attempt, to=recipient,
+                                               limit=payment_terms.MAX_CC))
+        notes[key] = kyc_routing.describe(enquiry_id, key, attempt)
+    return cc, notes
+
+
 def _save_follow_up_cc(enquiry_id, cc_list, user):
     """Remember the CC so the next follow-ups (manual and automatic) use it too."""
     value = ", ".join(cc_list)
@@ -1924,9 +1943,13 @@ def compose_email(request, email_id):
     next_follow_up_on, next_follow_up_error = None, ''
     auto_follow_up_choice = None  # None = not posted yet; True/False = the employee's choice
     follow_up_cc, cc_list, cc_error = '', [], ''
+    follow_up_stage_cc, follow_up_routing_notes = {}, {}
     credit_hold = None
     if follow_up_context:
         follow_up_cc = payment_terms.default_cc(follow_up_context.get('enquiry_id') or '')
+        follow_up_stage_cc, follow_up_routing_notes = _routed_cc_by_stage(
+            follow_up_context.get('enquiry_id') or '', follow_up_cc, follow_up_recipient)
+        follow_up_cc = follow_up_stage_cc.get(suggested_stage, follow_up_cc)
         credit_hold = payment_terms.credit_hold_until(follow_up_context.get('enquiry_id') or '')
     if request.method == 'POST' and follow_up_context:
         follow_up_cc = (request.POST.get('follow_up_cc') or '').strip()
@@ -2108,6 +2131,9 @@ def compose_email(request, email_id):
                 timezone.localdate() + timedelta(days=getattr(settings, 'FOLLOW_UP_DEFAULT_GAP_DAYS', 3))
             ).isoformat(),
             'follow_up_cc': follow_up_cc,
+            'follow_up_stage_cc': follow_up_stage_cc,
+            'follow_up_routing_notes': follow_up_routing_notes,
+            'follow_up_routing_note': follow_up_routing_notes.get(follow_up_stage, ''),
             'credit_hold': credit_hold,
             'next_follow_up_min': timezone.localdate().isoformat(),
             'customer_waiting': customer_waiting,

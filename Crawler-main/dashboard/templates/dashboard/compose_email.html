@@ -140,6 +140,7 @@
                                        value="{{ follow_up_cc }}" maxlength="1000" autocomplete="off"
                                        placeholder="e.g. customerservice@avigiri.com, sales@avigiri.com">
                                 <div class="form-text">Separate addresses with commas. Automatic follow-ups for this enquiry use the same CC.</div>
+                                <div class="form-text" id="followUpRoutingNote"{% if not follow_up_routing_note %} hidden{% endif %}><i class="bi bi-people me-1"></i><span>{{ follow_up_routing_note }}</span></div>
                             </div>
                         </div>
                     </div>
@@ -177,6 +178,8 @@
                         {% endif %}
                     </div>
                     {{ follow_up_stage_bodies|json_script:"followUpStageBodies" }}
+                    {{ follow_up_stage_cc|json_script:"followUpStageCc" }}
+                    {{ follow_up_routing_notes|json_script:"followUpRoutingNotes" }}
                     {% endif %}
 
                     <div class="compose-section">
@@ -404,6 +407,29 @@
         }
         textarea.value = next;
         lastTemplate = next;
+    });
+})();
+(function () {
+    // KYC routing: each stage copies a different team of the customer. The CC follows the stage
+    // unless the employee has typed their own CC.
+    const select = document.getElementById('followUpStage');
+    const ccInput = document.getElementById('followUpCc');
+    const ccData = document.getElementById('followUpStageCc');
+    const noteData = document.getElementById('followUpRoutingNotes');
+    const note = document.getElementById('followUpRoutingNote');
+    if (!select || !ccInput || !ccData) return;
+    const ccByStage = JSON.parse(ccData.textContent || '{}');
+    const notes = noteData ? JSON.parse(noteData.textContent || '{}') : {};
+    let stage = select.value;
+    select.addEventListener('change', () => {
+        if (ccInput.value.trim() === (ccByStage[stage] || '') && select.value in ccByStage) {
+            ccInput.value = ccByStage[select.value];
+        }
+        stage = select.value;
+        if (note) {
+            note.querySelector('span').textContent = notes[stage] || '';
+            note.hidden = !notes[stage];
+        }
     });
 })();
 (function () {
