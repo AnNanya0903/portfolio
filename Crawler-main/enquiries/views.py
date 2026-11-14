@@ -1545,6 +1545,10 @@ def board(request: HttpRequest) -> HttpResponse:
             enquiry["converted_previous_status"] = conversion_store[enquiry_id]
         if str(enquiry.get("status") or "").strip().lower() == "rejected":
             enquiry["rejection_reason"] = _extract_rejection_reason(enquiry.get("remarks"))
+        else:
+            # The customer's old rejection comment stays in the remarks, but once the quotation is accepted
+            # (or reopened) the board no longer offers "View comments".
+            enquiry.pop("rejection_reason", None)
 
     total_count = len(enquiries)
     total_pages = max(1, int(math.ceil(total_count / page_size))) if page_size else 1

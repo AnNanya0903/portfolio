@@ -437,7 +437,7 @@
               </div>
               <div class="small text-muted" data-converted-feedback hidden></div>
             {% endif %}
-            {% if enquiry.rejection_reason %}
+            {% if enquiry.rejection_reason and enquiry.status == 'rejected' %}
               <div>
                 <button
                   type="button"
