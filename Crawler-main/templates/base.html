@@ -63,7 +63,7 @@
                 </a>
 
                 <nav class="copilot-mobile-nav flex-grow-1">
-                    <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or 'cad' in request.path %}open{% endif %}>
+                    <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or '/quotations/' in request.path or 'cad' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Core ERP</summary>
                     <div class="sidebar-section-links">
                     <a href="/" class="nav-pill-custom {% if request.path == '/' %}active{% endif %}">
@@ -82,6 +82,11 @@
                     {% if mw_service_access.kyc|default:False %}
                     <a href="{% url 'kyc:list' %}" class="nav-pill-custom {% if '/kyc/' in request.path %}active{% endif %}">
                         <i class="bi bi-person-vcard"></i> KYC
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.quotations|default:False %}
+                    <a href="{% url 'quotations:list' %}" class="nav-pill-custom {% if '/quotations/' in request.path %}active{% endif %}">
+                        <i class="bi bi-file-earmark-text"></i> Quotations
                     </a>
                     {% endif %}
                     {% if mw_service_access.design|default:False %}
@@ -223,7 +228,7 @@
             </a>
 
             <nav class="copilot-sidebar-nav flex-grow-1">
-                <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or 'cad' in request.path %}open{% endif %}>
+                <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or '/quotations/' in request.path or 'cad' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Core ERP</summary>
                 <div class="sidebar-section-links">
                 <a href="/" class="nav-pill-custom {% if request.path == '/' %}active{% endif %}">
@@ -242,6 +247,11 @@
                 {% if mw_service_access.kyc|default:False %}
                 <a href="{% url 'kyc:list' %}" class="nav-pill-custom {% if '/kyc/' in request.path %}active{% endif %}">
                     <i class="bi bi-person-vcard"></i> KYC
+                </a>
+                {% endif %}
+                {% if mw_service_access.quotations|default:False %}
+                <a href="{% url 'quotations:list' %}" class="nav-pill-custom {% if '/quotations/' in request.path %}active{% endif %}">
+                    <i class="bi bi-file-earmark-text"></i> Quotations
                 </a>
                 {% endif %}
                 {% if mw_service_access.design|default:False %}

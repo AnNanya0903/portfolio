@@ -5,13 +5,12 @@ from django.urls import reverse
 
 from dashboard.models import UserServiceAccess
 from kyc.tests import *  # noqa: F401,F403  (Python 3.14 test-client fix for Django 4.2)
-from magicwand.access import user_has_service_access
+from magicwand.access import SERVICE_DEFINITIONS, user_has_service_access
 from magicwand.context_processors import service_access
 
 STATIC = dict(STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage")
 KEEP = {"enquiries", "marketing", "kyc"}
-HIDE_OTHERS = {"gmail_ai", "design", "deskera", "mrp", "accounts", "compounding_planning", "compounding_board",
-               "discussion", "document_scanner", "gasket_counter"}
+HIDE_OTHERS = set(SERVICE_DEFINITIONS) - KEEP  # every other module, including ones added later
 
 
 class HiddenSectionTests(TestCase):

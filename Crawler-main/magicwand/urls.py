@@ -45,6 +45,7 @@ urlpatterns = [
     path('enquiries/', include('enquiries.urls')),
     path('marketing/', include('marketing.urls')),
     path('kyc/', include('kyc.urls')),
+    path('quotations/', include('quotations.urls')),
     path('compounding/', include('compounding.urls')),
     path('discussion/', include('discussion.urls')),
     path('documents/', include('docscanner.urls')),

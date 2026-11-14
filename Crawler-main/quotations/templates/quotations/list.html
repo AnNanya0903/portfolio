@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+
+{% block title %}Quotations - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'quotations/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <h2 class="page-title">Quotations</h2>
+    <p class="page-subtitle">Every quotation and feasibility report given to a customer, and the one approved PDF to send.</p>
+  </div>
+  {% if can_cost %}
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-primary shadow-sm" href="{% url 'quotations:new' %}{% if customer_code %}?customer={{ customer_code|urlencode }}{% endif %}"><i class="bi bi-upload me-1"></i> Upload quotation</a>
+  </div>
+  {% endif %}
+</div>
+
+<form method="get" class="d-flex gap-2 mb-3" role="search">
+  <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="max-width: 360px;"
+         placeholder="Quotation number, customer, code or enquiry" aria-label="Search quotations">
+  {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+  {% if customer_code %}<input type="hidden" name="customer" value="{{ customer_code }}">{% endif %}
+  <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
+  {% if q or customer_code %}<a class="btn btn-sm btn-link" href="{% url 'quotations:list' %}">Clear</a>{% endif %}
+</form>
+
+{% if customer_code %}<p class="qt-muted mb-2">Showing quotations for customer code <span class="qt-code">{{ customer_code }}</span>.</p>{% endif %}
+
+<div class="qt-tabs mb-3">
+  <a class="qt-tab {% if not status %}active{% endif %}" href="?q={{ q|urlencode }}{% if customer_code %}&customer={{ customer_code|urlencode }}{% endif %}">All ({{ total }})</a>
+  {% for tab in tabs %}
+    <a class="qt-tab {% if status == tab.key %}active{% endif %}" href="?status={{ tab.key }}&q={{ q|urlencode }}{% if customer_code %}&customer={{ customer_code|urlencode }}{% endif %}">{{ tab.label }} ({{ tab.count }})</a>
+  {% endfor %}
+</div>
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead>
+        <tr><th>Number</th><th>Customer</th><th>Quotation for</th><th>Status</th><th>Updated</th></tr>
+      </thead>
+      <tbody>
+        {% for row in page %}
+          <tr>
+            <td class="text-nowrap"><a class="qt-code text-decoration-none" href="{% url 'quotations:detail' row.pk %}">{{ row.number }}</a></td>
+            <td>
+              <span class="fw-semibold">{{ row.customer_name }}</span>
+              {% if row.customer %}<div class="qt-muted">Code {{ row.customer.code }}</div>{% endif %}
+            </td>
+            <td>
+              <a class="text-decoration-none" href="{% url 'quotations:detail' row.pk %}">{{ row.title }}</a>
+              {% if row.enquiry_id %}<div class="qt-muted">Enquiry #{{ row.enquiry_id }}</div>{% endif %}
+            </td>
+            <td><span class="qt-chip qt-chip--{{ row.status }}">{{ row.get_status_display }}</span></td>
+            <td class="text-nowrap">{{ row.updated_at|date:"d M Y" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-5">
+            {% if q or status or customer_code %}No quotation matches.{% else %}No quotations yet.
+              {% if can_cost %}<a href="{% url 'quotations:new' %}">Upload the first one</a>.{% endif %}{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if page.has_other_pages %}
+<div class="d-flex justify-content-end align-items-center gap-2 mt-3 qt-muted">
+  {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ status }}&q={{ q|urlencode }}&customer={{ customer_code|urlencode }}&page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  Page {{ page.number }} of {{ page.paginator.num_pages }}
+  {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ status }}&q={{ q|urlencode }}&customer={{ customer_code|urlencode }}&page={{ page.next_page_number }}">Next</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}
