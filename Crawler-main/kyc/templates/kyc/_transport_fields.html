@@ -1,0 +1,40 @@
+{% comment %}Transportation & MSME fields of the customer form, with "Other transporter" and "Udyam No." shown only when needed.{% endcomment %}
+<div class="row" data-transport-fields>
+  {% for field in transport_fields %}
+    <div class="col-md-6 mb-3" data-field="{{ field.name }}">
+      <label class="form-label small" for="{{ field.id_for_label }}">{{ field.label }}{% if field.name == 'udyam_aadhar_no' %} <span class="text-danger">*</span>{% endif %}</label>
+      {% if field.name == 'msme_applicable' %}
+        <div class="d-flex gap-3">
+          {% for radio in field %}
+            <div class="form-check">{{ radio.tag }}<label class="form-check-label small" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label></div>
+          {% endfor %}
+        </div>
+      {% else %}
+        {{ field }}
+      {% endif %}
+      {% if field.name == 'transportation' %}<div class="kyc-muted">As written on the KYC form, e.g. VRL-TO PAY-DOOR.</div>{% endif %}
+      {% if field.name == 'preferred_transporter' %}<div class="kyc-muted">ARC unless the customer asks for another.</div>{% endif %}
+      {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+    </div>
+  {% endfor %}
+</div>
+<datalist id="kycTransporters"><option value="ARC"><option value="VRL"></datalist>
+<script>
+  (function () {
+    var box = document.currentScript.previousElementSibling.previousElementSibling;
+    if (!box) return;
+    var form = box.closest('form');
+    var show = function (name, visible) {
+      var wrap = box.querySelector('[data-field="' + name + '"]');
+      if (wrap) wrap.style.display = visible ? '' : 'none';
+    };
+    var update = function () {
+      var transporter = form.querySelector('[name="preferred_transporter"]');
+      show('other_transporter', transporter && transporter.value === 'OTHER');
+      var yes = form.querySelector('[name="msme_applicable"][value="yes"]');
+      show('udyam_aadhar_no', yes && yes.checked);
+    };
+    form.addEventListener('change', update);
+    update();
+  })();
+</script>

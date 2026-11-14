@@ -48,11 +48,14 @@
           <div class="kyc-label mb-2">Transportation &amp; MSME</div>
           <div class="d-flex flex-column gap-2">
             <div><div class="kyc-label">Transportation</div><div class="kyc-value">{{ customer.transportation|default:"—" }}</div></div>
-            <div><div class="kyc-label">Preferred Transporter</div><div class="kyc-value">{{ customer.get_preferred_transporter_display|default:customer.preferred_transporter|default:"—" }}</div></div>
-            <div><div class="kyc-label">Other Transporter</div><div class="kyc-value">{{ customer.other_transporter|default:"—" }}</div></div>
-            <div><div class="kyc-label">Delivery Type</div><div class="kyc-value">{{ customer.get_delivery_type_display|default:customer.delivery_type|default:"—" }}</div></div>
-            <div><div class="kyc-label">MSME Applicable</div><div class="kyc-value">{{ customer.msme_applicable|yesno:"Yes,No,—" }}</div></div>
-            <div><div class="kyc-label">Udyam Aadhaar Number</div><div class="kyc-value">{{ customer.udyam_aadhar_no|default:"—" }}</div></div>
+            <div><div class="kyc-label">Preferred transporter</div><div class="kyc-value">
+              {% if customer.preferred_transporter == 'OTHER' %}{{ customer.other_transporter|default:"Other" }}
+              {% else %}{{ customer.get_preferred_transporter_display|default:"ARC" }}{% endif %}</div></div>
+            <div><div class="kyc-label">Door / Go-Down delivery</div><div class="kyc-value">{{ customer.get_delivery_type_display|default:"—" }}</div></div>
+            <div><div class="kyc-label">MSME applicable</div><div class="kyc-value">{{ customer.msme_applicable|yesno:"Yes,No,—" }}</div></div>
+            {% if customer.msme_applicable or customer.udyam_aadhar_no %}
+              <div><div class="kyc-label">Udyam Aadhaar No.</div><div class="kyc-value">{{ customer.udyam_aadhar_no|default:"—" }}</div></div>
+            {% endif %}
           </div>
         </div>
         <div class="kyc-muted border-top pt-3">

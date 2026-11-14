@@ -3,6 +3,7 @@ import re
 from django import forms
 from django.core.validators import validate_email
 
+from . import logistics
 from .models import Customer, CustomerContact
 
 _TEXT = {"class": "form-control form-control-sm"}
@@ -18,6 +19,12 @@ def _compact_upper(value: str) -> str:
 
 
 class CustomerForm(forms.ModelForm):
+    # Yes / No buttons; saved as True / False. Also accepts "Yes", "No", True, False from imports.
+    msme_applicable = forms.TypedChoiceField(
+        label="MSME applicable", choices=(("yes", "Yes"), ("no", "No")), coerce=lambda v: v == "yes",
+        empty_value=False, required=False, initial="no",
+        widget=forms.RadioSelect(attrs={"class": "form-check-input"}))
+
     class Meta:
         model = Customer
         fields = ["code", "name", "address", "city", "state", "pincode", "country",
@@ -42,13 +49,64 @@ class CustomerForm(forms.ModelForm):
             "phone": forms.TextInput(attrs=_TEXT),
             "website": forms.TextInput(attrs=_TEXT),
             "notes": forms.Textarea(attrs={**_TEXT, "rows": 3}),
-            "transportation": forms.TextInput(attrs=_TEXT),
+            "transportation": forms.TextInput(attrs={**_TEXT, "list": "kycTransporters",
+                                                     "placeholder": "e.g. VRL-TO PAY-DOOR"}),
             "preferred_transporter": forms.Select(attrs=_SELECT),
-            "other_transporter": forms.TextInput(attrs=_TEXT),
+            "other_transporter": forms.TextInput(attrs={**_TEXT, "placeholder": "Name of the transporter"}),
             "delivery_type": forms.Select(attrs=_SELECT),
-            "msme_applicable": forms.CheckboxInput(attrs={"class": "form-check-input"}),
-            "udyam_aadhar_no": forms.TextInput(attrs=_TEXT),
+            "udyam_aadhar_no": forms.TextInput(attrs={**_TEXT, "placeholder": "e.g. UDYAM-TN-12-0012345"}),
         }
+        labels = {
+            "transportation": "Transportation",
+            "preferred_transporter": "Preferred transporter",
+            "other_transporter": "Other transporter",
+            "delivery_type": "Door / Go-Down delivery",
+            "udyam_aadhar_no": "Udyam Aadhaar No.",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Show the saved MSME value on the Yes / No buttons, and imports' "Yes" / "No" / True / False.
+        if self.instance and self.instance.pk and "msme_applicable" not in self.initial:
+            self.initial["msme_applicable"] = "yes" if self.instance.msme_applicable else "no"
+        elif "msme_applicable" in self.initial:
+            self.initial["msme_applicable"] = "yes" if logistics.msme(self.initial["msme_applicable"]) else "no"
+        if self.data and "msme_applicable" in self.data:
+            raw = self.data.get("msme_applicable")
+            if raw not in ("yes", "no"):
+                data = self.data.copy()
+                data["msme_applicable"] = "yes" if logistics.msme(raw) else "no"
+                self.data = data
+        self.fields["preferred_transporter"].required = False
+        self.fields["preferred_transporter"].choices = [
+            choice for choice in self.fields["preferred_transporter"].choices if choice[0] != ""]
+        if not self.instance.pk and not self.initial.get("preferred_transporter"):
+            self.initial["preferred_transporter"] = logistics.DEFAULT_TRANSPORTER
+
+    def clean_transportation(self):
+        return " ".join((self.cleaned_data.get("transportation") or "").split())
+
+    def clean_other_transporter(self):
+        return " ".join((self.cleaned_data.get("other_transporter") or "").split())
+
+    def clean_udyam_aadhar_no(self):
+        number = logistics.udyam(self.cleaned_data.get("udyam_aadhar_no"))
+        if number and logistics.udyam_looks_wrong(number):
+            raise forms.ValidationError("A Udyam number looks like UDYAM-TN-12-0012345.")
+        return number
+
+    def clean(self):
+        cleaned = super().clean()
+        transporter = cleaned.get("preferred_transporter") or logistics.DEFAULT_TRANSPORTER
+        cleaned["preferred_transporter"] = transporter
+        if transporter == "OTHER":
+            if not cleaned.get("other_transporter"):
+                self.add_error("other_transporter", "Please enter the transporter's name.")
+        else:
+            cleaned["other_transporter"] = ""  # only kept for "Other"
+        if cleaned.get("msme_applicable") and not cleaned.get("udyam_aadhar_no"):
+            self.add_error("udyam_aadhar_no", "Required when MSME applies.")
+        return cleaned
 
     def clean_code(self):
         code = _compact_upper(self.cleaned_data.get("code"))

@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Tuple
 
 from django.db import transaction
 
+from . import extraction
 from .forms import CustomerContactForm, CustomerForm
 from .models import Customer
 from .teams import is_yes, looks_like_purchaser, team_from_text
@@ -32,6 +33,11 @@ COLUMNS: Dict[str, Tuple[str, ...]] = {
     "phone": ("company phone", "phone", "telephone", "landline", "office phone"),
     "website": ("website", "web"),
     "notes": ("notes", "remarks"),
+    "transportation": ("transportation", "transport", "transport details"),
+    "preferred_transporter": ("preferred transporter", "transporter"),
+    "delivery": ("door delivery go down delivery", "door go down delivery", "delivery", "delivery type"),
+    "msme": ("msme", "msme applicable"),
+    "udyam": ("udyam aadhar no", "udyam aadhaar no", "udhyam aadhar no", "udyam no", "udyam number", "udyam"),
     "contact_name": ("contact name", "contact person", "contact", "person"),
     "designation": ("designation", "title", "role"),
     "email": ("email", "e mail", "email id", "contact email", "mail id"),
@@ -40,10 +46,13 @@ COLUMNS: Dict[str, Tuple[str, ...]] = {
     "purchaser": ("purchaser", "is purchaser"),
 }
 TEMPLATE_HEADERS = ["Customer code", "Company name", "Address", "City", "State", "PIN", "Country", "GSTIN", "PAN",
-                    "Company phone", "Website", "Contact name", "Designation", "Email", "Mobile", "Team", "Purchaser"]
+                    "Company phone", "Website", "Transportation", "Preferred transporter",
+                    "Door / Go-Down delivery", "MSME applicable", "Udyam Aadhaar No.",
+                    "Contact name", "Designation", "Email", "Mobile", "Team", "Purchaser"]
 TEMPLATE_SAMPLE = ["AV-0001", "Sample Seals Pvt Ltd", "12 Industrial Area", "Bengaluru", "Karnataka", "560058",
-                   "India", "", "", "080-0000000", "", "Sample Person", "Purchase Manager",
-                   "purchase@sample.example", "9000000000", "Sales and marketing", "Yes"]
+                   "India", "", "", "080-0000000", "", "VRL-TO PAY-DOOR", "ARC", "Door delivery", "No", "",
+                   "Sample Person", "Purchase Manager", "purchase@sample.example", "9000000000",
+                   "Sales and marketing", "Yes"]
 
 _CUSTOMER_KEYS = ("code", "name", "address", "city", "state", "pincode", "country", "gstin", "pan", "phone",
                   "website", "notes")
@@ -117,6 +126,16 @@ def read_rows(uploaded) -> List[Dict[str, Any]]:
     return rows
 
 
+def _logistics_data(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Transport and MSME columns as the customer form expects them."""
+    fields = extraction.logistics_fields({
+        "transportation": row.get("transportation"), "preferred_transporter": row.get("preferred_transporter"),
+        "delivery": row.get("delivery"), "msme": row.get("msme"), "udyam_number": row.get("udyam"),
+    })
+    fields["msme_applicable"] = fields["msme_applicable"] or "no"  # a blank cell means not MSME
+    return fields
+
+
 def _first_error(form) -> str:
     for field, errors in form.errors.items():
         label = form.fields[field].label if field in form.fields else ""
@@ -153,6 +172,8 @@ def build_plan(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
             continue
         group = groups.setdefault(code, {"code": code, "row": row["row"], "contacts": [],
                                          "data": {key: row.get(key) or "" for key in _CUSTOMER_KEYS}})
+        if "preferred_transporter" not in group["data"]:  # once per customer, from its first row
+            group["data"].update(_logistics_data(row))
         group["data"]["code"] = code
         contact = _contact_data(row)
         if not contact:

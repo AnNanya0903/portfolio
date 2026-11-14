@@ -13,6 +13,7 @@ from django.conf import settings
 
 from docscanner import services as scanner
 
+from . import logistics
 from .teams import is_yes, looks_like_purchaser, team_from_text
 
 logger = logging.getLogger(__name__)
@@ -31,14 +32,36 @@ _PROMPT = (
     "{\n"
     '  "customer": {"name": "company name", "address": "street address without city/state/PIN", "city": null,\n'
     '               "state": null, "pincode": null, "country": null, "gstin": null, "pan": null,\n'
-    '               "phone": "company phone", "website": null},\n'
+    '               "phone": "company phone", "website": null,\n'
+    '               "transportation": "as written, e.g. VRL-TO PAY-DOOR", "preferred_transporter": null,\n'
+    '               "delivery": "door delivery or go-down delivery, as written", "msme": "yes, no or null",\n'
+    '               "udyam_number": null},\n'
     '  "contacts": [{"name": "person", "designation": null, "department": null, "email": null, "phone": null,\n'
     '                "is_purchaser": false}]\n'
     "}\n\n"
     "List every person on the form as a contact. `department` is the section of the form they are under,\n"
     "for example purchase, accounts, design, quality, management. Set is_purchaser to true only for the\n"
-    "purchase / procurement contact."
+    "purchase / procurement contact.\n"
+    'For msme answer "yes" or "no" only when one is clearly marked, ticked or circled. If the form just\n'
+    'prints both choices (for example "YES / NO") without marking one, use null.'
 )
+
+
+def logistics_fields(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Transport and MSME values as the customer form expects them, from what the KYC form says."""
+    transportation = _clean(raw.get("transportation"), 150)
+    preferred, other = logistics.transporter(raw.get("preferred_transporter"))
+    if not preferred:  # not filled in: the transporter written under Transportation, else ARC
+        preferred, other = logistics.transporter(transportation)
+    msme = logistics.msme(raw.get("msme"))
+    return {
+        "transportation": transportation,
+        "preferred_transporter": preferred or logistics.DEFAULT_TRANSPORTER,
+        "other_transporter": other,
+        "delivery_type": logistics.delivery(raw.get("delivery")) or logistics.delivery(transportation),
+        "msme_applicable": "" if msme is None else ("yes" if msme else "no"),
+        "udyam_aadhar_no": logistics.udyam(raw.get("udyam_number")),
+    }
 
 
 class KycExtractionError(RuntimeError):
@@ -58,6 +81,7 @@ def normalize(payload: Dict[str, Any]) -> Dict[str, Any]:
     for field in ("gstin", "pan"):  # remove the spaces before cutting to length, not after
         compact = re.sub(r"\s+", "", _clean(raw_customer.get(field), 100)).upper()
         customer[field] = compact[:_CUSTOMER_FIELDS[field]]
+    customer.update(logistics_fields(raw_customer))
 
     contacts: List[Dict[str, Any]] = []
     raw_contacts = payload.get("contacts") if isinstance(payload.get("contacts"), list) else []
@@ -102,5 +126,7 @@ def extract_kyc(*, file_bytes: Optional[bytes] = None, content_type: str = "", f
 
 
 def has_details(data: Dict[str, Any]) -> bool:
-    customer = (data or {}).get("customer") or {}
+    customer = dict((data or {}).get("customer") or {})
+    if customer.get("preferred_transporter") == logistics.DEFAULT_TRANSPORTER and not customer.get("transportation"):
+        customer.pop("preferred_transporter")  # the default, not something read from the document
     return any(customer.values()) or bool((data or {}).get("contacts"))
