@@ -1,9 +1,12 @@
 """KYC portal pages: customer list, customer page, and forms for the customer and its contacts."""
 from __future__ import annotations
 
+import logging
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -12,6 +15,8 @@ from django.views.decorators.http import require_POST
 from . import links, verification
 from .forms import CustomerContactForm, CustomerForm
 from .models import Customer, CustomerContact
+
+logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 50
 
@@ -39,6 +44,7 @@ def _customer_form_page(request: HttpRequest, form: CustomerForm, customer=None)
         "main_fields": [form[name] for name in ("code", "name")],
         "address_fields": [form[name] for name in ("address", "city", "state", "pincode", "country")],
         "tax_fields": [form[name] for name in ("gstin", "pan", "phone", "website", "notes")],
+        "transport_fields": [form[name] for name in ("transportation", "preferred_transporter", "other_transporter", "delivery_type", "msme_applicable", "udyam_aadhar_no")],
     })
 
 
@@ -72,6 +78,19 @@ def customer_edit(request: HttpRequest, pk: int) -> HttpResponse:
     return _customer_form_page(request, CustomerForm(instance=customer), customer)
 
 
+def _marketing_activity(customer: Customer) -> dict:
+    """Lost enquiries in the Marketing portal and campaign emails, for this customer's linked enquiries."""
+    from marketing.models import CampaignRecipient, MarketingLead
+
+    enquiry_ids = list(customer.enquiry_links.values_list("enquiry_id", flat=True))
+    if not enquiry_ids:
+        return {"leads": [], "emails": []}
+    leads = list(MarketingLead.objects.filter(enquiry_id__in=enquiry_ids).order_by("-updated_at")[:20])
+    emails = list(CampaignRecipient.objects.filter(enquiry_id__in=enquiry_ids).select_related("campaign")
+                  .order_by("-created_at")[:20])
+    return {"leads": leads, "emails": emails}
+
+
 @login_required
 def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     customer = get_object_or_404(Customer.objects.select_related("created_by", "updated_by"), pk=pk)
@@ -89,6 +108,13 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "has_email": any(c.email for c in contacts),
         "enquiry_links": list(customer.enquiry_links.all()[:50]),
         "enquiry_link_count": customer.enquiry_links.count(),
+        "marketing": _marketing_activity(customer),
+        "delete_summary": {
+            "contacts": len(contacts),
+            "documents": customer.documents.count(),
+            "verifications": customer.verifications.count(),
+            "enquiries": customer.enquiry_links.count(),
+        },
         "has_purchaser": any(c.is_purchaser for c in contacts),
         "missing_teams": [g["label"] for g in groups if not any(c.email for c in g["contacts"])],
     })
@@ -147,6 +173,33 @@ def contact_delete(request: HttpRequest, pk: int, contact_id: int) -> HttpRespon
     contact.delete()
     messages.success(request, f"{name} removed.")
     return redirect("kyc:detail", pk=pk)
+
+
+@login_required
+@require_POST
+def customer_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Delete a customer for good: contacts, uploaded KYC documents (and their files), verification
+    requests and enquiry links go with it. The enquiries themselves are not touched.
+
+    The customer code must be typed to confirm, so a stray click can never delete a record.
+    """
+    customer = get_object_or_404(Customer, pk=pk)
+    typed = "".join((request.POST.get("confirm_code") or "").split()).upper()
+    if typed != customer.code.upper():
+        messages.error(request, f"Not deleted. Type the customer code {customer.code} exactly to confirm.")
+        return redirect("kyc:detail", pk=pk)
+    label = f"{customer.code} - {customer.name}"
+    stored_files = [doc.file for doc in customer.documents.all() if doc.file]
+    with transaction.atomic():
+        customer.delete()
+    for stored in stored_files:  # after the records are gone; a storage problem must not bring them back
+        try:
+            stored.delete(save=False)
+        except Exception:
+            logger.warning("KYC: could not remove the stored file %s of deleted customer %s", stored.name, label)
+    logger.info("KYC customer %s deleted by %s", label, request.user)
+    messages.success(request, f"Customer {label} was deleted.")
+    return redirect("kyc:list")
 
 
 @login_required

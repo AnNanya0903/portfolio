@@ -20,7 +20,14 @@ class CustomerForm(forms.ModelForm):
     class Meta:
         model = Customer
         fields = ["code", "name", "address", "city", "state", "pincode", "country",
-                  "gstin", "pan", "phone", "website", "notes"]
+                  "gstin", "pan", "phone", "website", "notes" ,
+    "transportation",
+    "preferred_transporter",
+    "other_transporter",
+    "delivery_type",
+    "msme_applicable",
+    "udyam_aadhar_no"]
+
         widgets = {
             "code": forms.TextInput(attrs={**_TEXT, "placeholder": "e.g. AV-0001", "autocomplete": "off"}),
             "name": forms.TextInput(attrs=_TEXT),
@@ -34,6 +41,12 @@ class CustomerForm(forms.ModelForm):
             "phone": forms.TextInput(attrs=_TEXT),
             "website": forms.TextInput(attrs=_TEXT),
             "notes": forms.Textarea(attrs={**_TEXT, "rows": 3}),
+            "transportation": forms.TextInput(attrs=_TEXT),
+            "preferred_transporter": forms.Select(attrs=_SELECT),
+            "other_transporter": forms.TextInput(attrs=_TEXT),
+            "delivery_type": forms.Select(attrs=_SELECT),
+            "msme_applicable": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "udyam_aadhar_no": forms.TextInput(attrs=_TEXT),
         }
 
     def clean_code(self):

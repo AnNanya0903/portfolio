@@ -25,6 +25,16 @@ class Customer(models.Model):
         (KYC_CHANGES, "Customer asked for changes"),
         (KYC_REJECTED, "Rejected by customer"),
     )
+    TRANSPORTER_CHOICES = [
+        ('ARC', 'ARC'),
+        ('VRL', 'VRL'),
+        ('OTHER', 'Other'),
+        ]
+    
+    DELIVERY_CHOICES = [
+        ('DOOR', 'Door Delivery'),
+        ('GODOWN', 'Go-Down Delivery'),
+    ]
 
     # Stored in capitals without spaces, so "av-001" and "AV-001" are the same customer.
     code = models.CharField(
@@ -37,6 +47,15 @@ class Customer(models.Model):
     state = models.CharField(max_length=120, blank=True, default="")
     pincode = models.CharField("PIN / postal code", max_length=20, blank=True, default="")
     country = models.CharField(max_length=120, blank=True, default="India")
+
+# Add these inside your existing KYC model
+
+    transportation = models.CharField( max_length=150, blank=True, null=True ) 
+    preferred_transporter = models.CharField( max_length=100, choices=TRANSPORTER_CHOICES, default='ARC', blank=True) 
+    other_transporter = models.CharField( max_length=100, blank=True, null=True)
+    delivery_type = models.CharField( max_length=20, choices=DELIVERY_CHOICES, blank=True, null=True)
+    msme_applicable = models.BooleanField(default=False)
+    udyam_aadhar_no = models.CharField(max_length=50, blank=True, null=True )
     gstin = models.CharField("GSTIN", max_length=15, blank=True, default="")
     pan = models.CharField("PAN", max_length=10, blank=True, default="")
     phone = models.CharField("Company phone", max_length=40, blank=True, default="")

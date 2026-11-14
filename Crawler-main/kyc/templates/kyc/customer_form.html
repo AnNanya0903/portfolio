@@ -32,6 +32,21 @@
         <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Tax and other details</h6></div>
         <div class="card-body d-flex flex-column gap-3">
           {% for field in tax_fields %}{% include 'kyc/_field.html' %}{% endfor %}
+        </div>
+      </div>
+
+      <div class="card border-0 shadow-sm mt-4">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Transportation &amp; MSME Details</h6></div>
+        <div class="card-body">
+          <div class="row">
+            {% for field in transport_fields %}
+              <div class="col-md-6 mb-3">
+                <label class="form-label small" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {{ field }}
+                {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+              </div>
+            {% endfor %}
+          </div>
           <button type="submit" class="btn btn-primary align-self-start">{% if customer %}Save changes{% else %}Save customer{% endif %}</button>
         </div>
       </div>

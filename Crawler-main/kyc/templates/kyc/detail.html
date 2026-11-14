@@ -43,6 +43,18 @@
         <div><div class="kyc-label">Company phone</div><div class="kyc-value">{{ customer.phone|default:"—" }}</div></div>
         <div><div class="kyc-label">Website</div><div class="kyc-value">{{ customer.website|default:"—" }}</div></div>
         {% if customer.notes %}<div><div class="kyc-label">Notes</div><div class="kyc-value">{{ customer.notes|linebreaksbr }}</div></div>{% endif %}
+
+        <div class="border-top pt-3 mt-1">
+          <div class="kyc-label mb-2">Transportation &amp; MSME</div>
+          <div class="d-flex flex-column gap-2">
+            <div><div class="kyc-label">Transportation</div><div class="kyc-value">{{ customer.transportation|default:"—" }}</div></div>
+            <div><div class="kyc-label">Preferred Transporter</div><div class="kyc-value">{{ customer.get_preferred_transporter_display|default:customer.preferred_transporter|default:"—" }}</div></div>
+            <div><div class="kyc-label">Other Transporter</div><div class="kyc-value">{{ customer.other_transporter|default:"—" }}</div></div>
+            <div><div class="kyc-label">Delivery Type</div><div class="kyc-value">{{ customer.get_delivery_type_display|default:customer.delivery_type|default:"—" }}</div></div>
+            <div><div class="kyc-label">MSME Applicable</div><div class="kyc-value">{{ customer.msme_applicable|yesno:"Yes,No,—" }}</div></div>
+            <div><div class="kyc-label">Udyam Aadhaar Number</div><div class="kyc-value">{{ customer.udyam_aadhar_no|default:"—" }}</div></div>
+          </div>
+        </div>
         <div class="kyc-muted border-top pt-3">
           Updated {{ customer.updated_at|date:"d M Y" }}{% if customer.updated_by %} by {{ customer.updated_by.get_full_name|default:customer.updated_by.username }}{% endif %}
         </div>
@@ -92,6 +104,30 @@
         {% empty %}
           <div class="kyc-contact kyc-muted">No enquiries linked yet. Pick this customer code on the Enquiries board.</div>
         {% endfor %}
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4" data-kyc-marketing>
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Marketing</h6></div>
+      <div>
+        {% for lead in marketing.leads %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center gap-2">
+            <span>
+              {% if mw_service_access.marketing|default:False %}<a class="text-decoration-none" href="{% url 'marketing:detail' lead.enquiry_id %}">Lost enquiry #{{ lead.enquiry_id }}</a>{% else %}Lost enquiry #{{ lead.enquiry_id }}{% endif %}
+              {% if lead.lost_reason %}<span class="kyc-muted">· {{ lead.get_lost_reason_display }}</span>{% endif %}
+            </span>
+            <span class="kyc-muted">{% if lead.accepted_at %}Won back {{ lead.accepted_at|date:"d M Y" }}{% elif lead.revived_enquiry_id %}Revived as #{{ lead.revived_enquiry_id }}{% elif lead.do_not_contact %}Do not contact{% else %}In marketing{% endif %}</span>
+          </div>
+        {% endfor %}
+        {% for email in marketing.emails %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center gap-2">
+            <span>Campaign "{{ email.campaign.name }}" <span class="kyc-muted">to {{ email.customer_email }}</span></span>
+            <span class="kyc-muted">{{ email.get_status_display }}{% if email.sent_at %} {{ email.sent_at|date:"d M Y" }}{% endif %}{% if email.replied_at %} · replied {{ email.replied_at|date:"d M Y" }}{% endif %}</span>
+          </div>
+        {% endfor %}
+        {% if not marketing.leads and not marketing.emails %}
+          <div class="kyc-contact kyc-muted">No marketing activity for this customer's enquiries.</div>
+        {% endif %}
       </div>
     </div>
 
@@ -156,6 +192,30 @@
         </div>
       </div>
     {% endfor %}
+  </div>
+</div>
+
+<div class="card border-danger-subtle shadow-sm mt-4" data-delete-customer>
+  <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0 text-danger">Delete this customer</h6></div>
+  <div class="card-body">
+    <p class="small mb-2">This removes <strong>{{ customer.code }} - {{ customer.name }}</strong> for good, together with:</p>
+    <ul class="small mb-3">
+      <li>{{ delete_summary.contacts }} contact{{ delete_summary.contacts|pluralize }}</li>
+      <li>{{ delete_summary.documents }} uploaded KYC document{{ delete_summary.documents|pluralize }} (the files too)</li>
+      <li>{{ delete_summary.verifications }} verification request{{ delete_summary.verifications|pluralize }}; links already sent to the customer stop working</li>
+      <li>the link to {{ delete_summary.enquiries }} enquir{{ delete_summary.enquiries|pluralize:"y,ies" }}. The enquiries themselves stay in the Enquiries portal, without this customer code.</li>
+    </ul>
+    <form method="post" action="{% url 'kyc:delete' customer.pk %}" class="d-flex flex-wrap align-items-end gap-2"
+          onsubmit="return confirm('Delete customer {{ customer.code|escapejs }} for good? This cannot be undone.');">
+      {% csrf_token %}
+      <div>
+        <label class="form-label small mb-1" for="confirmCode">Type the customer code <strong>{{ customer.code }}</strong> to confirm</label>
+        <input id="confirmCode" name="confirm_code" class="form-control form-control-sm" autocomplete="off" required
+               placeholder="{{ customer.code }}">
+      </div>
+      <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-trash me-1"></i> Delete customer</button>
+    </form>
+    <p class="small text-muted mt-2 mb-0">This cannot be undone.</p>
   </div>
 </div>
 {% endblock %}
