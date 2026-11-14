@@ -234,22 +234,22 @@
       </div>
 
       <div class="mt-4">
-        {% if requires_pdf_upload %}
-          <div class="alert alert-warning" role="alert">
-            Upload a PDF to generate this share link.
-          </div>
-          {% if share_error == 'pdf' %}
-            <div class="alert alert-danger" role="alert">Please upload a valid PDF.</div>
-          {% endif %}
-          <div class="mb-3">
-            <label class="form-label" for="sharePdfField">PDF for share link</label>
-            <input type="file" class="form-control" id="sharePdfField" name="share_pdf" accept="application/pdf" required>
-          </div>
-        {% else %}
-          <div class="alert alert-info" role="alert">
-            Existing enquiry PDF will be used for the share link.
-          </div>
+        {% if share_error == 'pdf' %}
+          <div class="alert alert-danger" role="alert">Please upload a valid PDF.</div>
         {% endif %}
+        <div class="mb-3 p-3 border rounded bg-light" data-share-pdf-upload>
+          <label class="form-label fw-semibold" for="sharePdfField">
+            <i class="bi bi-file-earmark-pdf me-1"></i>Quotation PDF{% if requires_pdf_upload %} <span class="text-danger">*</span>{% endif %}
+          </label>
+          <input type="file" class="form-control" id="sharePdfField" name="share_pdf" accept="application/pdf"{% if requires_pdf_upload %} required{% endif %}>
+          <div class="form-text">
+            {% if requires_pdf_upload %}
+              Upload the quotation PDF. The customer sees it on the share link, and it is attached to the email.
+            {% else %}
+              Upload the quotation PDF the customer should see. If you leave this empty, the PDF already attached to this enquiry is used{% if existing_pdf_name %}: <strong>{{ existing_pdf_name }}</strong>{% endif %}.
+            {% endif %}
+          </div>
+        </div>
         {% if share_error == 'password' %}
           <div class="alert alert-danger" role="alert">Password is required.</div>
         {% endif %}

@@ -35,6 +35,7 @@ urlpatterns = [
         name="share_pretty",
     ),
     path("generate-link/", _enquiries(views.generate_link), name="generate_link"),
+    path("share/send-email/", _enquiries(views.send_share_email), name="send_share_email"),
     path("<str:enquiry_id>/subdivisions/add/", _enquiries(views.subdivision_create), name="subdivision_create"),
     path(
         "<str:enquiry_id>/subdivisions/<str:subdivision_id>/",

@@ -35,7 +35,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
 from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, GmailLeadAnalysis, ShareLink
-from . import customer_emails, payment_terms, status_emails
+from . import customer_emails, payment_terms, share_email, status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
     COSTING_FIELD_ORDER,
@@ -616,6 +616,18 @@ def _attach_primary_pdf_link(enquiry: MutableMapping[str, Any]) -> None:
         enquiry["primary_pdf_url"] = f"{pdf_url}?inline=1"
         enquiry["primary_pdf_attachment"] = attachment_mapping
         break
+
+
+def _first_pdf_name(record: Mapping[str, Any] | None) -> str:
+    """File name of the PDF already attached to the enquiry (used for the share link if none is uploaded)."""
+    for attachment in (record or {}).get("general_attachments") or (record or {}).get("attachments") or []:
+        try:
+            attachment_mapping = dict(attachment)
+        except Exception:
+            continue
+        if attachment_mapping and _attachment_is_pdf(attachment_mapping):
+            return str(attachment_mapping.get("file_name") or "PDF attached to this enquiry")
+    return ""
 
 
 def _record_has_pdf(record: Mapping[str, Any] | None) -> bool:
@@ -2724,6 +2736,7 @@ def preview(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "heading": f"Generate Share Link for Enquiry {enquiry_id}",
         "column_matrix": _build_column_matrix_display(enquiry),
         "requires_pdf_upload": not _record_has_pdf(enquiry),
+        "existing_pdf_name": _first_pdf_name(enquiry),
         "share_error": None,
     }
     return render(request, "enquiries/preview.html", context)
@@ -2767,6 +2780,7 @@ def preview_subdivision(request: HttpRequest, enquiry_id: str, subdivision_id: s
         "heading": f"Generate Share Link for SubEnquiry {subdivision.get('subdivision_id')}",
         "column_matrix": _build_column_matrix_display(parent),
         "requires_pdf_upload": not _record_has_pdf(subdivision),
+        "existing_pdf_name": _first_pdf_name(subdivision),
         "share_error": None,
     }
     return render(request, "enquiries/preview.html", context)
@@ -2824,6 +2838,7 @@ def _render_preview_response(
             "column_matrix": _build_column_matrix_display(parent),
             "hidden_errors": hidden_error_msgs,
             "requires_pdf_upload": not _record_has_pdf(subdivision),
+            "existing_pdf_name": _first_pdf_name(subdivision),
             "share_error": share_error,
         }
         return render(request, "enquiries/preview.html", context)
@@ -2857,6 +2872,7 @@ def _render_preview_response(
         "column_matrix": _build_column_matrix_display(enquiry) if enquiry else {"columns": [], "rows": []},
         "hidden_errors": hidden_error_msgs2,
         "requires_pdf_upload": not _record_has_pdf(enquiry),
+        "existing_pdf_name": _first_pdf_name(enquiry),
         "share_error": share_error,
     }
     return render(request, "enquiries/preview.html", context)
@@ -2967,6 +2983,7 @@ def _create_share_link_from_values(
     return {
         "share_url": share_url,
         "share_password": share_password,
+        "token": token,
     }
 
 
@@ -3122,6 +3139,75 @@ def generate_link(request: HttpRequest) -> HttpResponse:
         "included": sorted(included_fields),
         "share_password": share_result["share_password"],
     }
+    # "Send to customer": email the link + password with the quotation PDF and chosen documents attached.
+    record = ShareLink.objects.filter(token=share_result.get("token") or "").first() if enquiry_id else None
+    if record is not None:
+        try:
+            _, share_data = share_email.load_share(record.id)
+            context["email"] = share_email.form_defaults(
+                request, record, share_data, share_result["share_password"], existing_enquiry or {})
+        except share_email.ShareEmailError:
+            logger.warning("generate_link: could not prepare the customer email for %s", enquiry_id)
+    return render(request, "enquiries/link_generated.html", context)
+
+
+@login_required
+@require_POST
+def send_share_email(request: HttpRequest) -> HttpResponse:
+    """Email the quotation share link (with its password) to the customer from the employee's Gmail."""
+    share_id = (request.POST.get("share_id") or "").strip()
+    password = (request.POST.get("share_password") or "").strip()
+    try:
+        record, data = share_email.load_share(share_id)
+    except share_email.ShareEmailError as exc:
+        messages.error(request, str(exc))
+        return redirect("enquiries:board")
+    if not share_email.password_matches(data, password):
+        messages.error(request, "This share link could not be verified. Please create it again.")
+        return redirect("enquiries:board")
+    enquiry_id = str(data.get("enquiry_id") or "")
+    api_root = _get_api_root()
+    try:
+        enquiry = services.fetch_enquiry(api_root, enquiry_id, request=request) if enquiry_id else {}
+    except services.EnquiryServiceError:
+        enquiry = {"enquiry_id": enquiry_id}
+
+    email = share_email.form_defaults(request, record, data, password, enquiry)
+    email.update({
+        "to": (request.POST.get("to") or "").strip(),
+        "cc": (request.POST.get("cc") or "").strip(),
+        "subject": (request.POST.get("subject") or "").strip(),
+        "body": (request.POST.get("body") or "").strip(),
+        "selected": request.POST.getlist("documents"),
+    })
+    context = {"share_url": share_email.share_url(request, record), "share_password": password, "email": email}
+    try:
+        if not enquiry_id:
+            raise share_email.ShareEmailError("This share link is not linked to an enquiry.")
+        to, cc = share_email.validate_recipients(email["to"], email["cc"])
+        if not email["subject"] or not email["body"]:
+            raise share_email.ShareEmailError("Please fill in the subject and the message.")
+        attachments = [share_email.quotation_attachment(data)]
+        attachments += share_email.download_documents(api_root, enquiry_id, email["documents"], email["selected"],
+                                                      request=request)
+        share_email.check_size(attachments)
+        result = GmailService(request.user).send_email(to, email["subject"], email["body"], cc=cc or None,
+                                                       attachments=attachments)
+    except share_email.ShareEmailError as exc:
+        context["email_error"] = str(exc)
+        return render(request, "enquiries/link_generated.html", context)
+    except GmailAPIError as exc:
+        context["email_error"] = f"Gmail could not send the email: {exc}. Please sign in again and retry."
+        return render(request, "enquiries/link_generated.html", context)
+
+    share_email.remember_recipients(enquiry_id, to, cc, request.user)
+    names = ", ".join(a["filename"] for a in attachments)
+    copy = f" (CC: {', '.join(cc)})" if cc else ""
+    if result.get("local_demo"):
+        context["email_sent"] = f"Test mode: the email to {to}{copy} was prepared but not sent. Attachments: {names}."
+    else:
+        context["email_sent"] = f"Quotation emailed to {to}{copy}. Attachments: {names}."
+    logger.info("Quotation share email for %s sent by %s to %s", enquiry_id, request.user, to)
     return render(request, "enquiries/link_generated.html", context)
 
 

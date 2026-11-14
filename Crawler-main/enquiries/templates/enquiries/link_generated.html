@@ -1,0 +1,117 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Shareable Link{% endblock %}
+
+{% block extra_css %}
+<style>
+  .share-card { max-width: 920px; margin: 0 auto; }
+  .link-box { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  .brand-header img { height: 28px; width: auto; }
+  .brand-header { border-bottom: 1px solid rgba(0,0,0,.05); }
+  .share-password-banner {
+    background-color: var(--bs-warning-bg-subtle, #fff3cd);
+    border: 1px solid var(--bs-warning-border-subtle, #ffecb5);
+    color: var(--bs-warning-text-emphasis, #664d03);
+    border-radius: 0.375rem;
+    padding: 0.75rem 1rem;
+  }
+</style>
+{% endblock %}
+
+{% block auth_content %}
+<div class="card shadow-sm share-card">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center brand-header">
+    <div class="d-flex align-items-center gap-3">
+      <img src="{% static 'images/avigiri-logo.jpg' %}" alt="Avigiri">
+      <h1 class="h6 mb-0">Quotation Share Link</h1>
+    </div>
+    <span class="text-muted small">Generated {% now "Y-m-d H:i" %}</span>
+  </div>
+  <div class="card-body">
+    <p class="mb-2">Copy this link to share the selected enquiry details:</p>
+    <div class="input-group mb-3">
+      <input id="shareUrl" type="text" class="form-control link-box" readonly value="{{ share_url }}">
+      <button class="btn btn-outline-secondary" type="button" id="copyBtn"><i class="bi bi-clipboard"></i> Copy</button>
+      <a class="btn btn-primary" href="{{ share_url }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Open</a>
+    </div>
+    {% if share_password %}
+      <div class="share-password-banner mt-3" role="status">
+        Share password: <span class="fw-semibold">{{ share_password }}</span>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if email %}
+<div class="card shadow-sm share-card mt-3" id="sendToCustomer">
+  <div class="card-header bg-white">
+    <h2 class="h6 mb-0"><i class="bi bi-envelope me-1"></i> Send to customer</h2>
+  </div>
+  <div class="card-body">
+    {% if email_sent %}
+      <div class="alert alert-success mb-0" role="status" data-share-email-sent>{{ email_sent }}</div>
+    {% else %}
+      {% if email_error %}<div class="alert alert-danger" role="alert" data-share-email-error>{{ email_error }}</div>{% endif %}
+      <p class="text-muted small">Check the email below. It is sent from your Gmail with the link, the password and the attachments you choose.</p>
+      <form method="post" action="{% url 'enquiries:send_share_email' %}" class="d-grid gap-2" data-share-email-form>
+        {% csrf_token %}
+        <input type="hidden" name="share_id" value="{{ email.share_id }}">
+        <input type="hidden" name="share_password" value="{{ share_password }}">
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label small mb-1" for="shareEmailTo">To</label>
+            <input id="shareEmailTo" type="email" name="to" class="form-control form-control-sm" required value="{{ email.to }}" placeholder="customer@company.com">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small mb-1" for="shareEmailCc">CC <span class="text-muted">(optional, separate with commas)</span></label>
+            <input id="shareEmailCc" type="text" name="cc" class="form-control form-control-sm" value="{{ email.cc }}">
+          </div>
+        </div>
+        <div>
+          <label class="form-label small mb-1" for="shareEmailSubject">Subject</label>
+          <input id="shareEmailSubject" type="text" name="subject" class="form-control form-control-sm" required maxlength="255" value="{{ email.subject }}">
+          <div class="form-text" data-voucher-hint>
+            {% if email.voucher_no %}Voucher No. <strong>{{ email.voucher_no }}</strong> was read from the quotation PDF.
+            {% else %}No Voucher No. could be read from the quotation PDF, so the enquiry number is used. You can type it in.{% endif %}
+          </div>
+        </div>
+        <div>
+          <label class="form-label small mb-1" for="shareEmailBody">Message</label>
+          <textarea id="shareEmailBody" name="body" class="form-control form-control-sm" rows="12" required>{{ email.body }}</textarea>
+        </div>
+        <div>
+          <div class="form-label small mb-1">Attachments</div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="shareEmailQuotation" checked disabled>
+            <label class="form-check-label small" for="shareEmailQuotation">{{ email.quotation_name }} <span class="text-muted">(quotation, always attached)</span></label>
+          </div>
+          {% for doc in email.documents %}
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="documents" value="{{ doc.id }}" id="shareDoc{{ forloop.counter }}"{% if doc.id in email.selected %} checked{% endif %}>
+              <label class="form-check-label small" for="shareDoc{{ forloop.counter }}">{{ doc.name }}{% if doc.size %} <span class="text-muted">({{ doc.size|filesizeformat }})</span>{% endif %}</label>
+            </div>
+          {% empty %}
+            <div class="small text-muted">This enquiry has no other uploaded documents.</div>
+          {% endfor %}
+        </div>
+        <div>
+          <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-send me-1"></i> Send to customer</button>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+<script>
+  (function(){
+    const btn = document.getElementById('copyBtn');
+    const input = document.getElementById('shareUrl');
+    if(btn && input){
+      btn.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(input.value); btn.innerHTML = '<i class="bi bi-check2"></i> Copied'; } catch(_) { input.select(); document.execCommand('copy'); }
+      });
+    }
+  })();
+</script>
+{% endblock %}

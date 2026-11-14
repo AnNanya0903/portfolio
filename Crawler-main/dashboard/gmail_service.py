@@ -1285,3 +1285,48 @@ class GmailService:
         except HttpError as error:
             logger.error("Failed to send reply for user %s: %s", self.user.username, error)
             raise GmailAPIError("Unable to send reply")
+
+    def send_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        cc: Optional[List[str]] = None,
+        attachments: Optional[List[Dict]] = None,
+    ) -> Dict:
+        """Send a new email (not a reply) with optional CC and attachments.
+
+        Attachments are dicts with ``filename``, ``mime_type`` and ``content`` (bytes).
+        In local development nothing is sent; the email is only logged.
+        """
+        if self._local_demo_enabled():
+            logger.info("Local demo: not sending email to %s (cc %s), subject %r, %d attachment(s)",
+                        to, ", ".join(cc or []) or "none", subject, len(attachments or []))
+            return {'id': f"demo-sent-{timezone.now():%Y%m%d%H%M%S%f}", 'local_demo': True}
+
+        if not self.service:
+            if not self.authenticate():
+                raise GmailAPIError("Authentication failed")
+
+        email_message = EmailMessage()
+        email_message['To'] = to
+        if cc:
+            email_message['Cc'] = ", ".join(cc)
+        email_message['Subject'] = subject
+        email_message.set_content(body)
+        for attachment in attachments or []:
+            mime_type = attachment.get('mime_type') or 'application/octet-stream'
+            maintype, subtype = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')
+            email_message.add_attachment(
+                attachment.get('content', b''),
+                maintype=maintype,
+                subtype=subtype,
+                filename=attachment.get('filename') or 'attachment',
+            )
+        email_message['Message-ID'] = make_msgid(domain=None)
+        raw_message = base64.urlsafe_b64encode(email_message.as_bytes()).decode('utf-8')
+        try:
+            return self.service.users().messages().send(userId='me', body={'raw': raw_message}).execute()
+        except HttpError as error:
+            logger.error("Failed to send email for user %s: %s", self.user.username, error)
+            raise GmailAPIError("Unable to send the email")

@@ -15,10 +15,13 @@ from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from django.conf import settings
+from django.db.models import prefetch_related_objects
 from django.utils import timezone
 
 from dashboard.follow_up_templates import PAYMENT_STAGE
 from enquiries.models import CustomerStatusEmail, EnquiryContact, FollowUpSent
+from kyc import links as kyc_links
+from kyc.models import CustomerContact
 
 from .models import MarketingLead
 
@@ -84,6 +87,21 @@ def customer_display(enquiry_name: str, subject: str, email: str, marketing_name
     if company:
         return {"name": company, "source": "email", "greeting": ""}
     return {"name": "", "source": "", "greeting": ""}
+
+
+def kyc_campaign_emails(customer) -> List[str]:
+    """KYC contacts a campaign goes to: the purchaser and the Sales and marketing team (with an email)."""
+    if customer is None:
+        return []
+    out: List[str] = []
+    contacts = list(customer.contacts.all())
+    # Purchaser first (the same contact KYC uses as the main enquiry email), then the Sales team.
+    for pick in (lambda c: c.is_purchaser, lambda c: c.category == CustomerContact.CATEGORY_SALES):
+        for contact in contacts:
+            address = (contact.email or "").strip().lower()
+            if address and pick(contact) and address not in out:
+                out.append(address)
+    return out
 
 
 def wait_days() -> int:
@@ -192,6 +210,16 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         if address:
             emails[enquiry_id] = address  # the address sales saved wins
         others[enquiry_id] = [a.strip().lower() for a in (more or "").split(",") if a.strip()]
+    # KYC customer linked to the enquiry: its code, name and Sales contacts fill the gaps.
+    kyc_customers = kyc_links.customers_for(list(found))
+    prefetch_related_objects(list({c.pk: c for c in kyc_customers.values()}.values()), "contacts")
+    for enquiry_id, customer in kyc_customers.items():
+        kyc_emails = kyc_campaign_emails(customer)
+        if not emails.get(enquiry_id) and kyc_emails:
+            emails[enquiry_id] = kyc_emails[0]
+        for address in kyc_emails:
+            if address not in others.setdefault(enquiry_id, []):
+                others[enquiry_id].append(address)
 
     leads: List[Dict[str, Any]] = []
     for enquiry_id, item in found.items():
@@ -215,6 +243,9 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         received = _local_date(enquiry.get("received_at_dt"))
         who = customer_display(enquiry.get("customer_name"), enquiry.get("subject"), emails.get(enquiry_id, ""),
                                lead.customer_name if lead else "")
+        kyc_customer = kyc_customers.get(enquiry_id)
+        if kyc_customer is not None and who["source"] in ("", "email"):
+            who = {"name": kyc_customer.name, "source": "kyc", "greeting": kyc_customer.name}
 
         leads.append({
             "enquiry_id": enquiry_id,
@@ -244,6 +275,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "stage_label": STAGE_LABELS[stage],
             "revived_enquiry_id": lead.revived_enquiry_id if lead else "",
             "lead": lead,
+            "kyc_customer": kyc_customer,
+            "kyc_code": kyc_customer.code if kyc_customer is not None else "",
         })
     leads.sort(key=lambda row: (row["lost_on"] or date.min, row["enquiry_id"]), reverse=True)
     return leads
@@ -284,7 +317,7 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
         if query:
             haystack = " ".join(str(row[k]) for k in (
                 "enquiry_id", "customer_name", "raw_customer_name", "subject", "project_name", "customer_email",
-                "assigned_to", "other_emails",
+                "assigned_to", "other_emails", "kyc_code",
             )).lower()
             if query not in haystack:
                 continue

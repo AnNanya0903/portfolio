@@ -67,9 +67,12 @@
           </div>
         </form>
         <dl class="mk-facts">
+          <dt>KYC customer</dt><dd data-kyc-customer>{% if row.kyc_customer %}{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' row.kyc_customer.pk %}" class="text-decoration-none">{{ row.kyc_code }}</a>{% else %}{{ row.kyc_code }}{% endif %} · {{ row.kyc_customer.name }}
+            <div class="mk-muted">Campaign emails also go to this customer's purchaser and Sales and marketing contacts.</div>{% else %}—
+            <div class="mk-muted">Not linked. Link the enquiry to a customer code in the Enquiries portal (Edit customer).</div>{% endif %}</dd>
           <dt>Customer email</dt><dd>{{ row.customer_email|default:"—" }}</dd>
           {% if row.other_emails %}<dt>Other customer emails</dt><dd>{{ row.other_emails|join:", " }}
-            <div class="mk-muted">CC'd on campaign emails. Change them in the Enquiries portal (Edit customer).</div></dd>{% endif %}
+            <div class="mk-muted">CC'd on campaign emails. Change them in the Enquiries portal (Edit customer) or in KYC.</div></dd>{% endif %}
           <dt>Project</dt><dd>{{ row.project_name|default:"—" }}</dd>
           <dt>Quoted price</dt><dd>{{ row.price|default:"—" }}</dd>
           <dt>Salesperson</dt><dd>{{ row.assigned_to|default:"—" }}</dd>
