@@ -255,3 +255,28 @@ class ReviveCopiesEmailsTests(TestCase):
             self.client.post(reverse("marketing:detail", args=["E1"]), {"action": "revive"})
         new = EnquiryContact.objects.get(enquiry_id="E70")
         self.assertEqual((new.customer_email, new.other_customer_emails), ("one@acme.example", "two@acme.example"))
+
+
+@override_settings(**SETTINGS)
+class DoNotContactCardTests(TestCase):
+    def setUp(self):
+        self.client.force_login(get_user_model().objects.create_user("mkcard", "mkcard@example.com", "x"))
+        self.rows = [_enquiry(f"D{n}", "rejected", customer_name=f"Customer {n}") for n in range(1, 5)]
+        MarketingLead.objects.create(enquiry_id="D1", do_not_contact=True)
+        MarketingLead.objects.create(enquiry_id="D2", do_not_contact=True)
+        MarketingLead.objects.create(enquiry_id="D3", do_not_contact=True, revived_enquiry_id="NEW")  # counted as revived
+
+    def _board(self, **params):
+        with patch("enquiries.services.list_enquiries", return_value=self.rows):
+            return self.client.get(reverse("marketing:board"), params)
+
+    def test_card_counts_do_not_contact_and_links_to_the_filter(self):
+        response = self._board()
+        self.assertEqual(response.context["summary"]["do_not_contact"], 2)
+        self.assertContains(response, "Do not contact")
+        self.assertContains(response, 'href="?stage=do_not_contact"')
+
+    def test_the_filtered_list_matches_the_card(self):
+        response = self._board(stage="do_not_contact")
+        self.assertEqual([r["enquiry_id"] for r in response.context["rows"]], ["D2", "D1"])
+        self.assertEqual(len(response.context["rows"]), response.context["summary"]["do_not_contact"])

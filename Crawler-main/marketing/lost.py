@@ -341,5 +341,7 @@ def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
         "ready": sum(1 for r in leads if r["stage"] == STAGE_READY),
         "waiting": sum(1 for r in leads if r["stage"] == STAGE_WAITING),
         "revived": sum(1 for r in leads if r["stage"] == STAGE_REVIVED),
+        # Same rule as the "Do not contact" stage filter, so the card and the filtered list always agree.
+        "do_not_contact": sum(1 for r in leads if r["stage"] == STAGE_DO_NOT_CONTACT),
         "by_reason": sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0])),
     }
