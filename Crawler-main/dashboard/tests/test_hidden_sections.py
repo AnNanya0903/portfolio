@@ -23,10 +23,15 @@ class HiddenSectionTests(TestCase):
         request.user = self.user
         return service_access(request)["mw_service_access"]
 
-    def test_default_setting_shows_every_section(self):
+    def test_default_setting_hides_only_the_rarely_used_sections(self):
         from django.conf import settings
-        self.assertEqual(settings.MAGICWAND_HIDDEN_SERVICES, set())
-        self.assertTrue(all(self._flags().values()))
+        rarely_used = {"gmail_ai", "design", "discussion", "document_scanner", "gasket_counter"}
+        self.assertEqual(settings.MAGICWAND_HIDDEN_SERVICES, rarely_used)
+        shown = {slug for slug, on in self._flags().items() if on}
+        self.assertEqual(shown, set(SERVICE_DEFINITIONS) - rarely_used)
+        for kept in ("enquiries", "marketing", "kyc", "quotations", "deskera", "mrp", "accounts",
+                     "compounding_planning", "compounding_board"):
+            self.assertIn(kept, shown)
 
     @override_settings(MAGICWAND_HIDDEN_SERVICES=HIDE_OTHERS)
     def test_setting_can_keep_only_enquiries_marketing_and_kyc(self):
@@ -60,7 +65,17 @@ class HiddenSectionTests(TestCase):
             self.assertNotIn(text, page, text)
 
     @override_settings(**STATIC)
-    def test_menus_show_every_section_by_default(self):
+    def test_default_menus_hide_the_rarely_used_sections_but_keep_the_rest(self):
+        page = self.client.get(reverse("kyc:list")).content.decode()
+        for text in (">Operations</summary>", ">Integrations</summary>", ">Utilities</summary>",  # Accounts keeps Utilities
+                     "</i> Manufacturing", "</i> Deskera MRP", "</i> Quotations"):
+            self.assertIn(text, page, text)
+        for text in (">Intelligence</summary>", ">Collaboration</summary>",  # nothing left in them
+                     "</i> Gmail AI", "</i> Design Match", "</i> Documents", "</i> Gasket Counter", "</i> Forum"):
+            self.assertNotIn(text, page, text)
+
+    @override_settings(MAGICWAND_HIDDEN_SERVICES=set(), **STATIC)
+    def test_menus_show_every_section_when_nothing_is_hidden(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
         for text in (">Operations</summary>", ">Integrations</summary>", ">Intelligence</summary>",
                      ">Utilities</summary>", ">Collaboration</summary>",

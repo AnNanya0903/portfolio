@@ -279,10 +279,13 @@ FOLLOW_UP_ACK_WITHIN_DAYS = config('FOLLOW_UP_ACK_WITHIN_DAYS', default=2, cast=
 FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=2, cast=int)  # close this long after the last follow-up (0 = off)
 # Sections hidden from the sidebar and the home page for everyone (comma-separated module slugs, see
 # magicwand/access.py). They are only hidden: their pages still open from a direct link or bookmark.
-# Sections to hide from the menus (comma separated slugs, e.g. "gasket_counter,discussion").
-# Empty by default: every section is shown. Hidden pages still open from a direct link.
+# Hidden by default: the sections the live site barely used from 17 Oct to 16 Nov 2026 (under 10 page
+# views each). Set MAGICWAND_HIDDEN_SERVICES to an empty value to show every section again.
 MAGICWAND_HIDDEN_SERVICES = {
-    slug.strip() for slug in config('MAGICWAND_HIDDEN_SERVICES', default='').split(',') if slug.strip()
+    slug.strip() for slug in config(
+        'MAGICWAND_HIDDEN_SERVICES',
+        default='gmail_ai,design,discussion,document_scanner,gasket_counter',
+    ).split(',') if slug.strip()
 }
 # KYC verification emails. Test mode is on by default: nothing is sent until this is set to False.
 KYC_VERIFICATION_DRY_RUN = config('KYC_VERIFICATION_DRY_RUN', default=True, cast=bool)
