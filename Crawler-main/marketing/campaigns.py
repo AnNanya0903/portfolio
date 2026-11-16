@@ -334,10 +334,13 @@ def check_replies(campaign: Campaign, user, *, notify_sender: bool = False, page
         snippet = str(reply.get("snippet") or "").strip()[:300]
         _log(recipient.enquiry_id, user,
              f"Customer replied to campaign \"{campaign.name}\"" + (f": \"{snippet}\"" if snippet else "."))
+        from .notify import notify_reply, notify_team
+        who = recipient.customer_name or recipient.customer_email
         if notify_sender:
-            from .notify import notify_reply
-            notify_reply(campaign.sent_by, customer=recipient.customer_name or recipient.customer_email,
-                         campaign_name=campaign.name, url=page_url)
+            notify_reply(campaign.sent_by, customer=who, campaign_name=campaign.name, url=page_url)
+        notify_team(user, f"Customer replied: {who}",
+                    [f"{who} replied to the campaign \"{campaign.name}\" (enquiry {recipient.enquiry_id}).",
+                     f"Their reply: \"{snippet}\"" if snippet else ""], url=page_url)
         if "unsubscribe" in text:
             lead, _ = MarketingLead.objects.get_or_create(enquiry_id=recipient.enquiry_id)
             if not lead.do_not_contact:

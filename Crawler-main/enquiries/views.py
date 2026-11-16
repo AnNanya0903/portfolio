@@ -34,8 +34,8 @@ from googleapiclient.errors import HttpError
 from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
-from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, GmailLeadAnalysis, ShareLink
-from . import customer_emails, payment_terms, share_email, status_emails
+from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, FollowUpStart, GmailLeadAnalysis, ShareLink
+from . import customer_emails, payment_terms, share_email, status_emails, team_alerts
 from .constants import (
     COSTING_FIELD_LAYOUT,
     COSTING_FIELD_ORDER,
@@ -1332,6 +1332,12 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
             payment_detail=status_emails.payment_detail_text(paid_on, reference),
         )
         _report_status_email(request, outcome, "payment received")
+        team_alerts.notify_team(
+            request.user, f"Payment received: {team_alerts.enquiry_label(enquiry_id, enquiry)}",
+            [f"Payment was marked received for enquiry {enquiry_id}" + (f" (reference {reference})" if reference else "")
+             + f"{' on ' + paid_on.strftime('%d %b %Y') if paid_on else ''}. The order is now Converted."],
+            url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])),
+            once_key=f"paid:{enquiry_id}:{paid_on or timezone.localdate()}")
     elif credit_days:
         messages.success(request, f"Order #{enquiry_id}: {label} of {credit_days} days. Payment is due on "
                                   f"{due:%d %b %Y}" + (", and payment reminders wait until then."
@@ -1828,20 +1834,26 @@ def _resolve_follow_up_conversation(enquiry_id, enquiry, gmail_service, chosen_t
                 return "ok", conversation
         return "error", "The selected Gmail conversation does not match this enquiry. Please try Follow-up again."
 
+    # The enquiry's own thread: the newest of the last sent follow-up and the quotation / PI / rejection
+    # email that started the follow-ups. Every later email replies there, never in another thread.
     previous = (
         FollowUpSent.objects.filter(enquiry_id=enquiry_id, status=FollowUpSent.STATUS_SENT)
         .exclude(gmail_thread_id="")
         .order_by("-sent_at")
         .first()
     )
-    if previous:
+    start = (FollowUpStart.objects.filter(enquiry_id=str(enquiry_id)).exclude(gmail_thread_id="")
+             .order_by("-started_at").first())
+    known = [(row.sent_at, row.gmail_thread_id, row.customer_email) for row in (previous,) if row]
+    known += [(row.started_at, row.gmail_thread_id, row.customer_email) for row in (start,) if row]
+    for _, thread_id, known_email in sorted(known, key=lambda item: item[0], reverse=True):
         try:
-            conversation = gmail_service.describe_conversation(previous.gmail_thread_id)
+            conversation = gmail_service.describe_conversation(thread_id)
         except GmailAPIError:
             conversation = None
         if conversation:
-            if previous.customer_email:
-                conversation["customer_email"] = previous.customer_email.lower()
+            if known_email:
+                conversation["customer_email"] = known_email.lower()
             return "ok", conversation
 
     reference = str(enquiry.get("customer_reference") or "").strip()
@@ -3202,6 +3214,23 @@ def generate_link(request: HttpRequest) -> HttpResponse:
     return render(request, "enquiries/link_generated.html", context)
 
 
+def _thread_reply_target(gmail: GmailService, thread: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The latest message of the enquiry's known thread, to reply to; None when there is no usable thread."""
+    thread_id = str((thread or {}).get("thread_id") or "")
+    if not thread_id:
+        return None
+    try:
+        messages_in_thread = gmail.get_thread_messages(thread_id, limit=50) or []
+        if not messages_in_thread:
+            return None
+        original = gmail.get_message(messages_in_thread[-1].get("id"))
+    except GmailAPIError:
+        return None
+    if not original:
+        return None
+    return {**original, "thread_id": original.get("thread_id") or thread_id}
+
+
 @login_required
 @require_POST
 def send_share_email(request: HttpRequest) -> HttpResponse:
@@ -3224,7 +3253,9 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
         enquiry = {"enquiry_id": enquiry_id}
 
     email = share_email.form_defaults(request, record, data, password, enquiry)
+    document = request.POST.get("document") or "quotation"
     email.update({
+        "document": document if document in share_email.DOCUMENTS else "quotation",
         "to": (request.POST.get("to") or "").strip(),
         "cc": (request.POST.get("cc") or "").strip(),
         "subject": (request.POST.get("subject") or "").strip(),
@@ -3242,8 +3273,15 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
         attachments += share_email.download_documents(api_root, enquiry_id, email["documents"], email["selected"],
                                                       request=request)
         share_email.check_size(attachments)
-        result = GmailService(request.user).send_email(to, email["subject"], email["body"], cc=cc or None,
-                                                       attachments=attachments)
+        gmail = GmailService(request.user)
+        original = _thread_reply_target(gmail, email.get("thread"))
+        if original is not None:
+            # Same conversation as the earlier quotation / follow-ups: reply in that thread.
+            result = gmail.send_reply(original_message=original, body=email["body"],
+                                      subject=original.get("subject") or email["subject"], to=to, cc=cc or None,
+                                      attachments=attachments)
+        else:
+            result = gmail.send_email(to, email["subject"], email["body"], cc=cc or None, attachments=attachments)
     except share_email.ShareEmailError as exc:
         context["email_error"] = str(exc)
         return render(request, "enquiries/link_generated.html", context)
@@ -3254,11 +3292,23 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
     share_email.remember_recipients(enquiry_id, to, cc, request.user)
     names = ", ".join(a["filename"] for a in attachments)
     copy = f" (CC: {', '.join(cc)})" if cc else ""
+    what = share_email.DOCUMENTS[email["document"]]
+    where = " in the existing email thread" if original is not None else ""
     if result.get("local_demo"):
         context["email_sent"] = f"Test mode: the email to {to}{copy} was prepared but not sent. Attachments: {names}."
     else:
-        context["email_sent"] = f"Quotation emailed to {to}{copy}. Attachments: {names}."
-    logger.info("Quotation share email for %s sent by %s to %s", enquiry_id, request.user, to)
+        from . import auto_follow_up
+        auto_follow_up.record_start(enquiry_id, what["stage"], sent=result, customer_email=to, cc=cc,
+                                    subject=original.get("subject") if original is not None else email["subject"],
+                                    user=request.user, document_no=email.get("voucher_no") or "")
+        if getattr(settings, "FOLLOW_UP_AUTO_ENABLED", False):
+            gap = (list(getattr(settings, "FOLLOW_UP_AUTO_GAP_DAYS", []) or [2]))[0]
+            then = (f" Automatic follow-ups will reply in this same email thread every {gap} days until the "
+                    "customer answers.")
+        else:
+            then = " Automatic follow-ups are turned off on this site, so please follow up from the enquiry board."
+        context["email_sent"] = f"{what['label']} emailed to {to}{copy}{where}. Attachments: {names}.{then}"
+    logger.info("%s share email for %s sent by %s to %s", what["label"], enquiry_id, request.user, to)
     return render(request, "enquiries/link_generated.html", context)
 
 
@@ -3360,6 +3410,12 @@ def _after_status_change(request: HttpRequest, enquiry_id: str, enquiry: Mapping
     reason = _share_reason(enquiry, kind=CustomerStatusEmail.KIND_REJECTION)
     outcome = status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, enquiry_id, enquiry or {}, reason=reason)
     _report_status_email(request, outcome, "rejection")
+    team_alerts.notify_team(
+        getattr(request, "user", None), f"Enquiry rejected: {team_alerts.enquiry_label(enquiry_id, enquiry)}",
+        [f"Enquiry {enquiry_id} was set to Rejected. Marketing will follow up with the customer automatically.",
+         f"Reason: {reason}" if reason else ""],
+        url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])),
+        once_key=f"rejected:{enquiry_id}:{timezone.localdate().isoformat()}")
 
 
 def _report_status_email(request: HttpRequest, outcome: Mapping[str, Any], label: str) -> None:
@@ -3411,6 +3467,16 @@ def share_action(request: HttpRequest) -> HttpResponse:
 
     if action == "reject":
         status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, enquiry_id, existing or {}, reason=reason)
+
+    label = team_alerts.enquiry_label(enquiry_id, existing)
+    verb = "accepted" if action == "accept" else "rejected"
+    team_alerts.notify_team(
+        None, f"Customer {verb} the quotation: {label}",
+        [f"{(existing or {}).get('customer_name') or 'The customer'} {verb} the quotation / proforma invoice for "
+         f"{(existing or {}).get('subject') or 'enquiry ' + enquiry_id} (enquiry {enquiry_id}) on the share link.",
+         f"Reason given: {reason}" if reason else ""],
+        url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])),
+        once_key=f"share:{enquiry_id}:{action}:{timezone.localdate().isoformat()}")
 
     return JsonResponse({"status": "ok", "enquiry_id": enquiry_id, "new_status": status_value})
 

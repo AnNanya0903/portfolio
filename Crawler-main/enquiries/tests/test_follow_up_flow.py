@@ -1,0 +1,244 @@
+"""Quotation / proforma invoice follow-ups every 2 days, the closing email, and Marketing's follow-ups after a
+rejection, all in ONE Gmail thread per enquiry."""
+from datetime import timedelta
+from unittest.mock import MagicMock, patch
+
+from django.contrib.auth import get_user_model
+from django.test import RequestFactory, TestCase, override_settings
+from django.urls import reverse
+from django.utils import timezone
+
+from dashboard.follow_up_templates import build_follow_up_body
+from enquiries import auto_follow_up, status_emails
+from enquiries.models import CustomerStatusEmail, FollowUpSent, FollowUpStart, ShareLink
+from enquiries.views import _create_share_link_from_values
+from marketing.models import MarketingActivity, MarketingLead
+
+TODAY = timezone.localdate()
+FLOW = dict(
+    FOLLOW_UP_AUTO_ENABLED=True, FOLLOW_UP_AUTO_DRY_RUN=False, FOLLOW_UP_AUTO_SENDER="sales",
+    FOLLOW_UP_AUTO_GAP_DAYS=[2], FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=2,
+    MARKETING_AUTO_FOLLOW_UP=True, MARKETING_FOLLOW_UP_COUNT=4,
+    STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage",
+)
+OURS = "sales@ourcompany.example"
+
+
+def _gmail(thread_id="T-QUOTE", last_sender=OURS):
+    svc = MagicMock()
+    svc.own_addresses.return_value = {OURS}
+    svc.get_thread_messages.return_value = [{"id": "m1", "sender": OURS}, {"id": "m2", "sender": last_sender}]
+    svc.get_message.return_value = {"id": "m2", "subject": "Quotation Q-77 - Gaskets", "thread_id": thread_id}
+    svc.send_reply.return_value = {"id": "r1", "threadId": thread_id}
+    return svc
+
+
+@override_settings(**FLOW)
+class EngineTests(TestCase):
+    def setUp(self):
+        self.sales = get_user_model().objects.create_user("sales", OURS, "x")
+        self.enquiry = {"enquiry_id": "E1", "status": "open", "subject": "Gaskets", "customer_name": "Acme"}
+        for name in ("list_enquiries", "fetch_enquiry"):
+            p = patch.object(auto_follow_up.services, name,
+                             side_effect=(lambda *a, **k: [self.enquiry]) if name == "list_enquiries"
+                             else (lambda *a, **k: self.enquiry))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _start(self, stage="waiting_po", days_ago=2, thread="T-QUOTE"):
+        return FollowUpStart.objects.create(enquiry_id="E1", stage=stage, gmail_thread_id=thread,
+                                            customer_email="buyer@acme.example", subject="Quotation Q-77",
+                                            started_at=timezone.now() - timedelta(days=days_ago))
+
+    def _run(self, gmail):
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
+            return auto_follow_up.run_auto_follow_up("E1")
+
+    def test_first_follow_up_is_due_two_days_after_the_quotation(self):
+        self._start(days_ago=1)
+        self.assertEqual(auto_follow_up.due_follow_ups(), [])
+        FollowUpStart.objects.update(started_at=timezone.now() - timedelta(days=2))
+        due = auto_follow_up.due_follow_ups()
+        self.assertEqual([(d["enquiry_id"], d["attempt"], d["stage"]) for d in due], [("E1", 1, "waiting_po")])
+
+    def test_follow_up_replies_in_the_quotation_thread_every_two_days(self):
+        self._start()
+        gmail = _gmail()
+        result = self._run(gmail)
+        self.assertEqual(result["result"], "sent")
+        gmail.get_thread_messages.assert_called_with("T-QUOTE", limit=50)
+        kwargs = gmail.send_reply.call_args.kwargs
+        self.assertEqual(kwargs["original_message"]["thread_id"], "T-QUOTE")
+        self.assertIn("our quotation for Gaskets", kwargs["body"])
+        row = FollowUpSent.objects.get()
+        self.assertEqual((row.gmail_thread_id, row.stage, row.next_follow_up_on),
+                         ("T-QUOTE", "waiting_po", TODAY + timedelta(days=2)))
+        cycle = auto_follow_up.cycles(["E1"])["E1"]
+        self.assertEqual((cycle.count, cycle.thread_id), (1, "T-QUOTE"))
+
+    def test_customer_reply_stops_the_follow_ups(self):
+        self._start()
+        gmail = _gmail(last_sender="Buyer <buyer@acme.example>")
+        result = self._run(gmail)
+        self.assertEqual(result["result"], "skipped")
+        self.assertIn("customer replied", result["reason"])
+        gmail.send_reply.assert_not_called()
+
+    def test_proforma_replaces_the_quotation_follow_ups(self):
+        self._start(days_ago=6)
+        FollowUpSent.objects.create(enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales,
+                                    status="sent", gmail_thread_id="T-QUOTE", stage="waiting_po",
+                                    sent_at=timezone.now() - timedelta(days=4), next_follow_up_on=TODAY)
+        self._start(stage="payment_pending", days_ago=2)
+        cycle = auto_follow_up.cycles(["E1"])["E1"]
+        self.assertEqual((cycle.stage, cycle.count, cycle.next_on), ("payment_pending", 0, TODAY))
+        result = self._run(_gmail())
+        self.assertEqual((result["stage"], result["attempt"]), ("payment_pending", 1))
+
+    def test_follow_up_button_counts_only_its_stage(self):
+        for stage, days in (("general", 9), ("general", 7), ("waiting_po", 2)):
+            FollowUpSent.objects.create(enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales,
+                                        status="sent", gmail_thread_id="T1", stage=stage,
+                                        sent_at=timezone.now() - timedelta(days=days), next_follow_up_on=TODAY)
+        cycle = auto_follow_up.cycles(["E1"])["E1"]
+        self.assertEqual((cycle.stage, cycle.count), ("waiting_po", 1))
+
+    def test_closing_email_after_four_follow_ups_and_two_days(self):
+        self._start(days_ago=12)
+        for days in (10, 8, 6, 2):
+            FollowUpSent.objects.create(enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales,
+                                        status="sent", gmail_thread_id="T-QUOTE", stage="waiting_po",
+                                        sent_at=timezone.now() - timedelta(days=days, minutes=5))
+        self.assertEqual([e["enquiry_id"] for e in status_emails.closing_due([self.enquiry])], ["E1"])
+        FollowUpSent.objects.filter(sent_at__lt=timezone.now() - timedelta(days=9)).delete()
+        self.assertEqual(status_emails.closing_due([self.enquiry]), [])  # only 3 of 4 sent
+
+
+@override_settings(**FLOW)
+class MarketingTests(TestCase):
+    def setUp(self):
+        self.sales = get_user_model().objects.create_user("sales", OURS, "x")
+        self.enquiry = {"enquiry_id": "E1", "status": "rejected", "subject": "Gaskets", "customer_name": "Acme"}
+        p = patch.object(auto_follow_up.services, "fetch_enquiry", side_effect=lambda *a, **k: self.enquiry)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_sent_rejection_email_starts_marketing_in_the_same_thread(self):
+        FollowUpStart.objects.create(enquiry_id="E1", stage="waiting_po", gmail_thread_id="T-QUOTE",
+                                     customer_email="buyer@acme.example",
+                                     started_at=timezone.now() - timedelta(days=3))
+        gmail = _gmail()
+        with patch.object(status_emails, "GmailService", return_value=gmail), \
+             patch("enquiries.views.GmailService", return_value=gmail):
+            gmail.describe_conversation.return_value = {"thread_id": "T-QUOTE", "latest_message_id": "m2",
+                                                        "customer_email": "buyer@acme.example"}
+            outcome = status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, "E1", self.enquiry)
+        self.assertEqual(outcome["result"], "sent")
+        gmail.describe_conversation.assert_called_with("T-QUOTE")  # the quotation's thread, not a search
+        start = FollowUpStart.objects.get(stage="marketing")
+        self.assertEqual((start.gmail_thread_id, start.customer_email), ("T-QUOTE", "buyer@acme.example"))
+
+    def _marketing(self, sent=0):
+        FollowUpStart.objects.create(enquiry_id="E1", stage="marketing", gmail_thread_id="T-QUOTE",
+                                     customer_email="buyer@acme.example",
+                                     started_at=timezone.now() - timedelta(days=2 * sent + 2, minutes=5))
+        for n in range(sent):
+            FollowUpSent.objects.create(enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales,
+                                        status="sent", gmail_thread_id="T-QUOTE", stage="marketing",
+                                        sent_at=timezone.now() - timedelta(days=2 * (sent - n), minutes=1),
+                                        next_follow_up_on=TODAY)
+
+    def _run(self):
+        gmail = _gmail()
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
+            return auto_follow_up.run_auto_follow_up("E1"), gmail
+
+    def test_marketing_follow_ups_then_closing_email(self):
+        self._marketing(sent=0)
+        result, gmail = self._run()
+        self.assertEqual((result["result"], result["stage"], result["attempt"]), ("sent", "marketing", 1))
+        self.assertIn("revising our offer", gmail.send_reply.call_args.kwargs["body"])
+        self.assertEqual(gmail.send_reply.call_args.kwargs["original_message"]["thread_id"], "T-QUOTE")
+        self.assertTrue(MarketingActivity.objects.filter(text__startswith="Automatic follow-up 1").exists())
+
+    def test_fifth_marketing_email_is_the_closing_email_and_then_it_stops(self):
+        self._marketing(sent=4)
+        result, gmail = self._run()
+        self.assertEqual((result["result"], result["attempt"], result["next_follow_up_on"]), ("sent", 5, None))
+        self.assertIn("we are closing this enquiry for now", gmail.send_reply.call_args.kwargs["body"])
+        result, _ = self._run()
+        self.assertEqual(result["result"], "skipped")
+
+    def test_do_not_contact_won_back_or_accepted_stop_marketing(self):
+        self._marketing(sent=1)
+        MarketingLead.objects.create(enquiry_id="E1", do_not_contact=True)
+        self.assertIn("Do not contact", self._run()[0]["reason"])
+        MarketingLead.objects.update(do_not_contact=False, revived_enquiry_id="E2")
+        self.assertIn("won back", self._run()[0]["reason"])
+        MarketingLead.objects.update(revived_enquiry_id="")
+        self.enquiry["status"] = "accepted"
+        self.assertIn("no longer rejected", self._run()[0]["reason"])
+
+    @override_settings(MARKETING_AUTO_FOLLOW_UP=False)
+    def test_marketing_can_be_switched_off(self):
+        self._marketing(sent=0)
+        self.assertIn("turned off", self._run()[0]["reason"])
+
+
+class TemplateTests(TestCase):
+    def test_marketing_closing_text(self):
+        body = build_follow_up_body("marketing", reference="E1", subject="Gaskets", attempt=5)
+        self.assertTrue(body.startswith("Dear Sir/Madam,"))
+        self.assertIn("we are closing this enquiry for now", body)
+        self.assertIn("contact the AVIGIRI team", body)
+        self.assertTrue(body.endswith("Best regards,\nAVIGIRI Team"))
+
+
+@override_settings(**FLOW)
+class SendToCustomerStartsTheFlowTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_superuser("sales", OURS, "x")
+        self.client.force_login(self.user)
+        result = _create_share_link_from_values(RequestFactory().get("/"), {"subject": "Gaskets"},
+                                                share_password="Secret-123", enquiry_id="E1",
+                                                pdf_bytes=b"%PDF-q", pdf_filename="q.pdf")
+        self.record = ShareLink.objects.get(token=result["token"])
+        patch("enquiries.views.services.fetch_enquiry",
+              return_value={"enquiry_id": "E1", "subject": "Gaskets", "general_attachments": []}).start()
+        self.gmail = _gmail(thread_id="T-NEW")
+        self.gmail.send_email.return_value = {"id": "s1", "threadId": "T-NEW"}
+        patch("enquiries.views.GmailService", return_value=self.gmail).start()
+        self.addCleanup(patch.stopall)
+
+    def _post(self, **data):
+        payload = {"share_id": self.record.id, "share_password": "Secret-123", "to": "buyer@acme.example",
+                   "subject": "Quotation E1 - Gaskets", "body": "Dear Sir/Madam, ...", "document": "quotation"}
+        payload.update(data)
+        return self.client.post(reverse("enquiries:send_share_email"), payload)
+
+    def test_first_quotation_starts_a_new_thread_and_the_follow_ups(self):
+        response = self._post()
+        self.assertContains(response, "every 2 days")
+        self.gmail.send_email.assert_called_once()
+        self.gmail.send_reply.assert_not_called()
+        start = FollowUpStart.objects.get()
+        self.assertEqual((start.stage, start.gmail_thread_id, start.customer_email),
+                         ("waiting_po", "T-NEW", "buyer@acme.example"))
+
+    def test_proforma_replies_in_the_existing_thread(self):
+        FollowUpStart.objects.create(enquiry_id="E1", stage="waiting_po", gmail_thread_id="T-QUOTE",
+                                     customer_email="buyer@acme.example", subject="Quotation Q-77 - Gaskets")
+        self.gmail.send_reply.return_value = {"id": "r1", "threadId": "T-QUOTE"}
+        response = self._post(document="proforma")
+        self.assertContains(response, "Proforma invoice emailed to buyer@acme.example in the existing email thread")
+        self.gmail.send_email.assert_not_called()
+        self.gmail.get_thread_messages.assert_called_with("T-QUOTE", limit=50)
+        kwargs = self.gmail.send_reply.call_args.kwargs
+        self.assertEqual(kwargs["subject"], "Quotation Q-77 - Gaskets")  # thread subject kept
+        self.assertEqual([a["filename"] for a in kwargs["attachments"]], ["q.pdf"])
+        start = FollowUpStart.objects.order_by("-started_at").first()
+        self.assertEqual((start.stage, start.gmail_thread_id), ("payment_pending", "T-QUOTE"))
+
+    @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
+    def test_automatic_follow_ups_off_says_so(self):
+        self.assertContains(self._post(), "Automatic follow-ups are turned off on this site")

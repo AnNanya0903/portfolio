@@ -88,9 +88,10 @@ class CreditPeriodRuleTests(TestCase):
         EnquiryContact.objects.create(enquiry_id="E1", payment_status="credit", credit_period_days=30,
                                       credit_starts_on=today)
         enquiry = {"enquiry_id": "E1", "status": "accepted"}
-        reason = auto_follow_up._skip_reason("E1", enquiry, latest, 1, today)
+        cycle = auto_follow_up.cycles(["E1"])["E1"]
+        reason = auto_follow_up._skip_reason("E1", enquiry, cycle, today)
         self.assertIn("credit period", reason)
-        self.assertEqual(auto_follow_up._skip_reason("E1", enquiry, latest, 1, today + timedelta(days=30)), "")
+        self.assertEqual(auto_follow_up._skip_reason("E1", enquiry, cycle, today + timedelta(days=30)), "")
 
 
 @override_settings(**STATIC)

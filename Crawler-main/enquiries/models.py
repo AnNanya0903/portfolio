@@ -105,6 +105,45 @@ class FollowUpSent(models.Model):
         return f"FollowUpSent:{self.enquiry_id}:{self.sent_at:%Y-%m-%d %H:%M}"
 
 
+class TeamAlertSent(models.Model):
+    """One row per team alert that must go out only once (e.g. "the customer replied to this message")."""
+
+    key = models.CharField(max_length=200, unique=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "enquiries_team_alert_sent"
+
+    def __str__(self) -> str:
+        return f"TeamAlertSent:{self.key}"
+
+
+class FollowUpStart(models.Model):
+    """Where an automatic follow-up sequence starts, and the Gmail thread every later email replies in.
+
+    Created when the quotation or proforma invoice is emailed with "Send to customer"
+    (stage "waiting_po" / "payment_pending"), and when the rejection email is sent (stage "marketing").
+    """
+
+    enquiry_id = models.CharField(max_length=128, db_index=True)
+    stage = models.CharField(max_length=32)
+    gmail_thread_id = models.CharField(max_length=255, blank=True, default="")
+    gmail_message_id = models.CharField(max_length=255, blank=True, default="")
+    customer_email = models.EmailField(blank=True, default="")
+    cc = models.CharField(max_length=1000, blank=True, default="")
+    subject = models.CharField(max_length=500, blank=True, default="")
+    document_no = models.CharField(max_length=64, blank=True, default="")  # quotation / PI voucher number
+    started_at = models.DateTimeField(default=timezone.now)
+    started_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+
+    class Meta:
+        db_table = "enquiries_follow_up_start"
+        ordering = ["-started_at"]
+
+    def __str__(self) -> str:
+        return f"FollowUpStart:{self.enquiry_id}:{self.stage}:{self.started_at:%Y-%m-%d}"
+
+
 class EnquiryContact(models.Model):
     """Customer email entered on the enquiries board for an enquiry (the enquiry service has no email field)."""
 

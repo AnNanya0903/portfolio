@@ -36,10 +36,10 @@ class StageTests(TestCase):
     def test_stages_match_the_process(self):
         labels = dict(STAGE_CHOICES)
         self.assertNotIn("sample_sent", STAGE_KEYS)
-        self.assertEqual(labels["waiting_po"], "Waiting for order confirmation")
-        self.assertEqual([key for key, _ in STAGE_CHOICES], ["general", "waiting_po", "payment_pending"])
+        self.assertEqual(labels["waiting_po"], "Quotation sent")
+        self.assertEqual([key for key, _ in STAGE_CHOICES], ["general", "waiting_po", "payment_pending", "marketing"])
         self.assertNotIn("pi_sent", STAGE_KEYS)
-        self.assertEqual(labels["payment_pending"], "Payment pending")
+        self.assertEqual(labels["payment_pending"], "Proforma invoice sent")
 
     def test_every_stage_has_four_emails(self):
         for key in STAGE_KEYS:
@@ -308,12 +308,14 @@ class AutoFollowUpOnConvertedTests(TestCase):
         latest = FollowUpSent.objects.create(enquiry_id="E1", customer_email="b@acme.example", sent_by=sales,
                                              status="sent", gmail_thread_id="t1", stage="waiting_po",
                                              next_follow_up_on=timezone.localdate())
-        reason = auto_follow_up._skip_reason("E1", {"enquiry_id": "E1", "status": "accepted"}, latest, 1,
-                                             timezone.localdate())
-        self.assertIn("payment follow-up manually", reason)
+        accepted = {"enquiry_id": "E1", "status": "accepted"}
+        cycle = auto_follow_up.cycles(["E1"])["E1"]
+        reason = auto_follow_up._skip_reason("E1", accepted, cycle, timezone.localdate())
+        self.assertIn("send the proforma invoice", reason)
         latest.stage = "payment_pending"
-        self.assertEqual(auto_follow_up._skip_reason("E1", {"enquiry_id": "E1", "status": "accepted"}, latest, 1,
-                                                     timezone.localdate()), "")
+        latest.save()
+        cycle = auto_follow_up.cycles(["E1"])["E1"]
+        self.assertEqual(auto_follow_up._skip_reason("E1", accepted, cycle, timezone.localdate()), "")
 
 
 @override_settings(**AUTO_ON, FOLLOW_UP_ACK_WITHIN_DAYS=2, FOLLOW_UP_CLOSE_AFTER_DAYS=7, N8N_API_TOKEN="tok")
@@ -365,10 +367,13 @@ class CustomerEmailTests(TestCase):
         self._followed_up("DONE")                      # 4 sent, last 9 days ago -> due
         self._followed_up("RECENT", days_ago=1)        # last one too recent
         self._followed_up("FEW", n=2)                  # not all follow-ups sent
-        self._followed_up("PAY", stage="payment_pending")  # payment reminders never close an enquiry
-        rows = [self._enq(e) for e in ("DONE", "RECENT", "FEW", "PAY")] + [self._enq("ACC", status="accepted")]
-        self._followed_up("ACC")
-        self.assertEqual([e["enquiry_id"] for e in status_emails.closing_due(rows)], ["DONE"])
+        self._followed_up("PAY", stage="payment_pending")  # unpaid proforma invoice: closed too
+        self._followed_up("PAID", stage="payment_pending")
+        EnquiryContact.objects.create(enquiry_id="PAID", payment_status="paid")
+        rows = [self._enq(e) for e in ("DONE", "RECENT", "FEW", "PAY")] + [
+            self._enq("ACC", status="accepted"), self._enq("PAID", status="accepted")]
+        self._followed_up("ACC")  # accepted, but its follow-ups were about the quotation: wait for the PI
+        self.assertEqual([e["enquiry_id"] for e in status_emails.closing_due(rows)], ["DONE", "PAY"])
 
     def test_closing_email_closes_the_enquiry(self):
         self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})

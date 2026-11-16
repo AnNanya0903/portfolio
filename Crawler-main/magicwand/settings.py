@@ -262,7 +262,7 @@ AI_REPLY_STUB_SIGNATURE = config('AI_REPLY_STUB_SIGNATURE', default="Thanks,\nMa
 # Enquiry follow-up emails
 FOLLOW_UP_CONTACT_PHONE = config('FOLLOW_UP_CONTACT_PHONE', default='')  # shown under the signature
 FOLLOW_UP_MAX_COUNT = config('FOLLOW_UP_MAX_COUNT', default=4, cast=int)  # stop after this many sent
-FOLLOW_UP_DEFAULT_GAP_DAYS = config('FOLLOW_UP_DEFAULT_GAP_DAYS', default=3, cast=int)
+FOLLOW_UP_DEFAULT_GAP_DAYS = config('FOLLOW_UP_DEFAULT_GAP_DAYS', default=2, cast=int)
 # Addresses prefilled in CC on every follow-up (comma-separated), e.g. customerservice@avigiri.com.
 FOLLOW_UP_DEFAULT_CC = config('FOLLOW_UP_DEFAULT_CC', default='')
 
@@ -270,12 +270,13 @@ FOLLOW_UP_DEFAULT_CC = config('FOLLOW_UP_DEFAULT_CC', default='')
 FOLLOW_UP_AUTO_ENABLED = config('FOLLOW_UP_AUTO_ENABLED', default=False, cast=bool)  # master on/off switch
 FOLLOW_UP_AUTO_DRY_RUN = config('FOLLOW_UP_AUTO_DRY_RUN', default=True, cast=bool)  # log only, send nothing
 FOLLOW_UP_AUTO_SENDER = config('FOLLOW_UP_AUTO_SENDER', default='')  # username whose Gmail sends
-# Days to wait after follow-up #1, #2, #3 before the next one (no more after FOLLOW_UP_MAX_COUNT).
+# Days to wait after the quotation / PI (or rejection) email and after each follow-up; the last value
+# repeats (no more after FOLLOW_UP_MAX_COUNT).
 FOLLOW_UP_AUTO_GAP_DAYS = [
-    int(x) for x in config('FOLLOW_UP_AUTO_GAP_DAYS', default='4,7,7').split(',') if x.strip()
+    int(x) for x in config('FOLLOW_UP_AUTO_GAP_DAYS', default='2').split(',') if x.strip()
 ]
 FOLLOW_UP_ACK_WITHIN_DAYS = config('FOLLOW_UP_ACK_WITHIN_DAYS', default=2, cast=int)  # acknowledge enquiries this recent (0 = off)
-FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=7, cast=int)  # close this long after the last follow-up (0 = off)
+FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=2, cast=int)  # close this long after the last follow-up (0 = off)
 # Sections hidden from the sidebar and the home page for everyone (comma-separated module slugs, see
 # magicwand/access.py). They are only hidden: their pages still open from a direct link or bookmark.
 # Sections to hide from the menus (comma separated slugs, e.g. "gasket_counter,discussion").
@@ -301,6 +302,15 @@ MARKETING_CAMPAIGN_GAP_DAYS = config('MARKETING_CAMPAIGN_GAP_DAYS', default=30, 
 MARKETING_REPLY_CHECK_DAYS = config('MARKETING_REPLY_CHECK_DAYS', default=60, cast=int)
 # On Revive, also email the chosen salesperson (from the reviver's Gmail) besides the phone notification.
 MARKETING_REVIVE_NOTIFY_EMAIL = config('MARKETING_REVIVE_NOTIFY_EMAIL', default=True, cast=bool)
+# Rejected enquiries: Marketing follows up automatically in the enquiry's email thread (uses the same
+# FOLLOW_UP_AUTO_ENABLED / FOLLOW_UP_AUTO_DRY_RUN switches and FOLLOW_UP_AUTO_GAP_DAYS), then sends a closing email.
+MARKETING_AUTO_FOLLOW_UP = config('MARKETING_AUTO_FOLLOW_UP', default=True, cast=bool)
+MARKETING_FOLLOW_UP_COUNT = config('MARKETING_FOLLOW_UP_COUNT', default=4, cast=int)  # before the closing email
+# Team alerts for the Enquiries and Marketing portals (customer accepted / rejected / replied, payment received,
+# enquiry closed, lead revived or won back): one email To TEAM_ALERT_TO with TEAM_ALERT_CC copied.
+# Leave TEAM_ALERT_TO empty to turn alerts off (staging does).
+TEAM_ALERT_TO = config('TEAM_ALERT_TO', default='kumar@avigiri.com')
+TEAM_ALERT_CC = config('TEAM_ALERT_CC', default='manju@avigiri.com,apai@avigiri.com')
 N8N_API_TOKEN = config('N8N_API_TOKEN', default='')  # shared secret sent by n8n in X-N8N-Token
 
 # Material Test Certificate (MTC) generation (DOCX templates)

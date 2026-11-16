@@ -12,7 +12,9 @@ from typing import Dict, List, Tuple
 from django.conf import settings
 
 DEFAULT_STAGE = "general"
-PAYMENT_STAGE = "payment_pending"  # for accepted orders whose payment is not received yet
+QUOTATION_STAGE = "waiting_po"  # quotation sent, waiting for the order
+PAYMENT_STAGE = "payment_pending"  # proforma invoice sent, waiting for the payment
+MARKETING_STAGE = "marketing"  # rejected: the Marketing portal tries to win the customer back
 
 # (key, label shown to the employee, main paragraph, the one question to ask)
 _STAGES: List[Tuple[str, str, str, str]] = [
@@ -25,23 +27,30 @@ _STAGES: List[Tuple[str, str, str, str]] = [
         "information from our side?",
     ),
     (
-        "waiting_po",
-        "Waiting for order confirmation",
-        "Thank you for your interest in our quotation for {subject} (our reference: {reference}).",
-        "Could you please confirm the order (purchase order), so that we can plan production accordingly?",
+        QUOTATION_STAGE,
+        "Quotation sent",
+        "We are following up on our quotation for {subject} (our reference: {reference}), which we shared "
+        "with you recently, to make sure you have received it.",
+        "Could you please let us know if you need any clarification on the specification, price or delivery?",
     ),
     (
-        "payment_pending",
-        "Payment pending",
-        "Thank you for confirming your order for {subject} (our reference: {reference}). "
-        "As per the proforma invoice, the payment for this order is still pending.",
-        "Could you please let us know when we can expect the payment, so that we can schedule "
-        "production and dispatch?",
+        PAYMENT_STAGE,
+        "Proforma invoice sent",
+        "We are following up on the proforma invoice we shared for {subject} (our reference: {reference}). "
+        "Kindly confirm the order and arrange the payment as per the agreed terms, so that we can schedule "
+        "production.",
+        "Could you please let us know when we can expect the payment?",
+    ),
+    (
+        MARKETING_STAGE,
+        "Marketing follow-up (after rejection)",
+        "Thank you again for considering AVIGIRI for {subject} (our reference: {reference}). If price, "
+        "delivery time or specification was the concern, we are open to revising our offer.",
+        "Could you please let us know what would work for you?",
     ),
 ]
 
-# Later follow-ups (#2 reminder, #3 offer to adjust, #4 final) per stage: (main paragraph, question).
-# Follow-up #1 always uses the _STAGES text above.
+# Later follow-ups (#2, #3, #4 final) per stage: (main paragraph, question).
 _LATER: Dict[str, List[Tuple[str, str]]] = {
     "general": [
         ("We wanted to gently remind you about your enquiry about {subject} (our reference: {reference}).",
@@ -53,27 +62,39 @@ _LATER: Dict[str, List[Tuple[str, str]]] = {
          "We understand plans may have changed, and we do not wish to fill your inbox.",
          "Could you please let us know whether we should keep this enquiry open, or close it for now?"),
     ],
-    "waiting_po": [
-        ("We wanted to gently remind you about the order confirmation for {subject} (our reference: {reference}), "
-         "so that we can reserve production capacity.",
-         "Could you please let us know when you expect to confirm the order?"),
-        ("We are following up on our quotation for {subject} (our reference: {reference}). If there is any "
-         "change in quantity or schedule, we would be happy to update the quotation.",
-         "Are there any changes we should make before you place the order?"),
-        ("This is our final follow-up regarding the quotation for {subject} (our reference: {reference}). "
-         "We understand plans may have changed, and we do not wish to fill your inbox.",
-         "Could you please let us know whether we should hold the quotation open, or close it for now?"),
+    QUOTATION_STAGE: [
+        ("Could you please share the status of your evaluation of our quotation for {subject} "
+         "(our reference: {reference}), or the expected date for your decision?",
+         "If it would help, we are happy to arrange a call with our technical team."),
+        ("We have not yet heard back on our quotation for {subject} (our reference: {reference}). If anything "
+         "in our offer does not suit your requirement, such as quantity, material, delivery schedule or "
+         "payment terms, please let us know.",
+         "We will be glad to revise the quotation."),
+        ("This is our final reminder for the quotation for {subject} (our reference: {reference}).",
+         "To confirm the order, please send your purchase order. If the requirement has changed or is on "
+         "hold, a short reply would help us plan."),
     ],
-    "payment_pending": [
-        ("We wanted to gently remind you about the pending payment for your order {subject} "
-         "(our reference: {reference}).",
-         "Could you please let us know when the payment will be made?"),
-        ("We are following up on the pending payment for your order {subject} (our reference: {reference}). "
-         "If there is any issue with the proforma invoice or the payment details, we would be happy to help.",
-         "Could you please share the payment status, or let us know if anything is holding it up?"),
-        ("This is our final reminder regarding the pending payment for your order {subject} "
-         "(our reference: {reference}). We are unable to schedule production until the payment is received.",
-         "Could you please confirm the payment date at the earliest?"),
+    PAYMENT_STAGE: [
+        ("We are following up on the proforma invoice for {subject} (our reference: {reference}).",
+         "Could you please let us know when we can expect the payment, and share the transaction reference "
+         "once it is made?"),
+        ("The payment against the proforma invoice for {subject} (our reference: {reference}) is still "
+         "pending. If you need any change to the invoice details or the payment terms, please let us know.",
+         "We will be happy to help."),
+        ("This is our final reminder for the proforma invoice for {subject} (our reference: {reference}). "
+         "We have reserved a production slot for your order.",
+         "If we do not receive the payment or an update soon, we may need to release this slot to other "
+         "orders."),
+    ],
+    MARKETING_STAGE: [
+        ("We would still like the opportunity to supply {subject} (our reference: {reference}).",
+         "If you share your target price or required delivery date, our team will check what we can do and "
+         "come back within one working day."),
+        ("If this requirement is already closed, we would be glad to help with your next one. We manufacture "
+         "gaskets, seals, O-rings and extruded rubber profiles to drawing, and can share samples on request.",
+         "Please reply with your drawing or specification whenever you have a new requirement."),
+        ("This is our last follow-up on {subject} (our reference: {reference}).",
+         "Please feel free to contact us at any time with a drawing or specification for future requirements."),
     ],
 }
 # Closing line per stage, matched to the purpose of the email: (follow-ups #1-#3, final follow-up #4).
@@ -82,15 +103,28 @@ _CLOSINGS: Dict[str, Tuple[str, str]] = {
         "Please feel free to reply to this email if you have any questions about your enquiry.",
         "Whenever you are ready, simply reply to this email and we will be glad to assist.",
     ),
-    "waiting_po": (
+    QUOTATION_STAGE: (
         "Once we receive your order, we will schedule production right away.",
         "Whenever you are ready to place the order, simply reply to this email and we will be glad to assist.",
     ),
-    "payment_pending": (
+    PAYMENT_STAGE: (
         "If the payment has already been made, please share the payment reference so that we can update our records.",
         "If you have already made the payment, please share the payment reference and we will update our records immediately.",
     ),
+    MARKETING_STAGE: (
+        "Simply reply to this email and we will be glad to help.",
+        "Thank you for considering AVIGIRI.",
+    ),
 }
+
+# Marketing's last email, after its follow-ups: the enquiry is closed, the door stays open.
+_MARKETING_CLOSING = (
+    "As we have not heard back from you regarding {subject} (our reference: {reference}), we are closing "
+    "this enquiry for now.",
+    "For any new requirement, please contact the AVIGIRI team. You can simply reply to this email, and we "
+    "will be glad to assist.",
+    "Thank you for considering AVIGIRI.",
+)
 
 STAGE_CHOICES: List[Tuple[str, str]] = [(key, label) for key, label, _, _ in _STAGES]
 STAGE_KEYS = {key for key, _ in STAGE_CHOICES}
@@ -127,7 +161,10 @@ def build_follow_up_body(stage: str, *, reference: str, subject: str, user=None,
     """
     key = stage if stage in STAGE_KEYS else DEFAULT_STAGE
     closing, final_closing = _CLOSINGS[key]
-    if attempt <= 1:
+    if key == MARKETING_STAGE and attempt > len(_LATER[key]) + 1:
+        # After the last Marketing follow-up: the closing email.
+        paragraph, question, closing = _MARKETING_CLOSING
+    elif attempt <= 1:
         _, _, paragraph, question = next(item for item in _STAGES if item[0] == key)
     else:
         later = _LATER[key]
@@ -160,3 +197,10 @@ def all_stage_bodies(*, reference: str, subject: str, user=None, due_on=None, cr
                                   due_on=due_on, credit_days=credit_days, today=today)
         for key, _ in STAGE_CHOICES
     }
+
+
+def follow_up_count(stage: str) -> int:
+    """How many follow-ups a stage gets before its closing email (FOLLOW_UP_MAX_COUNT; Marketing has its own)."""
+    if stage == MARKETING_STAGE:
+        return int(getattr(settings, "MARKETING_FOLLOW_UP_COUNT", 4) or 0)
+    return int(getattr(settings, "FOLLOW_UP_MAX_COUNT", 4) or 0)

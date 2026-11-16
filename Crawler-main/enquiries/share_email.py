@@ -12,8 +12,16 @@ from django.contrib.auth.hashers import check_password
 from django.core import signing
 from django.urls import reverse
 
+from dashboard.follow_up_templates import PAYMENT_STAGE, QUOTATION_STAGE
+
 from . import payment_terms, services
-from .models import EnquiryContact, ShareLink
+from .models import EnquiryContact, FollowUpSent, FollowUpStart, ShareLink
+
+# What is being sent: label, the follow-up stage it starts, and the subject word.
+DOCUMENTS = {
+    "quotation": {"label": "Quotation", "stage": QUOTATION_STAGE, "subject": "Quotation"},
+    "proforma": {"label": "Proforma invoice", "stage": PAYMENT_STAGE, "subject": "Proforma Invoice"},
+}
 
 # Gmail refuses messages over 25 MB; base64 makes attachments about a third bigger.
 MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024
@@ -135,17 +143,35 @@ def customer_email(enquiry_id: str, enquiry: Mapping[str, Any]) -> str:
 
 
 def default_message(enquiry_id: str, enquiry: Mapping[str, Any], url: str, password: str,
-                    voucher_no: str = "") -> Tuple[str, str]:
-    """Subject and body for the quotation email.
+                    voucher_no: str = "", document: str = "quotation") -> Tuple[str, str]:
+    """Subject and body for the quotation (or proforma invoice) email.
 
-    With a Voucher No. (read from the quotation PDF) the subject is "Quotation <Voucher No.> - <title>";
-    without one it uses the enquiry reference, as before.
+    With a Voucher No. (read from the PDF) the subject is "Quotation <Voucher No.> - <title>";
+    without one it uses the enquiry reference.
     """
     title = str(enquiry.get("subject") or enquiry.get("project_name") or "").strip()
     reference = str(enquiry.get("enq_number") or enquiry_id or "").strip()
     voucher_no = (voucher_no or "").strip()
-    subject = f"Quotation {voucher_no or reference}" + (f" - {title}" if title else "")
     about = f' for "{title}"' if title else ""
+    if document == "proforma":
+        subject = f"Proforma Invoice {voucher_no or reference}" + (f" - {title}" if title else "")
+        numbers = (f"proforma invoice no. {voucher_no}, reference {reference}" if voucher_no
+                   else f"reference {reference}")
+        body = (
+            "Dear Sir/Madam,\n\n"
+            f"Thank you for your order. Please find attached our proforma invoice{about} ({numbers}), "
+            "along with the supporting documents.\n\n"
+            "Kindly confirm the order and arrange the payment as per the agreed terms, so that we can "
+            "schedule production.\n\n"
+            "You can also view the proforma invoice online using the link below:\n"
+            f"{url}\n"
+            f"Password: {password}\n\n"
+            "Please let us know if you have any questions.\n\n"
+            "Best regards,\n"
+            "AVIGIRI Team"
+        )
+        return subject, body
+    subject = f"Quotation {voucher_no or reference}" + (f" - {title}" if title else "")
     numbers = f"quotation no. {voucher_no}, reference {reference}" if voucher_no else f"reference {reference}"
     body = (
         "Dear Sir/Madam,\n\n"
@@ -161,6 +187,21 @@ def default_message(enquiry_id: str, enquiry: Mapping[str, Any], url: str, passw
     return subject, body
 
 
+def existing_thread(enquiry_id: str) -> Optional[Dict[str, str]]:
+    """The enquiry's email thread with the customer, if one is known: the newest of the quotation / PI /
+    rejection email that started follow-ups and the last sent follow-up. New emails reply in it."""
+    start = (FollowUpStart.objects.filter(enquiry_id=str(enquiry_id)).exclude(gmail_thread_id="")
+             .order_by("-started_at").first())
+    sent = (FollowUpSent.objects.filter(enquiry_id=str(enquiry_id), status=FollowUpSent.STATUS_SENT)
+            .exclude(gmail_thread_id="").order_by("-sent_at").first())
+    known = [(row.started_at, row.gmail_thread_id, row.subject) for row in (start,) if row]
+    known += [(row.sent_at, row.gmail_thread_id, row.subject) for row in (sent,) if row]
+    if not known:
+        return None
+    _, thread_id, subject = max(known, key=lambda item: item[0])
+    return {"thread_id": thread_id, "subject": subject or ""}
+
+
 def form_defaults(request, record: ShareLink, data: Mapping[str, Any], password: str,
                   enquiry: Mapping[str, Any]) -> Dict[str, Any]:
     """What the 'Send to customer' form starts with."""
@@ -170,15 +211,24 @@ def form_defaults(request, record: ShareLink, data: Mapping[str, Any], password:
     except (ValueError, TypeError):
         pdf_bytes = b""
     voucher_no = voucher_number(pdf_bytes)
-    subject, body = default_message(enquiry_id, enquiry, share_url(request, record), password, voucher_no)
+    url = share_url(request, record)
+    messages = {key: dict(zip(("subject", "body"), default_message(enquiry_id, enquiry, url, password, voucher_no,
+                                                                   document=key)))
+                for key in DOCUMENTS}
+    thread = existing_thread(enquiry_id) if enquiry_id else None
     return {
         "share_id": record.id,
         "enquiry_id": enquiry_id,
         "voucher_no": voucher_no,  # '' when the quotation PDF has no readable Voucher No.
+        "document": "quotation",
+        "documents_choices": [(key, item["label"]) for key, item in DOCUMENTS.items()],
+        "messages": messages,
+        # Known thread with this customer: the email is sent as a reply in it (same subject).
+        "thread": thread,
         "to": customer_email(enquiry_id, enquiry),
         "cc": payment_terms.default_cc(enquiry_id),
-        "subject": subject,
-        "body": body,
+        "subject": (thread or {}).get("subject") or messages["quotation"]["subject"],
+        "body": messages["quotation"]["body"],
         "quotation_name": data.get("pdf_filename") or "quotation.pdf",
         "documents": enquiry_documents(enquiry, skip_name=str(data.get("pdf_filename") or "")),
         "selected": [],

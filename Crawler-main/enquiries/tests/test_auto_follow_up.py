@@ -115,7 +115,7 @@ class AutoFollowUpTests(TestCase):
         self.assertEqual(resp.json()["result"], "sent")
         kwargs = gmail.send_reply.call_args.kwargs
         self.assertEqual(kwargs["to"], "buyer@acme.example")
-        self.assertIn("gently remind you about the order confirmation", kwargs["body"])  # follow-up #2 wording
+        self.assertIn("status of your evaluation of our quotation", kwargs["body"])  # follow-up #2 wording
         record = FollowUpSent.objects.get(source=FollowUpSent.SOURCE_AUTO)
         self.assertEqual(record.status, FollowUpSent.STATUS_SENT)
         self.assertEqual(record.next_follow_up_on, TODAY + timedelta(days=7))  # gap after #2
@@ -245,7 +245,7 @@ class ManualPageAutoChoiceTests(TestCase):
         self.assertEqual([s["attempt"] for s in steps], [3, 4])
         self.assertIn("7 days after follow-up #3", steps[1]["when"])
         self.assertTrue(steps[1]["final"])
-        self.assertIn("final follow-up", steps[1]["body"])
+        self.assertIn("final reminder", steps[1]["body"])
 
 
 class TemplateAndScheduleTests(TestCase):
@@ -257,13 +257,16 @@ class TemplateAndScheduleTests(TestCase):
 
     def test_final_follow_up_offers_to_close(self):
         body = build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=4)
-        self.assertIn("final follow-up", body)
+        self.assertIn("final reminder", body)
         self.assertIn("Whenever you are ready", body)
         self.assertEqual(body, build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=9))
 
-    @override_settings(FOLLOW_UP_AUTO_GAP_DAYS=[4, 7, 7], FOLLOW_UP_MAX_COUNT=4)
+    @override_settings(FOLLOW_UP_AUTO_GAP_DAYS=[2], FOLLOW_UP_MAX_COUNT=4, MARKETING_FOLLOW_UP_COUNT=4)
     def test_next_dates(self):
         d = date(2026, 11, 6)
-        self.assertEqual(auto_follow_up.next_follow_up_date(1, d), date(2026, 11, 10))
-        self.assertEqual(auto_follow_up.next_follow_up_date(3, d), date(2026, 11, 13))
+        self.assertEqual(auto_follow_up.next_follow_up_date(1, d), date(2026, 11, 8))  # every 2 days
+        self.assertEqual(auto_follow_up.next_follow_up_date(3, d), date(2026, 11, 8))
         self.assertIsNone(auto_follow_up.next_follow_up_date(4, d))
+        # Marketing: 4 follow-ups, then one more step for its closing email.
+        self.assertEqual(auto_follow_up.next_follow_up_date(4, d, "marketing"), date(2026, 11, 8))
+        self.assertIsNone(auto_follow_up.next_follow_up_date(5, d, "marketing"))

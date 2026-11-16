@@ -3,7 +3,9 @@
 - acknowledgement:  a new enquiry was received (sent by the scheduled run for enquiries received recently).
 - rejection:        the order was rejected; asks for the reason, or thanks the customer if they gave one.
 - payment_received: the payment was marked Paid (the order is now Converted).
-- closing:          all follow-ups were sent and the customer never replied; the enquiry is then closed.
+- closing:          all follow-ups of the quotation / proforma invoice were sent and the customer never
+                    replied; the enquiry is then closed.
+A sent rejection email starts Marketing's automatic follow-ups in the same thread (auto_follow_up.py).
 
 Same safety rules as automatic follow-ups (enquiries/auto_follow_up.py):
 - uses the FOLLOW_UP_AUTO_ENABLED switch, FOLLOW_UP_AUTO_DRY_RUN test mode and FOLLOW_UP_AUTO_SENDER mailbox;
@@ -24,7 +26,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from dashboard.follow_up_templates import PAYMENT_STAGE, sender_signature
+from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, follow_up_count, sender_signature
 from dashboard.gmail_service import GmailAPIError, GmailService
 
 from . import customer_emails
@@ -221,6 +223,12 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
                                 cc=cc or None)
         fields["gmail_message_id"] = (sent or {}).get("id") or ""
         fields["gmail_thread_id"] = (sent or {}).get("threadId") or fields["gmail_thread_id"]
+        if kind == CustomerStatusEmail.KIND_REJECTION and getattr(settings, "MARKETING_AUTO_FOLLOW_UP", True):
+            # Marketing follows up from here, replying in this same thread.
+            from . import auto_follow_up
+            auto_follow_up.record_start(enquiry_id, MARKETING_STAGE,
+                                        sent={**(sent or {}), "threadId": fields["gmail_thread_id"]},
+                                        customer_email=customer_email, cc=cc, subject=subject, user=sender)
         return _finish(row, CustomerStatusEmail.STATUS_SENT, "", sent_at=timezone.now(), **fields)
     except GmailAPIError as exc:
         return _finish(row, CustomerStatusEmail.STATUS_FAILED, f"Gmail error: {exc}")
@@ -269,29 +277,41 @@ def acknowledgement_due(enquiries: List[Mapping[str, Any]], today: date) -> List
 
 
 def closing_due(enquiries: List[Mapping[str, Any]], now=None) -> List[Mapping[str, Any]]:
-    """Open enquiries whose follow-ups are all sent, the last one FOLLOW_UP_CLOSE_AFTER_DAYS ago or more."""
+    """Enquiries whose quotation / PI follow-ups are all sent, the last one FOLLOW_UP_CLOSE_AFTER_DAYS ago or more.
+
+    Open enquiries (quotation or general follow-ups), and proforma invoices still unpaid (open or accepted,
+    not inside an agreed credit period). Marketing sends its own closing email.
+    """
+    from . import auto_follow_up, payment_terms
+    from .models import EnquiryContact
+
     now = now or timezone.now()
-    limit = int(getattr(settings, "FOLLOW_UP_MAX_COUNT", 4) or 0)
-    wait = int(getattr(settings, "FOLLOW_UP_CLOSE_AFTER_DAYS", 7) or 0)
-    if limit <= 0 or wait <= 0:
+    wait = int(getattr(settings, "FOLLOW_UP_CLOSE_AFTER_DAYS", 2) or 0)
+    if wait <= 0:
         return []
-    open_ids = {str(e.get("enquiry_id")): e for e in enquiries if _status_of(e) == "open"}
-    if not open_ids:
+    candidates = {str(e.get("enquiry_id")): e for e in enquiries if _status_of(e) in ("open", "accepted")}
+    if not candidates:
         return []
-    stats: Dict[str, Dict[str, Any]] = {}
-    rows = (FollowUpSent.objects.filter(enquiry_id__in=list(open_ids), status=FollowUpSent.STATUS_SENT)
-            .exclude(stage=PAYMENT_STAGE).values_list("enquiry_id", "sent_at"))
-    for enquiry_id, sent_at in rows:
-        item = stats.setdefault(enquiry_id, {"count": 0, "last": sent_at})
-        item["count"] += 1
-        item["last"] = max(item["last"], sent_at)
     already = set(CustomerStatusEmail.objects.filter(
         kind=CustomerStatusEmail.KIND_CLOSING, status=CustomerStatusEmail.STATUS_SENT
     ).values_list("enquiry_id", flat=True))
-    return [
-        open_ids[eid] for eid, item in sorted(stats.items())
-        if item["count"] >= limit and item["last"] <= now - timedelta(days=wait) and eid not in already
-    ]
+    paid = set(EnquiryContact.objects.filter(enquiry_id__in=list(candidates),
+                                             payment_status=EnquiryContact.PAYMENT_PAID)
+               .values_list("enquiry_id", flat=True))
+    due = []
+    for enquiry_id, cycle in sorted(auto_follow_up.cycles(list(candidates)).items()):
+        limit = follow_up_count(cycle.stage)
+        if cycle.stage == MARKETING_STAGE or limit <= 0 or enquiry_id in already:
+            continue
+        if cycle.count < limit or not cycle.last_sent_at or cycle.last_sent_at > now - timedelta(days=wait):
+            continue
+        if _status_of(candidates[enquiry_id]) == "accepted":
+            # An accepted order is only closed when its proforma invoice was never paid.
+            if (cycle.stage != PAYMENT_STAGE or enquiry_id in paid
+                    or payment_terms.credit_hold_until(enquiry_id, timezone.localdate(now))):
+                continue
+        due.append(candidates[enquiry_id])
+    return due
 
 
 def send_closing_email(enquiry: Mapping[str, Any], api_root: str) -> Dict[str, Any]:
@@ -304,6 +324,12 @@ def send_closing_email(enquiry: Mapping[str, Any], api_root: str) -> Dict[str, A
         try:
             services.update_enquiry(api_root, enquiry_id, {"status": "closed"})
             outcome["closed"] = True
+            from . import team_alerts
+            team_alerts.notify_team(
+                None, f"Enquiry closed, no reply: {team_alerts.enquiry_label(enquiry_id, enquiry)}",
+                [f"All follow-ups for enquiry {enquiry_id} went unanswered, so the closing email was sent and the "
+                 "enquiry is now Closed. Marketing continues from here."],
+                once_key=f"closed:{enquiry_id}:{timezone.localdate().isoformat()}")
         except services.EnquiryServiceError as exc:
             outcome["closed"] = False
             outcome["note"] = f"email sent but the status could not be set to Closed: {exc}"

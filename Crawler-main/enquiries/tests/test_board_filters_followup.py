@@ -631,10 +631,11 @@ class FollowUpTemplateTests(TestCase):
             self.assertIn("Best regards,\nAVIGIRI Team", body)
             self.assertNotIn("Ananya", body)  # signed by the team, never a person
             self.assertEqual(body.count("?"), 1)  # one clear question
-        self.assertEqual(set(bodies), {"general", "waiting_po", "payment_pending"})
-        self.assertIn("confirm the order", bodies["waiting_po"])
-        self.assertIn("payment for this order is still pending", bodies["payment_pending"])
-        self.assertIn("purchase order", bodies["waiting_po"])
+        self.assertEqual(set(bodies), {"general", "waiting_po", "payment_pending", "marketing"})
+        self.assertIn("our quotation", bodies["waiting_po"])
+        self.assertIn("proforma invoice", bodies["payment_pending"])
+        self.assertIn("revising our offer", bodies["marketing"])
+        self.assertIn("clarification on the specification", bodies["waiting_po"])
 
     @override_settings(FOLLOW_UP_CONTACT_PHONE="+91 80 1234 5678")
     def test_phone_added_when_configured(self):
@@ -706,8 +707,8 @@ class FollowUpStepsTests(TestCase):
         self._follow_up()
         response = self._compose(self._svc(self._thread()))
         self.assertContains(response, 'name="follow_up_stage"')
-        self.assertContains(response, "Waiting for order confirmation")
-        self.assertNotContains(response, "Quote sent")
+        self.assertContains(response, "Quotation sent")
+        self.assertContains(response, "Proforma invoice sent")
         self.assertContains(response, "our reference: ENQ-7")
         self.assertContains(response, 'name="next_follow_up_on"')
         self.assertContains(response, 'id="followUpStageBodies"')

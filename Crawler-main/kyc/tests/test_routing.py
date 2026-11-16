@@ -154,6 +154,7 @@ class ComposeRoutingTests(TestCase):
             "general": "customerservice@avigiri.com, meera@acme.example",  # the purchaser is already in To
             "waiting_po": "customerservice@avigiri.com, meera@acme.example",
             "payment_pending": "customerservice@avigiri.com, asha@acme.example, ravi@acme.example",
+            "marketing": "customerservice@avigiri.com, meera@acme.example",
         })
         self.assertEqual(page.context["follow_up_cc"], "customerservice@avigiri.com, meera@acme.example")
         self.assertContains(page, "Sales and marketing contacts of AV-0001 are copied.")
