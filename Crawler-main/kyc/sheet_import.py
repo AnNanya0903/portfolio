@@ -187,6 +187,7 @@ def build_plan(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     existing = set(Customer.objects.filter(code__in=list(groups)).values_list("code", flat=True))
     customers: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
+    gstins_in_sheet: Dict[str, str] = {}
     for code, group in groups.items():
         if code in existing:
             skipped.append({"code": code, "name": group["data"]["name"]})
@@ -197,6 +198,13 @@ def build_plan(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         if not form.is_valid():
             problems.append({"row": group["row"], "message": f"Customer {code} left out. {_first_error(form)}"})
             continue
+        gstin = form.cleaned_data.get("gstin")
+        if gstin and gstin in gstins_in_sheet:  # two new customers in this sheet with one GSTIN
+            problems.append({"row": group["row"], "message": f"Customer {code} left out. This GSTIN is also given "
+                                                             f"for customer {gstins_in_sheet[gstin]} in this sheet."})
+            continue
+        if gstin:
+            gstins_in_sheet[gstin] = code
         customers.append(group)
     problems.sort(key=lambda p: p["row"])
     return {"customers": customers, "skipped": skipped, "problems": problems,

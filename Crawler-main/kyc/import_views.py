@@ -71,7 +71,7 @@ def import_review(request: HttpRequest, doc_id: int) -> HttpResponse:
 
     data = document.extracted_data or {}
     if request.method == "POST":
-        form = CustomerForm(request.POST)
+        form = CustomerForm(request.POST, check_same_name=True)
         contacts = ContactFormSet(request.POST, prefix="contacts")
         if form.is_valid() and contacts.is_valid():
             with transaction.atomic():

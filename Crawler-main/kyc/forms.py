@@ -24,6 +24,10 @@ class CustomerForm(forms.ModelForm):
         label="MSME applicable", choices=(("yes", "Yes"), ("no", "No")), coerce=lambda v: v == "yes",
         empty_value=False, required=False, initial="no",
         widget=forms.RadioSelect(attrs={"class": "form-check-input"}))
+    # Ticked to save a customer whose company name another customer already has (e.g. a branch).
+    same_name_ok = forms.BooleanField(
+        required=False, label="This is a different company with the same name",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}))
 
     class Meta:
         model = Customer
@@ -64,8 +68,13 @@ class CustomerForm(forms.ModelForm):
             "udyam_aadhar_no": "Udyam Aadhaar No.",
         }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, check_same_name: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
+        # Pages where a person saves a customer warn about the same company name; sheet imports do not
+        # (each row has its own customer code). A GSTIN that another customer has is always refused.
+        self.check_same_name = check_same_name
+        self.same_name_customers: list = []
+        self.gstin_customer = None
         # Show the saved MSME value on the Yes / No buttons, and imports' "Yes" / "No" / True / False.
         if self.instance and self.instance.pk and "msme_applicable" not in self.initial:
             self.initial["msme_applicable"] = "yes" if self.instance.msme_applicable else "no"
@@ -106,7 +115,23 @@ class CustomerForm(forms.ModelForm):
             cleaned["other_transporter"] = ""  # only kept for "Other"
         if cleaned.get("msme_applicable") and not cleaned.get("udyam_aadhar_no"):
             self.add_error("udyam_aadhar_no", "Required when MSME applies.")
+        self._check_duplicates(cleaned)
         return cleaned
+
+    def _check_duplicates(self, cleaned) -> None:
+        others = Customer.objects.exclude(pk=self.instance.pk) if self.instance.pk else Customer.objects.all()
+        gstin = cleaned.get("gstin")
+        if gstin:
+            self.gstin_customer = others.filter(gstin=gstin).first()
+            if self.gstin_customer:
+                self.add_error("gstin", f"This GSTIN is already used by customer {self.gstin_customer.code} "
+                                        f"({self.gstin_customer.name}). The same GSTIN means the same business.")
+        name = " ".join((cleaned.get("name") or "").split())
+        if self.check_same_name and name and not cleaned.get("same_name_ok"):
+            self.same_name_customers = list(others.filter(name__iexact=name).order_by("code")[:5])
+            if self.same_name_customers:
+                self.add_error("name", "Another customer already has this company name. Check below that it is "
+                                       "a different company, then tick the box to save.")
 
     def clean_code(self):
         code = _compact_upper(self.cleaned_data.get("code"))

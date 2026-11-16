@@ -51,7 +51,7 @@ def _customer_form_page(request: HttpRequest, form: CustomerForm, customer=None)
 @login_required
 def customer_new(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
-        form = CustomerForm(request.POST)
+        form = CustomerForm(request.POST, check_same_name=True)
         if form.is_valid():
             customer = form.save(commit=False)
             customer.created_by = customer.updated_by = request.user
@@ -66,7 +66,7 @@ def customer_new(request: HttpRequest) -> HttpResponse:
 def customer_edit(request: HttpRequest, pk: int) -> HttpResponse:
     customer = get_object_or_404(Customer, pk=pk)
     if request.method == "POST":
-        form = CustomerForm(request.POST, instance=customer)
+        form = CustomerForm(request.POST, instance=customer, check_same_name=True)
         if form.is_valid():
             customer = form.save(commit=False)
             customer.updated_by = request.user

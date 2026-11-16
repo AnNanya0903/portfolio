@@ -77,6 +77,8 @@ def search(q: str) -> List[Dict[str, str]]:
     if q:
         customers = customers.filter(
             Q(code__icontains=normalize_code(q)) | Q(name__icontains=q) | Q(contacts__email__icontains=q)
+            | Q(gstin__icontains=normalize_code(q))
         ).distinct()
     customers = customers.order_by("code").prefetch_related("contacts")[:SEARCH_LIMIT]
-    return [{"code": c.code, "name": c.name, "city": c.city, "email": contact_email(c)} for c in customers]
+    return [{"code": c.code, "name": c.name, "city": c.city, "gstin": c.gstin, "email": contact_email(c)}
+            for c in customers]

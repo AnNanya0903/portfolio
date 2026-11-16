@@ -24,6 +24,7 @@
         <div class="card-body d-flex flex-column gap-3">
           {% for field in main_fields %}{% include 'kyc/_field.html' %}{% endfor %}
           {% for field in address_fields %}{% include 'kyc/_field.html' %}{% endfor %}
+          {% include 'kyc/_duplicate_notice.html' %}
         </div>
       </div>
     </div>

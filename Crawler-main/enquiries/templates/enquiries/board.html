@@ -1185,7 +1185,9 @@
             known.set(customer.code.toUpperCase(), customer);
             const option = document.createElement("option");
             option.value = customer.code;
-            option.label = customer.name + (customer.city ? " - " + customer.city : "");
+            // Code, company, city and GSTIN, so two companies with the same name can be told apart.
+            option.label = customer.name + (customer.city ? " - " + customer.city : "")
+              + (customer.gstin ? " · GSTIN " + customer.gstin : "");
             options.appendChild(option);
           });
         })

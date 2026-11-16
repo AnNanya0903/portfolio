@@ -64,7 +64,7 @@ class SearchApiTests(Base):
             data = self.client.get(url, {"q": q}).json()
             self.assertEqual([c["code"] for c in data["customers"]], codes, q)
         first = self.client.get(url, {"q": "AV"}).json()["customers"][0]
-        self.assertEqual(first, {"code": "AV-0001", "name": "Acme Seals", "city": "Bengaluru",
+        self.assertEqual(first, {"code": "AV-0001", "name": "Acme Seals", "city": "Bengaluru", "gstin": "",
                                  "email": "meera@acme.example"})
 
     def test_enquiry_users_may_search_but_others_may_not(self):
