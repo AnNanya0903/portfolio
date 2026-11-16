@@ -12,7 +12,7 @@ from django.contrib.auth.hashers import check_password
 from django.core import signing
 from django.urls import reverse
 
-from dashboard.follow_up_templates import PAYMENT_STAGE, QUOTATION_STAGE
+from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, QUOTATION_STAGE
 
 from . import payment_terms, services
 from .models import EnquiryContact, FollowUpSent, FollowUpStart, ShareLink
@@ -191,9 +191,9 @@ def existing_thread(enquiry_id: str) -> Optional[Dict[str, str]]:
     """The enquiry's email thread with the customer, if one is known: the newest of the quotation / PI /
     rejection email that started follow-ups and the last sent follow-up. New emails reply in it."""
     start = (FollowUpStart.objects.filter(enquiry_id=str(enquiry_id)).exclude(gmail_thread_id="")
-             .order_by("-started_at").first())
+             .exclude(stage=MARKETING_STAGE).order_by("-started_at").first())
     sent = (FollowUpSent.objects.filter(enquiry_id=str(enquiry_id), status=FollowUpSent.STATUS_SENT)
-            .exclude(gmail_thread_id="").order_by("-sent_at").first())
+            .exclude(gmail_thread_id="").exclude(stage=MARKETING_STAGE).order_by("-sent_at").first())
     known = [(row.started_at, row.gmail_thread_id, row.subject) for row in (start,) if row]
     known += [(row.sent_at, row.gmail_thread_id, row.subject) for row in (sent,) if row]
     if not known:

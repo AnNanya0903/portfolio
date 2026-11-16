@@ -224,11 +224,11 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
         fields["gmail_message_id"] = (sent or {}).get("id") or ""
         fields["gmail_thread_id"] = (sent or {}).get("threadId") or fields["gmail_thread_id"]
         if kind == CustomerStatusEmail.KIND_REJECTION and getattr(settings, "MARKETING_AUTO_FOLLOW_UP", True):
-            # Marketing follows up from here, replying in this same thread.
+            # Marketing follows up from here, in its OWN new email thread (the rejection email stays in the
+            # enquiry's thread): its first email opens the thread, and the later ones reply in it.
             from . import auto_follow_up
-            auto_follow_up.record_start(enquiry_id, MARKETING_STAGE,
-                                        sent={**(sent or {}), "threadId": fields["gmail_thread_id"]},
-                                        customer_email=customer_email, cc=cc, subject=subject, user=sender)
+            auto_follow_up.record_start(enquiry_id, MARKETING_STAGE, sent={}, customer_email=customer_email,
+                                        cc=cc, subject="", user=sender)
         return _finish(row, CustomerStatusEmail.STATUS_SENT, "", sent_at=timezone.now(), **fields)
     except GmailAPIError as exc:
         return _finish(row, CustomerStatusEmail.STATUS_FAILED, f"Gmail error: {exc}")

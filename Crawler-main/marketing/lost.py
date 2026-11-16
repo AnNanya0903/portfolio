@@ -18,7 +18,7 @@ from django.conf import settings
 from django.db.models import prefetch_related_objects
 from django.utils import timezone
 
-from dashboard.follow_up_templates import PAYMENT_STAGE
+from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE
 from enquiries.models import CustomerStatusEmail, EnquiryContact, FollowUpSent
 from kyc import links as kyc_links
 from kyc.models import CustomerContact
@@ -133,7 +133,7 @@ def _local_date(value) -> Optional[date]:
 def _follow_up_stats(enquiry_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     stats: Dict[str, Dict[str, Any]] = {}
     rows = (FollowUpSent.objects.filter(enquiry_id__in=enquiry_ids, status=FollowUpSent.STATUS_SENT)
-            .exclude(stage=PAYMENT_STAGE).values_list("enquiry_id", "sent_at"))
+            .exclude(stage__in=(PAYMENT_STAGE, MARKETING_STAGE)).values_list("enquiry_id", "sent_at"))
     for enquiry_id, sent_at in rows:
         item = stats.setdefault(enquiry_id, {"count": 0, "last": sent_at})
         item["count"] += 1

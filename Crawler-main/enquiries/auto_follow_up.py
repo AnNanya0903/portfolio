@@ -204,7 +204,7 @@ def _skip_reason(enquiry_id: str, enquiry: Optional[Dict[str, Any]], cycle: Cycl
         return "no next follow-up date set"
     if cycle.next_on > today:
         return f"not due until {cycle.next_on.isoformat()}"
-    if not cycle.thread_id:
+    if not cycle.thread_id and not (cycle.stage == MARKETING_STAGE and cycle.count == 0):
         return "no confirmed Gmail conversation; send the first follow-up manually"
     if not _valid_email(cycle.customer_email):
         return "no confirmed customer email"
@@ -268,29 +268,41 @@ def run_auto_follow_up(enquiry_id: str, today: Optional[date] = None) -> Dict[st
 
 def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thread_id: str,
           customer_email: str, stage: str, attempt: int, cc: str = "") -> Dict[str, Any]:
-    """Reply in the conversation unless the customer wrote last; record the follow-up."""
-    if not thread_id:
+    """Reply in the conversation unless the customer wrote last; record the follow-up.
+
+    Marketing has its own conversation: its first email is a NEW email (a new Gmail thread, separate from the
+    enquiry's quotation / proforma invoice thread) and every later Marketing email replies in that thread.
+    """
+    new_thread = stage == MARKETING_STAGE and not thread_id
+    if not thread_id and not new_thread:
         return _result(enquiry_id, SKIPPED, "no confirmed Gmail conversation")
     gmail = GmailService(sender)
+    original = None
     try:
         own = {a.lower() for a in gmail.own_addresses()}
         if customer_email.lower() in own:
             return _result(enquiry_id, SKIPPED, "customer address is one of our own addresses")
-        thread = gmail.get_thread_messages(thread_id, limit=50)
-        if not thread:
-            return _result(enquiry_id, SKIPPED, "Gmail conversation not found")
-        last = thread[-1]
-        last_sender = parseaddr(last.get("sender") or "")[1].strip().lower()
-        if not own:
-            return _result(enquiry_id, SKIPPED, "could not confirm the sending account's address")
-        if last_sender and last_sender not in own:
-            if not getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
-                if stage == MARKETING_STAGE:
-                    _alert_marketing_reply(enquiry_id, sender, customer_email, last)
-                else:
-                    _alert_customer_reply(enquiry_id, enquiry, sender, customer_email, last, stage)
-            return _result(enquiry_id, SKIPPED, "customer replied; answer them manually")
-        original = gmail.get_message(last.get("id"))
+        if new_thread:
+            if not own:
+                return _result(enquiry_id, SKIPPED, "could not confirm the sending account's address")
+            thread = None
+        else:
+            thread = gmail.get_thread_messages(thread_id, limit=50)
+        if not new_thread:
+            if not thread:
+                return _result(enquiry_id, SKIPPED, "Gmail conversation not found")
+            last = thread[-1]
+            last_sender = parseaddr(last.get("sender") or "")[1].strip().lower()
+            if not own:
+                return _result(enquiry_id, SKIPPED, "could not confirm the sending account's address")
+            if last_sender and last_sender not in own:
+                if not getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
+                    if stage == MARKETING_STAGE:
+                        _alert_marketing_reply(enquiry_id, sender, customer_email, last)
+                    else:
+                        _alert_customer_reply(enquiry_id, enquiry, sender, customer_email, last, stage)
+                return _result(enquiry_id, SKIPPED, "customer replied; answer them manually")
+            original = gmail.get_message(last.get("id"))
     except GmailAPIError as exc:
         return _result(enquiry_id, FAILED, f"Gmail error: {exc}")
 
@@ -307,7 +319,11 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
     # Linked to a KYC customer: copy the team this stage concerns, and top management once it has escalated.
     cc_list = kyc_routing.add_cc(cc_list, enquiry_id, stage, attempt, to=customer_email, own=own,
                                  limit=payment_terms.MAX_CC)
-    subject = original.get("subject") or str(enquiry.get("subject") or "")
+    if original is not None:
+        subject = original.get("subject") or str(enquiry.get("subject") or "")
+    else:  # Marketing's own new conversation
+        title = str(enquiry.get("subject") or "").strip()
+        subject = f"{title} - AVIGIRI" if title else "Your enquiry - AVIGIRI"
     next_on = next_follow_up_date(attempt, today, stage)
     details = {
         "customer_email": customer_email,
@@ -331,7 +347,7 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
                 customer_name=str(enquiry.get("customer_name") or "").strip(),
                 subject=subject,
                 body=body,
-                gmail_message_id=original.get("id") or "",
+                gmail_message_id=(original or {}).get("id") or "",
                 gmail_thread_id=thread_id,
                 sent_by=sender,
                 status=FollowUpSent.STATUS_PENDING,
@@ -345,8 +361,11 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
         return _result(enquiry_id, SKIPPED, "already handled today")
 
     try:
-        sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email,
-                                cc=cc_list or None)
+        if original is None:
+            sent = gmail.send_email(customer_email, subject, body, cc=cc_list or None)
+        else:
+            sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email,
+                                    cc=cc_list or None)
     except Exception as exc:  # Gmail API or network failure
         logger.warning("Auto follow-up failed for enquiry %s: %s", enquiry_id, exc)
         record.status = FollowUpSent.STATUS_FAILED
@@ -424,8 +443,8 @@ def record_start(enquiry_id: str, stage: str, *, sent: Dict[str, Any], customer_
                  subject: str, user=None, document_no: str = "") -> Optional[FollowUpStart]:
     """Remember the email that starts a follow-up sequence (its Gmail thread is where follow-ups reply)."""
     thread_id = str((sent or {}).get("threadId") or "")
-    if not thread_id:
-        return None
+    if not thread_id and stage != MARKETING_STAGE:
+        return None  # Marketing starts without a thread: its first email opens its own
     return FollowUpStart.objects.create(
         enquiry_id=str(enquiry_id), stage=stage, gmail_thread_id=thread_id,
         gmail_message_id=str((sent or {}).get("id") or ""), customer_email=(customer_email or "").lower(),

@@ -53,7 +53,7 @@ from .constants import (
     STATUS_CHOICES,
 )
 from .pdf_preview import generate_preview_pdf
-from dashboard.follow_up_templates import PAYMENT_STAGE
+from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE
 from kyc import links as kyc_links
 from dashboard.gmail_service import GmailService, GmailAPIError
 from dashboard.ai_service import AIReplyRequest, AIReplyService, AIServiceError
@@ -1838,12 +1838,12 @@ def _resolve_follow_up_conversation(enquiry_id, enquiry, gmail_service, chosen_t
     # email that started the follow-ups. Every later email replies there, never in another thread.
     previous = (
         FollowUpSent.objects.filter(enquiry_id=enquiry_id, status=FollowUpSent.STATUS_SENT)
-        .exclude(gmail_thread_id="")
+        .exclude(gmail_thread_id="").exclude(stage=MARKETING_STAGE)  # Marketing has its own thread
         .order_by("-sent_at")
         .first()
     )
     start = (FollowUpStart.objects.filter(enquiry_id=str(enquiry_id)).exclude(gmail_thread_id="")
-             .order_by("-started_at").first())
+             .exclude(stage=MARKETING_STAGE).order_by("-started_at").first())
     known = [(row.sent_at, row.gmail_thread_id, row.customer_email) for row in (previous,) if row]
     known += [(row.started_at, row.gmail_thread_id, row.customer_email) for row in (start,) if row]
     for _, thread_id, known_email in sorted(known, key=lambda item: item[0], reverse=True):

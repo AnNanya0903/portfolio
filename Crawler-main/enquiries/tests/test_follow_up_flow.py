@@ -123,7 +123,7 @@ class MarketingTests(TestCase):
         p.start()
         self.addCleanup(p.stop)
 
-    def test_sent_rejection_email_starts_marketing_in_the_same_thread(self):
+    def test_sent_rejection_email_stays_in_the_enquiry_thread_and_marketing_starts_its_own(self):
         FollowUpStart.objects.create(enquiry_id="E1", stage="waiting_po", gmail_thread_id="T-QUOTE",
                                      customer_email="buyer@acme.example",
                                      started_at=timezone.now() - timedelta(days=3))
@@ -134,38 +134,72 @@ class MarketingTests(TestCase):
                                                         "customer_email": "buyer@acme.example"}
             outcome = status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, "E1", self.enquiry)
         self.assertEqual(outcome["result"], "sent")
-        gmail.describe_conversation.assert_called_with("T-QUOTE")  # the quotation's thread, not a search
+        gmail.describe_conversation.assert_called_with("T-QUOTE")  # the rejection email replies in the enquiry's thread
         start = FollowUpStart.objects.get(stage="marketing")
-        self.assertEqual((start.gmail_thread_id, start.customer_email), ("T-QUOTE", "buyer@acme.example"))
+        # Marketing gets NO thread yet: its first email opens a separate conversation.
+        self.assertEqual((start.gmail_thread_id, start.customer_email), ("", "buyer@acme.example"))
 
     def _marketing(self, sent=0):
-        FollowUpStart.objects.create(enquiry_id="E1", stage="marketing", gmail_thread_id="T-QUOTE",
+        # An enquiry thread exists too (the quotation); Marketing's thread is T-MKT, separate from it.
+        FollowUpStart.objects.create(enquiry_id="E1", stage="waiting_po", gmail_thread_id="T-QUOTE",
+                                     customer_email="buyer@acme.example",
+                                     started_at=timezone.now() - timedelta(days=30))
+        FollowUpStart.objects.create(enquiry_id="E1", stage="marketing", gmail_thread_id="",
                                      customer_email="buyer@acme.example",
                                      started_at=timezone.now() - timedelta(days=2 * sent + 2, minutes=5))
         for n in range(sent):
             FollowUpSent.objects.create(enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales,
-                                        status="sent", gmail_thread_id="T-QUOTE", stage="marketing",
+                                        status="sent", gmail_thread_id="T-MKT", stage="marketing",
                                         sent_at=timezone.now() - timedelta(days=2 * (sent - n), minutes=1),
                                         next_follow_up_on=TODAY)
 
     def _run(self):
-        gmail = _gmail()
+        gmail = _gmail(thread_id="T-MKT")
+        gmail.send_email.return_value = {"id": "n1", "threadId": "T-MKT"}
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
             return auto_follow_up.run_auto_follow_up("E1"), gmail
 
-    def test_marketing_follow_ups_then_closing_email(self):
+    def test_first_marketing_email_opens_its_own_new_thread(self):
         self._marketing(sent=0)
         result, gmail = self._run()
         self.assertEqual((result["result"], result["stage"], result["attempt"]), ("sent", "marketing", 1))
-        self.assertIn("revising our offer", gmail.send_reply.call_args.kwargs["body"])
-        self.assertEqual(gmail.send_reply.call_args.kwargs["original_message"]["thread_id"], "T-QUOTE")
+        gmail.send_reply.assert_not_called()  # not a reply in the quotation's thread
+        gmail.get_thread_messages.assert_not_called()
+        args, kwargs = gmail.send_email.call_args
+        self.assertEqual(args[0], "buyer@acme.example")
+        self.assertEqual(args[1], "Gaskets - AVIGIRI")
+        self.assertIn("revising our offer", args[2])
+        row = FollowUpSent.objects.get(stage="marketing")
+        self.assertEqual(row.gmail_thread_id, "T-MKT")  # remembered: the next ones reply here
         self.assertTrue(MarketingActivity.objects.filter(text__startswith="Automatic follow-up 1").exists())
+
+    def test_later_marketing_emails_reply_in_the_marketing_thread(self):
+        self._marketing(sent=1)
+        result, gmail = self._run()
+        self.assertEqual((result["result"], result["attempt"]), ("sent", 2))
+        gmail.send_email.assert_not_called()
+        gmail.get_thread_messages.assert_called_with("T-MKT", limit=50)
+        self.assertEqual(gmail.send_reply.call_args.kwargs["original_message"]["thread_id"], "T-MKT")
+
+    def test_marketing_thread_never_becomes_the_enquiry_thread(self):
+        from enquiries import share_email
+        self._marketing(sent=2)
+        self.assertEqual(share_email.existing_thread("E1")["thread_id"], "T-QUOTE")  # Send to customer
+        # The manual Follow-up button / status emails look it up the same way.
+        from enquiries.views import _resolve_follow_up_conversation
+        gmail = _gmail()
+        gmail.describe_conversation.return_value = {"thread_id": "T-QUOTE", "latest_message_id": "m2",
+                                                    "customer_email": "buyer@acme.example"}
+        outcome, conversation = _resolve_follow_up_conversation("E1", self.enquiry, gmail)
+        self.assertEqual(outcome, "ok")
+        gmail.describe_conversation.assert_called_with("T-QUOTE")
 
     def test_fifth_marketing_email_is_the_closing_email_and_then_it_stops(self):
         self._marketing(sent=4)
         result, gmail = self._run()
         self.assertEqual((result["result"], result["attempt"], result["next_follow_up_on"]), ("sent", 5, None))
         self.assertIn("we are closing this enquiry for now", gmail.send_reply.call_args.kwargs["body"])
+        self.assertEqual(gmail.send_reply.call_args.kwargs["original_message"]["thread_id"], "T-MKT")
         result, _ = self._run()
         self.assertEqual(result["result"], "skipped")
 
