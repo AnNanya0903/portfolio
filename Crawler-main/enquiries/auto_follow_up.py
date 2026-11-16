@@ -296,11 +296,8 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
             if not own:
                 return _result(enquiry_id, SKIPPED, "could not confirm the sending account's address")
             if last_sender and last_sender not in own:
-                if not getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
-                    if stage == MARKETING_STAGE:
-                        _alert_marketing_reply(enquiry_id, sender, customer_email, last)
-                    else:
-                        _alert_customer_reply(enquiry_id, enquiry, sender, customer_email, last, stage)
+                if stage == MARKETING_STAGE and not getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
+                    _note_marketing_reply(enquiry_id, sender, last)
                 return _result(enquiry_id, SKIPPED, "customer replied; answer them manually")
             original = gmail.get_message(last.get("id"))
     except GmailAPIError as exc:
@@ -394,34 +391,11 @@ def _log_marketing(enquiry_id: str, sender, attempt: int, customer_email: str) -
     what = "Closing email" if final else f"Automatic follow-up {attempt}"
     MarketingActivity.objects.create(lead=lead, kind=MarketingActivity.KIND_EMAIL, created_by=sender,
                                      text=f"{what} sent to {customer_email} in the enquiry's email thread.")
-    if final:
-        from marketing import notify
-        problem = notify.notify_team(
-            sender, f"Marketing closed enquiry {enquiry_id}",
-            [f"All Marketing follow-ups for enquiry {enquiry_id} went unanswered, so the closing email was sent to "
-             f"{customer_email}. No more emails will go to this customer."])
-        if problem:
-            MarketingActivity.objects.create(lead=lead, kind=MarketingActivity.KIND_SYSTEM, created_by=sender,
-                                             text=f"Notice: {problem}.")
 
 
-def _alert_customer_reply(enquiry_id: str, enquiry: Dict[str, Any], sender, customer_email: str,
-                          message: Dict[str, Any], stage: str) -> None:
-    """The customer answered a quotation / proforma invoice follow-up: tell the team once (follow-ups stop)."""
-    from . import team_alerts
-    what = "proforma invoice" if stage == PAYMENT_STAGE else "quotation"
-    snippet = str(message.get("snippet") or "").strip()[:300]
-    team_alerts.notify_team(
-        sender, f"Customer replied: {team_alerts.enquiry_label(enquiry_id, enquiry)}",
-        [f"{customer_email} replied about the {what} for enquiry {enquiry_id}, so the automatic follow-ups have "
-         "stopped. Please answer them.", f'Their reply: "{snippet}"' if snippet else ""],
-        once_key=f"reply:{enquiry_id}:{message.get('id') or ''}")
-
-
-def _alert_marketing_reply(enquiry_id: str, sender, customer_email: str, message: Dict[str, Any]) -> None:
-    """The customer answered Marketing's follow-up: tell the Marketing team once (the follow-ups stop)."""
+def _note_marketing_reply(enquiry_id: str, sender, message: Dict[str, Any]) -> None:
+    """The customer answered Marketing's follow-up: note it once on the lead (the follow-ups stop). No email."""
     try:
-        from marketing import notify
         from marketing.models import MarketingActivity, MarketingLead
     except Exception:
         return
@@ -433,10 +407,6 @@ def _alert_marketing_reply(enquiry_id: str, sender, customer_email: str, message
     MarketingActivity.objects.create(
         lead=lead, kind=MarketingActivity.KIND_SYSTEM, created_by=sender,
         text=f"{marker}: automatic follow-ups stopped." + (f' "{snippet}"' if snippet else ""))
-    notify.notify_team(sender, f"Customer replied: enquiry {enquiry_id}",
-                       [f"{customer_email} replied to Marketing's follow-up for enquiry {enquiry_id}, so the "
-                        "automatic emails have stopped. Please answer them.",
-                        f'Their reply: "{snippet}"' if snippet else ""])
 
 
 def record_start(enquiry_id: str, stage: str, *, sent: Dict[str, Any], customer_email: str, cc: List[str],

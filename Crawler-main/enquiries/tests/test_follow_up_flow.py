@@ -203,6 +203,18 @@ class MarketingTests(TestCase):
         result, _ = self._run()
         self.assertEqual(result["result"], "skipped")
 
+    def test_customer_reply_is_noted_on_the_lead_once_and_nothing_is_emailed(self):
+        self._marketing(sent=1)
+        gmail = _gmail(thread_id="T-MKT", last_sender="Buyer <buyer@acme.example>")
+        gmail.get_thread_messages.return_value[-1]["snippet"] = "Please send a new quote"
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
+            first = auto_follow_up.run_auto_follow_up("E1")
+            auto_follow_up.run_auto_follow_up("E1")
+        self.assertEqual(first["result"], "skipped")
+        self.assertEqual(MarketingActivity.objects.filter(text__startswith="Customer replied to Marketing").count(), 1)
+        gmail.send_reply.assert_not_called()
+        gmail.send_email.assert_not_called()
+
     def test_do_not_contact_won_back_or_accepted_stop_marketing(self):
         self._marketing(sent=1)
         MarketingLead.objects.create(enquiry_id="E1", do_not_contact=True)

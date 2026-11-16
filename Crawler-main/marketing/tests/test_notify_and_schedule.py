@@ -14,7 +14,6 @@ from marketing.models import Campaign, CampaignRecipient, MarketingActivity, Mar
 BASE = dict(
     FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7, MARKETING_WAIT_DAYS=30, MARKETING_REPLY_CHECK_DAYS=60,
     MARKETING_REVIVE_NOTIFY_EMAIL=True, N8N_API_TOKEN="secret-token",
-    TEAM_ALERT_TO="",  # these tests check the salesperson notices only; team alerts have their own tests
     STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage",
 )
 

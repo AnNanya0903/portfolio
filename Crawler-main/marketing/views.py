@@ -151,13 +151,6 @@ def _revive(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any], 
     for problem in problems:
         _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Notice: {problem}.")
         messages.warning(request, f"Revived, but {problem}.")
-    team_problem = notify.notify_team(
-        request.user, f"Revived enquiry {new_id}: {row['customer_name']}".strip(),
-        [f"Marketing has revived a lost enquiry for {row['customer_name'] or 'a customer'}. It is now new enquiry "
-         f"{new_id} (the old one was {old_id}).", f"Note: {note}" if note else ""],
-        url=request.build_absolute_uri(reverse("enquiries:detail", args=[new_id])))
-    if team_problem:
-        _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Notice: {team_problem}.")
     return new_id
 
 
@@ -204,13 +197,6 @@ def _mark_accepted(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str,
     for problem in problems:
         _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Notice: {problem}.")
         messages.warning(request, f"Accepted, but {problem}.")
-    team_problem = notify.notify_team(
-        request.user, f"Enquiry {enquiry_id} accepted: {row['customer_name']}".strip(),
-        [f"{row['customer_name'] or 'The customer'} has accepted enquiry {enquiry_id}, which was lost earlier. "
-         "Marketing has set it to Accepted.", f"Note: {note}" if note else ""],
-        url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])))
-    if team_problem:
-        _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Notice: {team_problem}.")
     messages.success(request, f"Enquiry {enquiry_id} is now Accepted. It has moved to the Enquiries portal.")
     return True
 

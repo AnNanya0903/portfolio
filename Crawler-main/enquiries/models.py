@@ -105,19 +105,6 @@ class FollowUpSent(models.Model):
         return f"FollowUpSent:{self.enquiry_id}:{self.sent_at:%Y-%m-%d %H:%M}"
 
 
-class TeamAlertSent(models.Model):
-    """One row per team alert that must go out only once (e.g. "the customer replied to this message")."""
-
-    key = models.CharField(max_length=200, unique=True)
-    created_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        db_table = "enquiries_team_alert_sent"
-
-    def __str__(self) -> str:
-        return f"TeamAlertSent:{self.key}"
-
-
 class FollowUpStart(models.Model):
     """Where an automatic follow-up sequence starts, and the Gmail thread every later email replies in.
 

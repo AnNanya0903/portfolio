@@ -324,12 +324,6 @@ def send_closing_email(enquiry: Mapping[str, Any], api_root: str) -> Dict[str, A
         try:
             services.update_enquiry(api_root, enquiry_id, {"status": "closed"})
             outcome["closed"] = True
-            from . import team_alerts
-            team_alerts.notify_team(
-                None, f"Enquiry closed, no reply: {team_alerts.enquiry_label(enquiry_id, enquiry)}",
-                [f"All follow-ups for enquiry {enquiry_id} went unanswered, so the closing email was sent and the "
-                 "enquiry is now Closed. Marketing continues from here."],
-                once_key=f"closed:{enquiry_id}:{timezone.localdate().isoformat()}")
         except services.EnquiryServiceError as exc:
             outcome["closed"] = False
             outcome["note"] = f"email sent but the status could not be set to Closed: {exc}"

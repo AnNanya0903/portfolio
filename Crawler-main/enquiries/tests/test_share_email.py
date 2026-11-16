@@ -71,7 +71,7 @@ class SendShareEmailTests(TestCase):
         self.assertEqual((to, subject), ("buyer@deccan.example", "Quotation ENQ-7"))
         self.assertEqual(self.send.call_args.kwargs["cc"], ["boss@avigiri.example"])
         files = self.send.call_args.kwargs["attachments"]
-        self.assertEqual([f["filename"] for f in files], ["quote.pdf", "a3"])
+        self.assertEqual([f["filename"] for f in files], ["quote.pdf", "test-cert.pdf"])  # the enquiry's own file name
         self.assertEqual(files[0]["content"], b"%PDF-quote")
         self.download.assert_called_once()
         contact = EnquiryContact.objects.get(enquiry_id="ENQ-7")

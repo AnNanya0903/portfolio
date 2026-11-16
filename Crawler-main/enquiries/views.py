@@ -35,7 +35,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
 from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, FollowUpStart, GmailLeadAnalysis, ShareLink
-from . import customer_emails, payment_terms, share_email, status_emails, team_alerts
+from . import customer_emails, payment_terms, share_email, status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
     COSTING_FIELD_ORDER,
@@ -712,9 +712,13 @@ def _download_primary_pdf(
         if not download_url:
             continue
         try:
-            return services.download_attachment(api_root, download_url, request=request)
+            content, filename, content_type = services.download_attachment(api_root, download_url, request=request)
         except services.EnquiryServiceError:
             continue
+        # The service sends no file name: use the enquiry's own name for the file, and the real PDF type.
+        name = share_email.proper_file_name(filename, preferred=str(attachment_mapping.get("file_name") or ""),
+                                            content=content)
+        return content, name, share_email.proper_content_type(content_type, name, content)
     return None
 
 
@@ -1332,12 +1336,6 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
             payment_detail=status_emails.payment_detail_text(paid_on, reference),
         )
         _report_status_email(request, outcome, "payment received")
-        team_alerts.notify_team(
-            request.user, f"Payment received: {team_alerts.enquiry_label(enquiry_id, enquiry)}",
-            [f"Payment was marked received for enquiry {enquiry_id}" + (f" (reference {reference})" if reference else "")
-             + f"{' on ' + paid_on.strftime('%d %b %Y') if paid_on else ''}. The order is now Converted."],
-            url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])),
-            once_key=f"paid:{enquiry_id}:{paid_on or timezone.localdate()}")
     elif credit_days:
         messages.success(request, f"Order #{enquiry_id}: {label} of {credit_days} days. Payment is due on "
                                   f"{due:%d %b %Y}" + (", and payment reminders wait until then."
@@ -3269,7 +3267,7 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
         to, cc = share_email.validate_recipients(email["to"], email["cc"])
         if not email["subject"] or not email["body"]:
             raise share_email.ShareEmailError("Please fill in the subject and the message.")
-        attachments = [share_email.quotation_attachment(data)]
+        attachments = [share_email.quotation_attachment(data, enquiry_id, email.get("voucher_no") or "")]
         attachments += share_email.download_documents(api_root, enquiry_id, email["documents"], email["selected"],
                                                       request=request)
         share_email.check_size(attachments)
@@ -3410,12 +3408,6 @@ def _after_status_change(request: HttpRequest, enquiry_id: str, enquiry: Mapping
     reason = _share_reason(enquiry, kind=CustomerStatusEmail.KIND_REJECTION)
     outcome = status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, enquiry_id, enquiry or {}, reason=reason)
     _report_status_email(request, outcome, "rejection")
-    team_alerts.notify_team(
-        getattr(request, "user", None), f"Enquiry rejected: {team_alerts.enquiry_label(enquiry_id, enquiry)}",
-        [f"Enquiry {enquiry_id} was set to Rejected. Marketing will follow up with the customer automatically.",
-         f"Reason: {reason}" if reason else ""],
-        url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])),
-        once_key=f"rejected:{enquiry_id}:{timezone.localdate().isoformat()}")
 
 
 def _report_status_email(request: HttpRequest, outcome: Mapping[str, Any], label: str) -> None:
@@ -3467,16 +3459,6 @@ def share_action(request: HttpRequest) -> HttpResponse:
 
     if action == "reject":
         status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, enquiry_id, existing or {}, reason=reason)
-
-    label = team_alerts.enquiry_label(enquiry_id, existing)
-    verb = "accepted" if action == "accept" else "rejected"
-    team_alerts.notify_team(
-        None, f"Customer {verb} the quotation: {label}",
-        [f"{(existing or {}).get('customer_name') or 'The customer'} {verb} the quotation / proforma invoice for "
-         f"{(existing or {}).get('subject') or 'enquiry ' + enquiry_id} (enquiry {enquiry_id}) on the share link.",
-         f"Reason given: {reason}" if reason else ""],
-        url=request.build_absolute_uri(reverse("enquiries:detail", args=[enquiry_id])),
-        once_key=f"share:{enquiry_id}:{action}:{timezone.localdate().isoformat()}")
 
     return JsonResponse({"status": "ok", "enquiry_id": enquiry_id, "new_status": status_value})
 

@@ -309,11 +309,6 @@ MARKETING_REVIVE_NOTIFY_EMAIL = config('MARKETING_REVIVE_NOTIFY_EMAIL', default=
 # FOLLOW_UP_AUTO_ENABLED / FOLLOW_UP_AUTO_DRY_RUN switches and FOLLOW_UP_AUTO_GAP_DAYS), then sends a closing email.
 MARKETING_AUTO_FOLLOW_UP = config('MARKETING_AUTO_FOLLOW_UP', default=True, cast=bool)
 MARKETING_FOLLOW_UP_COUNT = config('MARKETING_FOLLOW_UP_COUNT', default=4, cast=int)  # before the closing email
-# Team alerts for the Enquiries and Marketing portals (customer accepted / rejected / replied, payment received,
-# enquiry closed, lead revived or won back): one email To TEAM_ALERT_TO with TEAM_ALERT_CC copied.
-# Leave TEAM_ALERT_TO empty to turn alerts off (staging does).
-TEAM_ALERT_TO = config('TEAM_ALERT_TO', default='kumar@avigiri.com')
-TEAM_ALERT_CC = config('TEAM_ALERT_CC', default='manju@avigiri.com,apai@avigiri.com')
 N8N_API_TOKEN = config('N8N_API_TOKEN', default='')  # shared secret sent by n8n in X-N8N-Token
 
 # Material Test Certificate (MTC) generation (DOCX templates)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import mimetypes
+import os
 import re
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -106,12 +108,51 @@ def password_matches(data: Mapping[str, Any], password: str) -> bool:
     return bool(password and password_hash and check_password(password, password_hash))
 
 
-def quotation_attachment(data: Mapping[str, Any]) -> Dict[str, Any]:
-    return {
-        "filename": data.get("pdf_filename") or "quotation.pdf",
-        "mime_type": data.get("pdf_content_type") or "application/pdf",
-        "content": base64.b64decode(data.get("pdf_content_b64") or b""),
-    }
+# The enquiry service sends downloads without a file name, and the site then calls them just "attachment".
+# Such a file reaches the customer as a nameless generic document that does not open as a PDF.
+_GENERIC_NAMES = {"", "attachment", "download", "file", "document", "enquiry"}
+
+
+def proper_file_name(name: str, preferred: str = "", content: bytes = b"", fallback: str = "Quotation") -> str:
+    """A real file name with an extension: the given name if it is one, else the preferred name (the enquiry's
+    own file name), else "<fallback>.pdf" when the bytes are a PDF."""
+    name = (name or "").strip().strip('"\'')
+    if name.lower() not in _GENERIC_NAMES and os.path.splitext(name)[1]:
+        return name
+    preferred = (preferred or "").strip()
+    if preferred.lower() not in _GENERIC_NAMES and os.path.splitext(preferred)[1]:
+        return preferred
+    if (content or b"")[:4] == b"%PDF":
+        stem = name if name.lower() not in _GENERIC_NAMES else fallback
+        return f"{stem}.pdf"
+    if name.lower() in _GENERIC_NAMES and preferred:
+        return preferred  # the enquiry's own name, even without an extension
+    return name or preferred or fallback
+
+
+def proper_content_type(content_type: str, filename: str, content: bytes = b"") -> str:
+    """The real type of the file: PDF bytes are application/pdf, a generic type is guessed from the name."""
+    if (content or b"")[:4] == b"%PDF":
+        return "application/pdf"
+    generic = (content_type or "").split(";")[0].strip().lower()
+    if generic and generic != "application/octet-stream":
+        return generic
+    return mimetypes.guess_type(filename or "")[0] or "application/octet-stream"
+
+
+def _safe_stem(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", value or "").strip("-.") or "Quotation"
+
+
+def quotation_attachment(data: Mapping[str, Any], enquiry_id: str = "", voucher_no: str = "") -> Dict[str, Any]:
+    """The shared PDF as an email attachment, always with a proper name ("Quotation-<number>.pdf") and type."""
+    content = base64.b64decode(data.get("pdf_content_b64") or b"")
+    reference = voucher_no or enquiry_id or str(data.get("enquiry_id") or "")
+    filename = proper_file_name(str(data.get("pdf_filename") or ""), content=content,
+                                fallback=f"Quotation-{_safe_stem(reference)}" if reference else "Quotation")
+    return {"filename": filename,
+            "mime_type": proper_content_type(str(data.get("pdf_content_type") or ""), filename, content),
+            "content": content}
 
 
 def enquiry_documents(enquiry: Mapping[str, Any], *, skip_name: str = "") -> List[Dict[str, Any]]:
@@ -229,7 +270,7 @@ def form_defaults(request, record: ShareLink, data: Mapping[str, Any], password:
         "cc": payment_terms.default_cc(enquiry_id),
         "subject": (thread or {}).get("subject") or messages["quotation"]["subject"],
         "body": messages["quotation"]["body"],
-        "quotation_name": data.get("pdf_filename") or "quotation.pdf",
+        "quotation_name": quotation_attachment(data, enquiry_id, voucher_no)["filename"],
         "documents": enquiry_documents(enquiry, skip_name=str(data.get("pdf_filename") or "")),
         "selected": [],
     }
@@ -248,7 +289,8 @@ def download_documents(api_root: str, enquiry_id: str, documents: List[Mapping[s
             content, filename, content_type = services.download_attachment(api_root, url, request=request)
         except services.EnquiryServiceError as exc:
             raise ShareEmailError(f"Could not download {document['name']}: {exc}") from exc
-        files.append({"filename": filename or document["name"], "mime_type": content_type or "application/octet-stream",
+        name = proper_file_name(filename, preferred=document["name"], content=content, fallback=document["name"])
+        files.append({"filename": name, "mime_type": proper_content_type(content_type, name, content),
                       "content": content})
     return files
 

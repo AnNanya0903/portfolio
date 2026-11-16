@@ -132,18 +132,6 @@ def notify_accepted(*, sender, salesperson, customer: str, enquiry_id: str, note
     return done, problems
 
 
-def alert_recipients() -> tuple:
-    """(To, [CC]) of the team alerts (shared with the Enquiries portal)."""
-    from enquiries import team_alerts
-    return team_alerts.alert_recipients()
-
-
-def notify_team(sender, subject: str, lines: List[str], *, url: str = "", once_key: str = "") -> str:
-    """Email the team (To kumar, CC manju and apai by default) about one Marketing event. Never raises."""
-    from enquiries import team_alerts
-    return team_alerts.notify_team(sender, subject, lines, url=url, once_key=once_key)
-
-
 def notify_reply(user, *, customer: str, campaign_name: str, url: str) -> None:
     if user is not None:
         _push(user, "Customer replied", f"{customer or 'A customer'} replied to \"{campaign_name}\".", url)
