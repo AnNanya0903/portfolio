@@ -84,6 +84,14 @@ def _coerce_summary_date(value: Optional[str]) -> Optional[date]:
         raise ValueError("Dates must use YYYY-MM-DD format.")
 
 
+_INDIA_TIME = timezone(timedelta(hours=5, minutes=30))  # IST; India has no daylight saving
+
+
+def _ist_day_edge_as_utc(day: date, edge: dt_time) -> datetime:
+    """The start or end of an Indian day as a naive UTC time, which is how enquiry times are stored."""
+    return datetime.combine(day, edge, tzinfo=_INDIA_TIME).astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _summary_filter_key(period: str, start_date: Optional[str], end_date: Optional[str]) -> str:
     return f"{period}|{start_date or ''}|{end_date or ''}"
 
@@ -107,8 +115,11 @@ def _resolve_summary_date_range(
         parsed_end = _coerce_summary_date(end_date)
         if parsed_start is None and parsed_end is None:
             raise ValueError("Choose at least one custom date.")
-        start_dt = datetime.combine(parsed_start, dt_time.min) if parsed_start else None
-        end_dt = datetime.combine(parsed_end, dt_time.max) if parsed_end else None
+        # Custom dates are Indian days (12:00 AM to 11:59 PM IST), like the times the report shows. The service
+        # works in naive UTC, so the day's edges are converted; cutting at UTC midnight (5:30 AM IST) put
+        # enquiries received between 12:00 AM and 5:30 AM IST on the wrong day.
+        start_dt = _ist_day_edge_as_utc(parsed_start, dt_time.min) if parsed_start else None
+        end_dt = _ist_day_edge_as_utc(parsed_end, dt_time.max) if parsed_end else None
         if start_dt is not None and end_dt is not None and end_dt < start_dt:
             raise ValueError("Custom end date must be on or after the start date.")
         return selected_period, start_dt, end_dt

@@ -80,6 +80,7 @@ SUMMARY_PERIOD_CHOICES = {
 
 # The enquiry service works in UTC; the summary shows times in Indian time.
 SUMMARY_DISPLAY_TIME_ZONE = "Asia/Kolkata"
+SUMMARY_DISPLAY_UTC_OFFSET_MINUTES = 330  # +05:30; India has no daylight saving. Used to cut custom dates into days.
 _SUMMARY_PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
@@ -142,20 +143,17 @@ def _resolve_summary_filter_bounds(
     if period != "custom":
         return None, None
 
+    # The dates are Indian days, the same as the times the report shows: 12:00 AM to 11:59 PM IST.
+    # (Cutting them at UTC midnight, which is 5:30 AM IST, put enquiries on the wrong day.)
+    day_zone = timezone.get_fixed_timezone(SUMMARY_DISPLAY_UTC_OFFSET_MINUTES)
     range_start: Optional[datetime] = None
     range_end: Optional[datetime] = None
     if start_date:
         parsed_start = date.fromisoformat(start_date)
-        range_start = timezone.make_aware(
-            datetime.combine(parsed_start, datetime.min.time()),
-            timezone.get_current_timezone(),
-        )
+        range_start = datetime.combine(parsed_start, datetime.min.time(), tzinfo=day_zone)
     if end_date:
         parsed_end = date.fromisoformat(end_date)
-        range_end = timezone.make_aware(
-            datetime.combine(parsed_end, datetime.max.time()),
-            timezone.get_current_timezone(),
-        )
+        range_end = datetime.combine(parsed_end, datetime.max.time(), tzinfo=day_zone)
     return range_start, range_end
 
 
