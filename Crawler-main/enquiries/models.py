@@ -351,5 +351,6 @@ class EnquiryAttachment(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = "enquiry_attachments"
+        # Not "enquiry_attachments": the enquiry service already has a table of that name in the same database.
+        db_table = "enquiry_files"
         ordering = ["-created_at", "-id"]
