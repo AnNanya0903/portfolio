@@ -330,8 +330,10 @@ def _gmail_message_has_pdf_attachment(message: Mapping[str, Any]) -> bool:
 
 
 def _coerce_candidate_received_at(value: Any) -> timezone.datetime:
+    """A timezone-aware date to sort Gmail lead candidates by. A date without a time zone is taken as UTC, and a
+    missing or unreadable one sorts last, so naive and aware dates never meet in the sort."""
     if isinstance(value, timezone.datetime):
-        return value
+        return value if timezone.is_aware(value) else timezone.make_aware(value, timezone.utc)
     return timezone.make_aware(timezone.datetime(1970, 1, 1), timezone.utc)
 
 
