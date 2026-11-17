@@ -4,7 +4,7 @@ from django import forms
 from django.core.validators import validate_email
 
 from . import logistics
-from .models import Customer, CustomerContact
+from .models import Customer, CustomerContact, Department
 
 _TEXT = {"class": "form-control form-control-sm"}
 _SELECT = {"class": "form-select form-select-sm"}
@@ -32,7 +32,7 @@ class CustomerForm(forms.ModelForm):
     class Meta:
         model = Customer
         fields = ["code", "name", "address", "city", "state", "pincode", "country",
-                  "gstin", "pan", "phone", "website", "notes" ,
+                  "gstin", "pan", "phone", "website", "notes", "handled_by",
     "transportation",
     "preferred_transporter",
     "other_transporter",
@@ -53,6 +53,7 @@ class CustomerForm(forms.ModelForm):
             "phone": forms.TextInput(attrs=_TEXT),
             "website": forms.TextInput(attrs=_TEXT),
             "notes": forms.Textarea(attrs={**_TEXT, "rows": 3}),
+            "handled_by": forms.Select(attrs=_SELECT),
             "transportation": forms.TextInput(attrs={**_TEXT, "list": "kycTransporters",
                                                      "placeholder": "e.g. VRL-TO PAY-DOOR"}),
             "preferred_transporter": forms.Select(attrs=_SELECT),
@@ -68,8 +69,17 @@ class CustomerForm(forms.ModelForm):
             "udyam_aadhar_no": "Udyam Aadhaar No.",
         }
 
-    def __init__(self, *args, check_same_name: bool = False, **kwargs):
+    def __init__(self, *args, check_same_name: bool = False, hide_pan: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
+        # "Handled by" lists the active departments, plus the one already chosen if it was switched off since.
+        chosen = self.instance.handled_by_id if self.instance and self.instance.pk else None
+        self.fields["handled_by"].queryset = Department.objects.filter(is_active=True) | Department.objects.filter(pk=chosen)
+        self.fields["handled_by"].required = False
+        self.fields["handled_by"].empty_label = "Not assigned"
+        # A user who may not see PAN in full cannot read it back through the edit form either. The field is
+        # left out, so saving keeps the PAN that is stored. (Typing a PAN for a new customer is still allowed.)
+        if hide_pan and self.instance and self.instance.pk and "pan" in self.fields:
+            del self.fields["pan"]
         # Pages where a person saves a customer warn about the same company name; sheet imports do not
         # (each row has its own customer code). A GSTIN that another customer has is always refused.
         self.check_same_name = check_same_name

@@ -12,7 +12,10 @@
     <p class="page-subtitle">
       Customer code <span class="kyc-code">{{ customer.code }}</span>
       <span class="kyc-chip kyc-chip--{{ customer.kyc_status }} ms-2">{{ customer.get_kyc_status_display }}</span>
+      <span class="kyc-chip kyc-chip--draft ms-2">Handled by: {{ customer.handled_by.name|default:"Not assigned" }}</span>
     </p>
+    {% if handled_by_emails %}<p class="kyc-muted mb-0"><i class="bi bi-envelope me-1"></i>{{ customer.handled_by.name }}:
+      {% for email in handled_by_emails %}<a href="mailto:{{ email }}">{{ email }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <a class="btn btn-outline-secondary" href="{% url 'kyc:edit' customer.pk %}"><i class="bi bi-pencil me-1"></i> Edit details</a>
@@ -39,7 +42,7 @@
           <div class="kyc-value">{{ customer.city }}{% if customer.city and customer.state %}, {% endif %}{{ customer.state }} {{ customer.pincode }}</div>
           <div class="kyc-value">{{ customer.country }}</div></div>
         <div><div class="kyc-label">GSTIN</div><div class="kyc-value">{{ customer.gstin|default:"—" }}</div></div>
-        <div><div class="kyc-label">PAN</div><div class="kyc-value">{{ customer.pan|default:"—" }}</div></div>
+        <div><div class="kyc-label">PAN</div><div class="kyc-value">{{ pan_display|default:"—" }}</div></div>
         <div><div class="kyc-label">Company phone</div><div class="kyc-value">{{ customer.phone|default:"—" }}</div></div>
         <div><div class="kyc-label">Website</div><div class="kyc-value">{{ customer.website|default:"—" }}</div></div>
         {% if customer.notes %}<div><div class="kyc-label">Notes</div><div class="kyc-value">{{ customer.notes|linebreaksbr }}</div></div>{% endif %}

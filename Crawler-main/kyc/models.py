@@ -64,6 +64,10 @@ class Customer(models.Model):
     website = models.CharField(max_length=255, blank=True, default="")
     notes = models.TextField(blank=True, default="")
     kyc_status = models.CharField(max_length=10, choices=KYC_STATUS_CHOICES, default=KYC_DRAFT)
+    # The team that handles this customer. A label only: every department can see every customer.
+    handled_by = models.ForeignKey(
+        "Department", verbose_name="Handled by", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="customers")
 
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
@@ -223,3 +227,82 @@ class EnquiryCustomer(models.Model):
 
     def __str__(self) -> str:
         return f"EnquiryCustomer:{self.enquiry_id}:{self.customer_id}"
+
+
+class Department(models.Model):
+    """An Avigiri department. Departments are switched off (is_active), never deleted."""
+
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=300, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "kyc_department"
+        ordering = ["sort_order", "name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+    def emails(self) -> List[str]:
+        """The department's email addresses, the primary one first."""
+        return [c.email for c in self.contacts.all()]
+
+
+class DepartmentContact(models.Model):
+    """One email address of a department. The same address may belong to several departments."""
+
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="contacts")
+    email = models.EmailField()
+    is_primary = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "kyc_department_contact"
+        ordering = ["-is_primary", "id"]
+        constraints = [models.UniqueConstraint(fields=["department", "email"], name="kyc_department_email_unique")]
+
+    def __str__(self) -> str:
+        return f"{self.department.name}: {self.email}"
+
+
+class UserDepartment(models.Model):
+    """Which department a user works in. Without a row, the user's email address is matched to the
+    departments' contact emails."""
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="kyc_department")
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="members")
+
+    class Meta:
+        db_table = "kyc_user_department"
+
+    def __str__(self) -> str:
+        return f"{self.user} - {self.department}"
+
+
+class KycAuditLog(models.Model):
+    """Who looked at or changed a customer. Records field names only, never the values (PAN and the like)."""
+
+    ACTION_VIEW = "view"
+    ACTION_CREATE = "create"
+    ACTION_EDIT = "edit"
+    ACTION_DELETE = "delete"
+    ACTION_CHOICES = (
+        (ACTION_VIEW, "Viewed"), (ACTION_CREATE, "Created"), (ACTION_EDIT, "Edited"), (ACTION_DELETE, "Deleted"),
+    )
+
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    username = models.CharField(max_length=150, blank=True, default="")
+    department = models.CharField(max_length=200, blank=True, default="")
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    customer_label = models.CharField(max_length=300, blank=True, default="")
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+    field_changed = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "kyc_audit_log"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.username} {self.action} {self.customer_label} {self.field_changed}".strip()

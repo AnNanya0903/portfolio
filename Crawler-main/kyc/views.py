@@ -14,7 +14,8 @@ from django.views.decorators.http import require_POST
 
 from . import links, verification
 from .forms import CustomerContactForm, CustomerForm
-from .models import Customer, CustomerContact
+from .departments import audit_field_name, can_see_full_pan, log_audit, pan_for
+from .models import Customer, CustomerContact, KycAuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def customer_list(request: HttpRequest) -> HttpResponse:
     customers = Customer.objects.annotate(
         contact_count=Count("contacts", distinct=True),
         purchaser_count=Count("contacts", filter=Q(contacts__is_purchaser=True), distinct=True),
-    ).order_by("name", "code")
+    ).select_related("handled_by").order_by("name", "code")
     if q:
         customers = customers.filter(
             Q(code__icontains=q) | Q(name__icontains=q) | Q(gstin__icontains=q) | Q(city__icontains=q)
@@ -43,7 +44,8 @@ def _customer_form_page(request: HttpRequest, form: CustomerForm, customer=None)
         "customer": customer,
         "main_fields": [form[name] for name in ("code", "name")],
         "address_fields": [form[name] for name in ("address", "city", "state", "pincode", "country")],
-        "tax_fields": [form[name] for name in ("gstin", "pan", "phone", "website", "notes")],
+        "tax_fields": [form[name] for name in ("gstin", "pan", "phone", "website", "notes") if name in form.fields],
+        "handled_by_field": form["handled_by"],
         "transport_fields": [form[name] for name in ("transportation", "preferred_transporter", "other_transporter", "delivery_type", "msme_applicable", "udyam_aadhar_no")],
     })
 
@@ -56,6 +58,7 @@ def customer_new(request: HttpRequest) -> HttpResponse:
             customer = form.save(commit=False)
             customer.created_by = customer.updated_by = request.user
             customer.save()
+            log_audit(request.user, customer, KycAuditLog.ACTION_CREATE)
             messages.success(request, f"Customer {customer.code} saved. Now add the contacts.")
             return redirect("kyc:detail", pk=customer.pk)
         return _customer_form_page(request, form)
@@ -65,17 +68,20 @@ def customer_new(request: HttpRequest) -> HttpResponse:
 @login_required
 def customer_edit(request: HttpRequest, pk: int) -> HttpResponse:
     customer = get_object_or_404(Customer, pk=pk)
+    hide_pan = not can_see_full_pan(request.user)
     if request.method == "POST":
-        form = CustomerForm(request.POST, instance=customer, check_same_name=True)
+        form = CustomerForm(request.POST, instance=customer, check_same_name=True, hide_pan=hide_pan)
         if form.is_valid():
             customer = form.save(commit=False)
             customer.updated_by = request.user
             customer.save()
+            log_audit(request.user, customer, KycAuditLog.ACTION_EDIT,
+                      [audit_field_name(f) for f in form.changed_data])
             messages.success(request, "Customer details updated.")
             return redirect("kyc:detail", pk=customer.pk)
         # form.instance now holds the unsaved values; show the page for the saved customer.
         return _customer_form_page(request, form, get_object_or_404(Customer, pk=pk))
-    return _customer_form_page(request, CustomerForm(instance=customer), customer)
+    return _customer_form_page(request, CustomerForm(instance=customer, hide_pan=hide_pan), customer)
 
 
 def _marketing_activity(customer: Customer) -> dict:
@@ -93,7 +99,9 @@ def _marketing_activity(customer: Customer) -> dict:
 
 @login_required
 def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
-    customer = get_object_or_404(Customer.objects.select_related("created_by", "updated_by"), pk=pk)
+    customer = get_object_or_404(
+        Customer.objects.select_related("created_by", "updated_by", "handled_by"), pk=pk)
+    log_audit(request.user, customer, KycAuditLog.ACTION_VIEW)
     contacts = list(customer.contacts.all())
     groups = [
         {"key": key, "label": label, "contacts": [c for c in contacts if c.category == key]}
@@ -101,6 +109,8 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     ]
     return render(request, "kyc/detail.html", {
         "customer": customer,
+        "pan_display": pan_for(request.user, customer.pan),
+        "handled_by_emails": customer.handled_by.emails() if customer.handled_by else [],
         "groups": groups,
         "documents": list(customer.documents.select_related("uploaded_by")),
         "verifications": [{"row": v, "state": verification.link_state(v)}
@@ -140,6 +150,7 @@ def contact_new(request: HttpRequest, pk: int) -> HttpResponse:
             contact.customer = customer
             contact.created_by = contact.updated_by = request.user
             contact.save()
+            log_audit(request.user, customer, KycAuditLog.ACTION_EDIT, [f"contact added: {contact.name}"])
             messages.success(request, f"{contact.name} added to {contact.get_category_display()}.")
             return redirect("kyc:detail", pk=customer.pk)
         return _contact_form_page(request, form, customer)
@@ -159,6 +170,8 @@ def contact_edit(request: HttpRequest, pk: int, contact_id: int) -> HttpResponse
             contact = form.save(commit=False)
             contact.updated_by = request.user
             contact.save()
+            log_audit(request.user, customer, KycAuditLog.ACTION_EDIT,
+                      [audit_field_name(f"contact {contact.name}: {f}") for f in form.changed_data])
             messages.success(request, "Contact updated.")
             return redirect("kyc:detail", pk=customer.pk)
         return _contact_form_page(request, form, customer, contact)
@@ -170,6 +183,7 @@ def contact_edit(request: HttpRequest, pk: int, contact_id: int) -> HttpResponse
 def contact_delete(request: HttpRequest, pk: int, contact_id: int) -> HttpResponse:
     contact = get_object_or_404(CustomerContact, pk=contact_id, customer_id=pk)
     name = contact.name
+    log_audit(request.user, contact.customer, KycAuditLog.ACTION_EDIT, [audit_field_name(f"contact removed: {name}")])
     contact.delete()
     messages.success(request, f"{name} removed.")
     return redirect("kyc:detail", pk=pk)
@@ -197,6 +211,7 @@ def customer_delete(request: HttpRequest, pk: int) -> HttpResponse:
             stored.delete(save=False)
         except Exception:
             logger.warning("KYC: could not remove the stored file %s of deleted customer %s", stored.name, label)
+    log_audit(request.user, customer, KycAuditLog.ACTION_DELETE)
     logger.info("KYC customer %s deleted by %s", label, request.user)
     messages.success(request, f"Customer {label} was deleted.")
     return redirect("kyc:list")
