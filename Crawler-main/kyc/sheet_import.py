@@ -223,6 +223,7 @@ def apply_plan(plan: Dict[str, Any], user) -> Dict[str, int]:
             customer = form.save(commit=False)
             customer.created_by = customer.updated_by = user
             customer.save()
+            form.save_m2m()
             for data in group.get("contacts") or []:
                 contact_form = CustomerContactForm(data)
                 if not contact_form.is_valid():

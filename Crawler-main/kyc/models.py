@@ -8,6 +8,8 @@ from typing import List
 
 from django.conf import settings
 from django.db import models
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 from docscanner.storage import document_scan_storage
 
@@ -64,10 +66,10 @@ class Customer(models.Model):
     website = models.CharField(max_length=255, blank=True, default="")
     notes = models.TextField(blank=True, default="")
     kyc_status = models.CharField(max_length=10, choices=KYC_STATUS_CHOICES, default=KYC_DRAFT)
-    # The team that handles this customer. A label only: every department can see every customer.
-    handled_by = models.ForeignKey(
-        "Department", verbose_name="Handled by", on_delete=models.SET_NULL, null=True, blank=True,
-        related_name="customers")
+    # The teams that handle this customer: all active departments unless someone unticks some.
+    # Every department can still see every customer.
+    departments = models.ManyToManyField(
+        "Department", verbose_name="Team", related_name="customers", db_table="kyc_customer_departments")
 
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
@@ -306,3 +308,14 @@ class KycAuditLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.username} {self.action} {self.customer_label} {self.field_changed}".strip()
+
+
+def active_departments():
+    return Department.objects.filter(is_active=True)
+
+
+@receiver(post_save, sender=Customer)
+def _default_to_all_departments(sender, instance, created, raw=False, **kwargs):
+    """A customer saved without a team (an API call, a script) is given every active department."""
+    if created and not raw and not instance.departments.exists():
+        instance.departments.add(*active_departments())

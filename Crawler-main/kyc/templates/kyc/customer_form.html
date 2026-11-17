@@ -24,8 +24,7 @@
         <div class="card-body d-flex flex-column gap-3">
           {% for field in main_fields %}{% include 'kyc/_field.html' %}{% endfor %}
           {% for field in address_fields %}{% include 'kyc/_field.html' %}{% endfor %}
-          {% if handled_by_field %}{% with field=handled_by_field %}{% include 'kyc/_field.html' %}{% endwith %}
-            <div class="kyc-muted small mt-n2">The team that handles this customer. Every department can still see the customer.</div>{% endif %}
+          {% include 'kyc/_team_field.html' %}
           {% include 'kyc/_duplicate_notice.html' %}
         </div>
       </div>

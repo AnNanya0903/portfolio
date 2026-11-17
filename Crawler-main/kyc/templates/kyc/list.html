@@ -29,7 +29,7 @@
   <div class="table-responsive">
     <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
       <thead>
-        <tr><th>Code</th><th>Customer</th><th>City</th><th>Handled by</th><th>Contacts</th><th>KYC</th><th>Updated</th></tr>
+        <tr><th>Code</th><th>Customer</th><th>City</th><th>Team</th><th>Contacts</th><th>KYC</th><th>Updated</th></tr>
       </thead>
       <tbody>
         {% for c in page %}
@@ -40,7 +40,7 @@
               {% if c.gstin %}<div class="kyc-muted">GSTIN {{ c.gstin }}</div>{% endif %}
             </td>
             <td>{{ c.city|default:"—" }}</td>
-            <td>{% if c.handled_by %}<span class="kyc-chip kyc-chip--draft">{{ c.handled_by.name }}</span>{% else %}—{% endif %}</td>
+            <td>{% for d in c.departments.all %}<span class="kyc-chip kyc-chip--draft me-1 mb-1">{{ d.name }}</span>{% empty %}—{% endfor %}</td>
             <td class="text-nowrap">
               {{ c.contact_count }}
               {% if not c.purchaser_count %}<span class="kyc-chip kyc-chip--warn ms-1">No purchaser</span>{% endif %}

@@ -4,7 +4,7 @@ from django import forms
 from django.core.validators import validate_email
 
 from . import logistics
-from .models import Customer, CustomerContact, Department
+from .models import Customer, CustomerContact, Department, active_departments
 
 _TEXT = {"class": "form-control form-control-sm"}
 _SELECT = {"class": "form-select form-select-sm"}
@@ -18,6 +18,16 @@ def _compact_upper(value: str) -> str:
     return re.sub(r"\s+", "", value or "").upper()
 
 
+def _with_departments(data, ids):
+    """A copy of the submitted data whose "departments" are the given ids."""
+    data = data.copy()
+    if hasattr(data, "setlist"):
+        data.setlist("departments", [str(pk) for pk in ids])
+    else:
+        data["departments"] = list(ids)
+    return data
+
+
 class CustomerForm(forms.ModelForm):
     # Yes / No buttons; saved as True / False. Also accepts "Yes", "No", True, False from imports.
     msme_applicable = forms.TypedChoiceField(
@@ -29,10 +39,15 @@ class CustomerForm(forms.ModelForm):
         required=False, label="This is a different company with the same name",
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}))
 
+    # "Select all departments": ticked by default; unticking a department clears it.
+    all_departments = forms.BooleanField(
+        required=False, initial=True, label="All departments",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}))
+
     class Meta:
         model = Customer
         fields = ["code", "name", "address", "city", "state", "pincode", "country",
-                  "gstin", "pan", "phone", "website", "notes", "handled_by",
+                  "gstin", "pan", "phone", "website", "notes", "departments",
     "transportation",
     "preferred_transporter",
     "other_transporter",
@@ -53,7 +68,7 @@ class CustomerForm(forms.ModelForm):
             "phone": forms.TextInput(attrs=_TEXT),
             "website": forms.TextInput(attrs=_TEXT),
             "notes": forms.Textarea(attrs={**_TEXT, "rows": 3}),
-            "handled_by": forms.Select(attrs=_SELECT),
+            "departments": forms.CheckboxSelectMultiple(attrs={"class": "form-check-input kyc-dept-box"}),
             "transportation": forms.TextInput(attrs={**_TEXT, "list": "kycTransporters",
                                                      "placeholder": "e.g. VRL-TO PAY-DOOR"}),
             "preferred_transporter": forms.Select(attrs=_SELECT),
@@ -71,11 +86,24 @@ class CustomerForm(forms.ModelForm):
 
     def __init__(self, *args, check_same_name: bool = False, hide_pan: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
-        # "Handled by" lists the active departments, plus the one already chosen if it was switched off since.
-        chosen = self.instance.handled_by_id if self.instance and self.instance.pk else None
-        self.fields["handled_by"].queryset = Department.objects.filter(is_active=True) | Department.objects.filter(pk=chosen)
-        self.fields["handled_by"].required = False
-        self.fields["handled_by"].empty_label = "Not assigned"
+        # "Team" lists the active departments, plus any already assigned that was switched off since.
+        assigned = list(self.instance.departments.values_list("pk", flat=True)) if self.instance.pk else []
+        field = self.fields["departments"]
+        field.queryset = Department.objects.filter(is_active=True) | Department.objects.filter(pk__in=assigned)
+        everyone = set(active_departments().values_list("pk", flat=True))
+        field.required = bool(everyone)  # nothing to choose from until the departments are seeded
+        field.error_messages["required"] = "Select at least one department."
+        field.label = "Team"
+        if not self.is_bound:
+            # A new customer starts with every department ticked; an existing one shows what it has.
+            self.initial["departments"] = assigned if self.instance.pk else sorted(everyone)
+            self.initial["all_departments"] = everyone <= set(self.initial["departments"])
+        elif (self.data.get("all_departments")
+              or not (self.data.get("departments") or self.data.get("departments_present"))):
+            # "All departments" ticked, or nothing about the team was sent (an import or an API call):
+            # every active department. The customer form always sends "departments_present", so ticking
+            # none of them there is still an error.
+            self.data = _with_departments(self.data, sorted(everyone))
         # A user who may not see PAN in full cannot read it back through the edit form either. The field is
         # left out, so saving keeps the PAN that is stored. (Typing a PAN for a new customer is still allowed.)
         if hide_pan and self.instance and self.instance.pk and "pan" in self.fields:

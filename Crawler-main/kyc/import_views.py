@@ -78,6 +78,7 @@ def import_review(request: HttpRequest, doc_id: int) -> HttpResponse:
                 customer = form.save(commit=False)
                 customer.created_by = customer.updated_by = request.user
                 customer.save()
+                form.save_m2m()
                 saved = 0
                 for contact_form in contacts:
                     if contact_form in contacts.deleted_forms:
@@ -103,6 +104,8 @@ def import_review(request: HttpRequest, doc_id: int) -> HttpResponse:
         "contacts": contacts,
         "main_fields": [form[name] for name in ("code", "name", "address", "city", "state", "pincode", "country")],
         "tax_fields": [form[name] for name in ("gstin", "pan", "phone", "website", "notes")],
+        "departments_field": form["departments"],
+        "all_departments_field": form["all_departments"],
         "transport_fields": [form[name] for name in ("transportation", "preferred_transporter", "other_transporter", "delivery_type", "msme_applicable", "udyam_aadhar_no")],
     })
 

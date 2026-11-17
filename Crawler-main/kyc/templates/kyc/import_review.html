@@ -58,6 +58,7 @@
             {% for field in tax_fields %}
               <div class="{% if field.name == 'notes' %}col-12{% else %}col-sm-6{% endif %}">{% include 'kyc/_field.html' %}</div>
             {% endfor %}
+            <div class="col-12">{% include 'kyc/_team_field.html' %}</div>
             <div class="col-12">{% include 'kyc/_duplicate_notice.html' %}</div>
           </div>
 

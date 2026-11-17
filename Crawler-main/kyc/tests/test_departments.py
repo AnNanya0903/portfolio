@@ -54,8 +54,8 @@ class VisibilityAndPanTests(TestCase):
         call_command("seed_departments")
         self.accounts = Department.objects.get(name="Accounts")
         self.sales = Department.objects.get(name="Sales")
-        self.customer = Customer.objects.create(code="AV-0001", name="Acme Seals", pan="ABCDE1234F",
-                                                handled_by=self.accounts)
+        self.customer = Customer.objects.create(code="AV-0001", name="Acme Seals", pan="ABCDE1234F")
+        self.customer.departments.set([self.accounts])
         self.sales_user = make_user("sam", "rabin@avigiri.com")
         self.accounts_user = make_user("amy", "accounts@avigiri.com")
         self.outsider = make_user("nobody", "nobody@example.com")
@@ -67,11 +67,11 @@ class VisibilityAndPanTests(TestCase):
             self.assertContains(self.client.get(reverse("kyc:list")), "Acme Seals")
             self.assertContains(self.client.get(reverse("kyc:detail", args=[self.customer.pk])), "Acme Seals")
 
-    def test_handled_by_shows_in_the_list_and_on_the_profile_with_mailto_links(self):
+    def test_team_shows_in_the_list_and_on_the_profile_with_mailto_links(self):
         self.client.force_login(self.sales_user)
         self.assertContains(self.client.get(reverse("kyc:list")), "Accounts")
         page = self.client.get(reverse("kyc:detail", args=[self.customer.pk]))
-        self.assertContains(page, "Handled by: Accounts")
+        self.assertContains(page, 'kyc-chip--draft me-1">Accounts')
         self.assertContains(page, 'href="mailto:accounts1@avigiri.com"')
         self.assertLess(page.content.decode().index("accounts1@avigiri.com"), page.content.decode().index("mailto:accounts@avigiri.com"))
 
@@ -129,16 +129,16 @@ class VisibilityAndPanTests(TestCase):
         self.client.force_login(self.accounts_user)
         self.assertContains(self.client.get(url), 'name="pan"')
 
-    def test_handled_by_can_be_set_and_cleared_on_the_form(self):
+    def test_team_can_be_changed_on_the_form_but_not_left_empty(self):
         self.client.force_login(self.sales_user)
         url = reverse("kyc:edit", args=[self.customer.pk])
-        data = {"code": "AV-0001", "name": "Acme Seals", "country": "India", "preferred_transporter": "ARC"}
-        self.client.post(url, {**data, "handled_by": self.sales.pk})
-        self.customer.refresh_from_db()
-        self.assertEqual(self.customer.handled_by, self.sales)
-        self.client.post(url, {**data, "handled_by": ""})
-        self.customer.refresh_from_db()
-        self.assertIsNone(self.customer.handled_by)
+        data = {"code": "AV-0001", "name": "Acme Seals", "country": "India", "preferred_transporter": "ARC",
+                "departments_present": "1"}
+        self.client.post(url, {**data, "departments": [self.sales.pk]})
+        self.assertEqual(list(self.customer.departments.all()), [self.sales])
+        response = self.client.post(url, data)  # every box unticked
+        self.assertContains(response, "Select at least one department.")
+        self.assertEqual(list(self.customer.departments.all()), [self.sales])
 
     def test_mask_pan(self):
         self.assertEqual(mask_pan("ABCDE1234F"), "ABCXX1234F")
@@ -230,8 +230,9 @@ class AdminPageTests(TestCase):
         self.assertEqual(self.client.get(f"/kyc/departments/{stores.pk}/delete/").status_code, 404)
 
     def test_a_deactivated_department_keeps_its_customers(self):
-        customer = Customer.objects.create(code="AV-0009", name="Zed", handled_by=self.sales)
+        customer = Customer.objects.create(code="AV-0009", name="Zed")
+        customer.departments.set([self.sales])
         self.client.force_login(self.admin)
         self.client.post(reverse("kyc:department_toggle", args=[self.sales.pk]))
         customer.refresh_from_db()
-        self.assertEqual(customer.handled_by, self.sales)
+        self.assertEqual(list(customer.departments.all()), [self.sales])

@@ -28,7 +28,7 @@ def customer_list(request: HttpRequest) -> HttpResponse:
     customers = Customer.objects.annotate(
         contact_count=Count("contacts", distinct=True),
         purchaser_count=Count("contacts", filter=Q(contacts__is_purchaser=True), distinct=True),
-    ).select_related("handled_by").order_by("name", "code")
+    ).prefetch_related("departments").order_by("name", "code")
     if q:
         customers = customers.filter(
             Q(code__icontains=q) | Q(name__icontains=q) | Q(gstin__icontains=q) | Q(city__icontains=q)
@@ -45,7 +45,8 @@ def _customer_form_page(request: HttpRequest, form: CustomerForm, customer=None)
         "main_fields": [form[name] for name in ("code", "name")],
         "address_fields": [form[name] for name in ("address", "city", "state", "pincode", "country")],
         "tax_fields": [form[name] for name in ("gstin", "pan", "phone", "website", "notes") if name in form.fields],
-        "handled_by_field": form["handled_by"],
+        "departments_field": form["departments"],
+        "all_departments_field": form["all_departments"],
         "transport_fields": [form[name] for name in ("transportation", "preferred_transporter", "other_transporter", "delivery_type", "msme_applicable", "udyam_aadhar_no")],
     })
 
@@ -58,6 +59,7 @@ def customer_new(request: HttpRequest) -> HttpResponse:
             customer = form.save(commit=False)
             customer.created_by = customer.updated_by = request.user
             customer.save()
+            form.save_m2m()
             log_audit(request.user, customer, KycAuditLog.ACTION_CREATE)
             messages.success(request, f"Customer {customer.code} saved. Now add the contacts.")
             return redirect("kyc:detail", pk=customer.pk)
@@ -75,8 +77,9 @@ def customer_edit(request: HttpRequest, pk: int) -> HttpResponse:
             customer = form.save(commit=False)
             customer.updated_by = request.user
             customer.save()
+            form.save_m2m()
             log_audit(request.user, customer, KycAuditLog.ACTION_EDIT,
-                      [audit_field_name(f) for f in form.changed_data])
+                      [audit_field_name(f) for f in form.changed_data if f != "all_departments"])
             messages.success(request, "Customer details updated.")
             return redirect("kyc:detail", pk=customer.pk)
         # form.instance now holds the unsaved values; show the page for the saved customer.
@@ -100,7 +103,7 @@ def _marketing_activity(customer: Customer) -> dict:
 @login_required
 def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     customer = get_object_or_404(
-        Customer.objects.select_related("created_by", "updated_by", "handled_by"), pk=pk)
+        Customer.objects.select_related("created_by", "updated_by").prefetch_related("departments__contacts"), pk=pk)
     log_audit(request.user, customer, KycAuditLog.ACTION_VIEW)
     contacts = list(customer.contacts.all())
     groups = [
@@ -110,7 +113,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     return render(request, "kyc/detail.html", {
         "customer": customer,
         "pan_display": pan_for(request.user, customer.pan),
-        "handled_by_emails": customer.handled_by.emails() if customer.handled_by else [],
+        "team_departments": [{"department": d, "emails": d.emails()} for d in customer.departments.all()],
         "groups": groups,
         "documents": list(customer.documents.select_related("uploaded_by")),
         "verifications": [{"row": v, "state": verification.link_state(v)}
