@@ -136,6 +136,23 @@ class MarketingViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Could not load enquiries")
 
+    def test_open_enquiry_buttons_open_the_generated_pdf(self):
+        url = reverse("marketing:detail", args=["E1"])
+        with self._fetch():
+            page = self.client.get(url)
+        self.assertContains(page, reverse("enquiries:export_pdf", args=["E1"]) + "?inline=1")
+        self.assertContains(page, "Open original enquiry (PDF)")
+        self.assertNotContains(page, 'href="' + reverse("enquiries:detail", args=["E1"]) + '"')  # no link to the page itself
+
+    def test_the_enquiry_pdf_opens_in_the_browser_when_asked_and_downloads_otherwise(self):
+        url = reverse("enquiries:export_pdf", args=["E1"])
+        with patch("enquiries.views.services.export_enquiry_pdf", return_value=(b"%PDF-1.4 x", "Enquiry-E1.pdf")),                 patch("enquiries.views._get_api_root", return_value="http://svc"):
+            inline = self.client.get(url + "?inline=1")
+            download = self.client.get(url)
+        self.assertEqual(inline["Content-Disposition"], 'inline; filename="Enquiry-E1.pdf"')
+        self.assertEqual(download["Content-Disposition"], 'attachment; filename="Enquiry-E1.pdf"')
+        self.assertEqual(inline["Content-Type"], "application/pdf")
+
     def test_detail_and_note(self):
         url = reverse("marketing:detail", args=["E1"])
         with self._fetch():

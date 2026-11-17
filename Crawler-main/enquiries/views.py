@@ -2895,7 +2895,8 @@ def export_pdf(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         messages.error(request, f"Unable to export enquiry {enquiry_id}: {exc}")
         return redirect(reverse("enquiries:detail", args=[enquiry_id]))
     response = HttpResponse(pdf_bytes, content_type="application/pdf")
-    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    disposition = "inline" if request.GET.get("inline") == "1" else "attachment"
+    response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
     return response
 
 

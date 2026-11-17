@@ -33,12 +33,12 @@
     </div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <a class="btn btn-outline-primary shadow-sm" href="{% url 'enquiries:detail' row.enquiry_id %}">
-      <i class="bi bi-box-arrow-up-right me-1"></i> Open original enquiry
+    <a class="btn btn-outline-primary shadow-sm" href="{% url 'enquiries:export_pdf' row.enquiry_id %}?inline=1" target="_blank" rel="noopener">
+      <i class="bi bi-file-earmark-pdf me-1"></i> Open original enquiry (PDF)
     </a>
     {% if row.revived_enquiry_id %}
-      <a class="btn btn-primary shadow-sm" href="{% url 'enquiries:detail' row.revived_enquiry_id %}">
-        <i class="bi bi-arrow-repeat me-1"></i> Open revived enquiry {{ row.revived_enquiry_id }}
+      <a class="btn btn-primary shadow-sm" href="{% url 'enquiries:export_pdf' row.revived_enquiry_id %}?inline=1" target="_blank" rel="noopener">
+        <i class="bi bi-file-earmark-pdf me-1"></i> Open revived enquiry {{ row.revived_enquiry_id }} (PDF)
       </a>
     {% endif %}
   </div>
