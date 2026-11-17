@@ -7,8 +7,7 @@
   <div>
     <a href="{% url 'enquiries:board' %}" class="text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Enquiries</a>
     <h2 class="page-title">{{ enquiry_id }}{% if enquiry.customer_name %} · {{ enquiry.customer_name }}{% endif %}</h2>
-    <p class="page-subtitle">Enquiry status: <strong>{{ enquiry.status|default:"—" }}</strong>
-      · <a href="{% url 'enquiries:detail' enquiry_id %}">Open the enquiry</a></p>
+    <p class="page-subtitle">Enquiry status: <strong>{{ enquiry.status|default:"—" }}</strong></p>
   </div>
   {% if can_forward %}<div><button class="btn btn-primary shadow-sm" type="button" data-bs-toggle="modal" data-bs-target="#forwardModal"><i class="bi bi-send me-1"></i> Forward to Department</button></div>{% endif %}
 </div>
