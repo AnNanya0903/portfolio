@@ -14,6 +14,24 @@
   </div>
 </div>
 
+{% if due_followups %}
+<div class="card border-warning shadow-sm mb-4">
+  <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0"><i class="bi bi-bell me-1"></i> Follow-ups due ({{ due_followups|length }})</h6></div>
+  <div class="card-body d-flex flex-column gap-2">
+    {% for f in due_followups %}
+      <div class="d-flex justify-content-between gap-3 flex-wrap">
+        <div><a class="fw-semibold text-decoration-none" href="{% url 'enquiries:negotiation' f.enquiry_id %}">{{ f.enquiry_id }}</a>
+          · {{ f.get_followup_type_display }} follow-up was planned for {{ f.next_followup_date|date:"d M Y" }}
+          {% if f.next_followup_date < today %}<span class="badge text-bg-danger ms-1">Overdue</span>{% else %}<span class="badge text-bg-warning ms-1">Today</span>{% endif %}
+          <div class="small text-muted">{{ f.note|truncatechars:120 }}</div></div>
+        <form method="post" action="{% url 'enquiries:followup_done' f.pk %}">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <button class="btn btn-sm btn-outline-success" type="submit">Mark as done</button></form>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <form method="get" class="d-flex gap-2 flex-wrap mb-3">
   <select name="status" class="form-select form-select-sm" style="max-width:180px" onchange="this.form.submit()" aria-label="Status">
     <option value="open" {% if status == "open" %}selected{% endif %}>Open tasks</option>

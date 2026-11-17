@@ -2546,6 +2546,19 @@ def _create_pdf_enquiry(
     }
 
 
+def _is_new_rejection(old_status: Any, new_status: Any) -> bool:
+    return str(new_status or "").strip().lower() == "rejected" and str(old_status or "").strip().lower() != "rejected"
+
+
+def _lost_reason_from(post) -> str:
+    """The reason staff gave for losing an enquiry: one of the listed reasons, with a note for "Other"."""
+    reason = (post.get("lost_reason") or "").strip()
+    if reason not in negotiation.LOST_REASONS:
+        return ""
+    note = " ".join((post.get("lost_reason_note") or "").split())
+    return f"{reason}: {note}" if reason == "Other" and note else reason
+
+
 @login_required
 def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
     api_root = _get_api_root()
@@ -2570,6 +2583,9 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         form.fields["attachments"].label = "Attach additional files"
         form.fields["profile"].label = "Replace profile"
         blocked = form.is_valid() and _conversion_block_reason(enquiry_id, enquiry.get("status"), form.cleaned_data.get("status"))
+        lost_reason = _lost_reason_from(request.POST)
+        if form.is_valid() and not blocked and _is_new_rejection(enquiry.get("status"), form.cleaned_data.get("status")) and not lost_reason:
+            blocked = "Choose why the enquiry was lost before rejecting it."
         if blocked:
             form.add_error("status", blocked)
             messages.error(request, blocked)
@@ -2586,7 +2602,7 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
                     request=request,
                 )
                 messages.success(request, "Enquiry updated successfully.")
-                _after_status_change(request, enquiry_id, enquiry, payload.get("status"))
+                _after_status_change(request, enquiry_id, enquiry, payload.get("status"), lost_reason=lost_reason)
                 return redirect(reverse("enquiries:detail", args=[enquiry_id]))
             except services.EnquiryServiceError as exc:
                 messages.error(request, f"Unable to update enquiry: {exc}")
@@ -2613,6 +2629,7 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "primary_fields": primary_fields,
         "subdivisions": subdivisions,
         "column_matrix": _build_column_matrix_display(enquiry),
+        "lost_reasons": negotiation.LOST_REASONS,
     }
     return render(request, "enquiries/detail.html", context)
 
@@ -3508,12 +3525,14 @@ def _share_reason(enquiry: Mapping[str, Any] | None, *, kind: str) -> str:
     return next((line.split(marker, 1)[1].strip() for line in reversed(remarks.splitlines()) if marker in line), "")
 
 
-def _after_status_change(request: HttpRequest, enquiry_id: str, enquiry: Mapping[str, Any], new_status: Any) -> None:
+def _after_status_change(request: HttpRequest, enquiry_id: str, enquiry: Mapping[str, Any], new_status: Any,
+                         lost_reason: str = "") -> None:
     """Staff changed the status: email the customer when an order becomes rejected."""
     old_status = str((enquiry or {}).get("status") or "").strip().lower()
     new_status = str(new_status or "").strip().lower()
     if new_status:
-        negotiation.log_status_change(getattr(request, "user", None), enquiry_id, old_status, new_status)
+        negotiation.log_status_change(getattr(request, "user", None), enquiry_id, old_status, new_status,
+                                      lost_reason=lost_reason)
     if old_status == CONVERTED_STATUS and new_status and new_status != CONVERTED_STATUS:
         if _payment_status(enquiry_id) == EnquiryContact.PAYMENT_PAID:
             _save_payment(enquiry_id, EnquiryContact.PAYMENT_PENDING, request.user, keep_details=True)

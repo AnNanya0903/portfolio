@@ -13,11 +13,12 @@ from kyc.departments import departments_of
 from kyc.models import Department, UserDepartment
 from magicwand.access import is_super_admin
 
-from .models import EnquiryAssignment, EnquiryNegotiation, EnquiryStatusLog
+from .models import EnquiryAssignment, EnquiryAttachment, EnquiryFollowup, EnquiryNegotiation, EnquiryStatusLog
 
 logger = logging.getLogger(__name__)
 
 MANAGER_DEPARTMENT = "Top Management"
+LOST_REASONS = ("Price too high", "Went with competitor", "No response", "Other")
 OPEN_TASK_STATUSES = (EnquiryAssignment.STATUS_PENDING, EnquiryAssignment.STATUS_IN_PROGRESS)
 STAGE_LABELS = dict(EnquiryNegotiation.STAGE_CHOICES)
 
@@ -71,7 +72,7 @@ def can_update_assignment(user, assignment: EnquiryAssignment) -> bool:
     return assignment.to_department_id in {d.pk for d in departments_of(user)}
 
 
-def log_status_change(user, enquiry_id: str, old: str, new: str, note: str = "") -> None:
+def log_status_change(user, enquiry_id: str, old: str, new: str, note: str = "", lost_reason: str = "") -> None:
     """Record a status change. Never raises, so a failed log cannot stop the change itself."""
     old, new = str(old or "").strip(), str(new or "").strip()
     if old == new:
@@ -79,7 +80,8 @@ def log_status_change(user, enquiry_id: str, old: str, new: str, note: str = "")
     try:
         EnquiryStatusLog.objects.create(
             enquiry_id=str(enquiry_id), user=user if getattr(user, "pk", None) else None,
-            username=getattr(user, "username", ""), old_status=old, new_status=new, note=note[:500])
+            username=getattr(user, "username", ""), old_status=old, new_status=new, note=note[:500],
+            lost_reason=lost_reason[:200])
     except Exception:
         logger.exception("Enquiry status change could not be logged")
 
@@ -114,8 +116,11 @@ def timeline(enquiry_id: str) -> List[Dict[str, Any]]:
     items: List[Dict[str, Any]] = []
     for log in EnquiryStatusLog.objects.filter(enquiry_id=enquiry_id).select_related("user"):
         text = f"Status changed from {log.old_status or '—'} to {log.new_status or '—'}"
+        detail = log.note
+        if log.lost_reason:
+            detail = f"Reason: {log.lost_reason}" + (f". {log.note}" if log.note else "")
         items.append({"at": log.created_at, "kind": "status", "icon": "bi-arrow-repeat", "by": log.username or _who(log.user),
-                      "text": text, "detail": log.note})
+                      "text": text, "detail": detail})
     for a in EnquiryAssignment.objects.filter(enquiry_id=enquiry_id).select_related("to_department", "assigned_by", "assigned_to"):
         target = a.to_department.name + (f" ({_who(a.assigned_to)})" if a.assigned_to else "")
         due = f", due {a.due_date:%d %b %Y}" if a.due_date else ""
@@ -125,8 +130,27 @@ def timeline(enquiry_id: str) -> List[Dict[str, Any]]:
             items.append({"at": a.completed_at, "kind": "assignment_done", "icon": "bi-check-circle",
                           "by": _who(a.assigned_to) if a.assigned_to else a.to_department.name,
                           "text": f"{a.to_department.name} completed the task", "detail": ""})
+    for f in EnquiryFollowup.objects.filter(enquiry_id=enquiry_id).select_related("user", "department"):
+        nxt = f" Next follow-up {f.next_followup_date:%d %b %Y}." if f.next_followup_date else ""
+        items.append({"at": f.created_at, "kind": "followup", "icon": "bi-telephone", "by": _who(f.user),
+                      "text": f"Follow-up ({f.get_followup_type_display().lower()})" + (f" by {f.department.name}" if f.department else ""),
+                      "detail": f.note + nxt})
+    for att in EnquiryAttachment.objects.filter(enquiry_id=enquiry_id).select_related("uploaded_by"):
+        items.append({"at": att.created_at, "kind": "attachment", "icon": "bi-paperclip", "by": _who(att.uploaded_by),
+                      "text": f"Attached {att.file_name} ({att.get_category_display().lower()})", "detail": "",
+                      "attachment_id": att.pk})
     items.sort(key=lambda item: item["at"], reverse=True)
     return items
+
+
+def due_followups(user) -> List[EnquiryFollowup]:
+    """Follow-ups whose next date is today or earlier and not done, for the user's department (all for managers)."""
+    qs = EnquiryFollowup.objects.filter(next_followup_date__lte=timezone.localdate(), next_done=False)\
+        .select_related("department", "user")
+    if not _sees_every_task(user):
+        ids = [d.pk for d in departments_of(user)]
+        qs = qs.filter(Q(department_id__in=ids) | Q(user=user))
+    return list(qs.order_by("next_followup_date"))
 
 
 def parse_due_date(value: str) -> Optional[date]:

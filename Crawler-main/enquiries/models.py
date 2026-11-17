@@ -5,6 +5,8 @@ from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 
+from docscanner.storage import document_scan_storage
+
 
 class ShareLink(models.Model):
     id = models.CharField(primary_key=True, max_length=22)
@@ -266,6 +268,7 @@ class EnquiryStatusLog(models.Model):
     old_status = models.CharField(max_length=40, blank=True, default="")
     new_status = models.CharField(max_length=40, blank=True, default="")
     note = models.CharField(max_length=500, blank=True, default="")
+    lost_reason = models.CharField(max_length=200, blank=True, default="")  # when the enquiry was rejected
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     class Meta:
@@ -302,3 +305,51 @@ class EnquiryAssignment(models.Model):
     @property
     def is_overdue(self) -> bool:
         return bool(self.due_date and self.status != self.STATUS_COMPLETED and self.due_date < timezone.localdate())
+
+
+class EnquiryFollowup(models.Model):
+    """A follow-up with the customer (or about the enquiry), with the date of the next one."""
+
+    TYPE_EMAIL, TYPE_CALL, TYPE_MEETING, TYPE_OTHER = "EMAIL", "CALL", "MEETING", "OTHER"
+    TYPE_CHOICES = ((TYPE_EMAIL, "Email"), (TYPE_CALL, "Call"), (TYPE_MEETING, "Meeting"), (TYPE_OTHER, "Other"))
+
+    enquiry_id = models.CharField(max_length=64, db_index=True)
+    assignment = models.ForeignKey(EnquiryAssignment, on_delete=models.SET_NULL, null=True, blank=True, related_name="followups")
+    department = models.ForeignKey("kyc.Department", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    note = models.TextField()
+    followup_type = models.CharField(max_length=8, choices=TYPE_CHOICES, default=TYPE_EMAIL)
+    next_followup_date = models.DateField(null=True, blank=True)
+    next_done = models.BooleanField(default=False)  # the next follow-up has been done, so it is no longer due
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "enquiry_followups"
+        ordering = ["-created_at", "-id"]
+
+    @property
+    def is_due(self) -> bool:
+        return bool(self.next_followup_date and not self.next_done and self.next_followup_date <= timezone.localdate())
+
+
+class EnquiryAttachment(models.Model):
+    """A file attached to an enquiry, optionally to a forwarded task or a follow-up."""
+
+    CAT_CUSTOMER_EMAIL, CAT_COST_BREAKUP, CAT_QUOTATION, CAT_OTHER = "CUSTOMER_EMAIL", "COST_BREAKUP", "QUOTATION", "OTHER"
+    CATEGORY_CHOICES = ((CAT_CUSTOMER_EMAIL, "Customer email"), (CAT_COST_BREAKUP, "Cost breakup"),
+                        (CAT_QUOTATION, "Quotation"), (CAT_OTHER, "Other"))
+
+    enquiry_id = models.CharField(max_length=64, db_index=True)
+    assignment = models.ForeignKey(EnquiryAssignment, on_delete=models.SET_NULL, null=True, blank=True, related_name="attachments")
+    followup = models.ForeignKey(EnquiryFollowup, on_delete=models.SET_NULL, null=True, blank=True, related_name="attachments")
+    file = models.FileField(upload_to="enquiry-files/%Y/%m/", storage=document_scan_storage, max_length=300)
+    file_name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=120, blank=True, default="")
+    size_bytes = models.BigIntegerField(default=0)
+    category = models.CharField(max_length=14, choices=CATEGORY_CHOICES, default=CAT_OTHER)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "enquiry_attachments"
+        ordering = ["-created_at", "-id"]

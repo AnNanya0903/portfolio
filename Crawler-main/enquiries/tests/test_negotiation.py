@@ -172,3 +172,191 @@ class NegotiationTests(TestCase):
             enquiry_views._after_status_change(request, "ENQ-9", {"status": "open"}, "accepted")
         log = EnquiryStatusLog.objects.get(enquiry_id="ENQ-9")
         self.assertEqual((log.old_status, log.new_status, log.username), ("open", "accepted", "rabin"))
+
+
+@override_settings(**BASE)
+@mock.patch("enquiries.views._get_api_root", return_value="http://svc")
+@mock.patch("enquiries.negotiation_views.services.fetch_enquiry", return_value=ENQUIRY)
+class FollowupAndAttachmentTests(TestCase):
+    def setUp(self):
+        import shutil
+        import tempfile
+        from django.core.files.storage import FileSystemStorage
+        from enquiries.models import EnquiryAttachment
+        # The attachment storage is fixed when the model loads, so point it at a temporary folder for the test.
+        folder = tempfile.mkdtemp(prefix="enq-attach-test-")
+        field = EnquiryAttachment._meta.get_field("file")
+        original = field.storage
+        field.storage = FileSystemStorage(location=folder)
+        self.addCleanup(lambda: (setattr(field, "storage", original), shutil.rmtree(folder, ignore_errors=True)))
+        call_command("seed_departments")
+        self.marketing = Department.objects.get(name="Marketing")
+        self.manager = user("apai", "apai@avigiri.com")
+        self.mkt = user("kumar", "kumar@avigiri.com")
+        self.acct = user("amy", "accounts@avigiri.com")
+        self.task = EnquiryAssignment.objects.create(enquiry_id="ENQ-1", to_department=self.marketing,
+                                                     comment="Prepare breakup", assigned_by=self.manager)
+        self.followup_url = reverse("enquiries:followup_add", args=["ENQ-1"])
+
+    def _pdf(self, name="breakup.pdf", content=b"%PDF-1.4 test"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, content, content_type="application/pdf")
+
+    def test_a_followup_with_next_date_and_attachment_is_saved_and_on_the_timeline(self, *_):
+        from enquiries.models import EnquiryAttachment, EnquiryFollowup
+        self.client.force_login(self.mkt)
+        nxt = timezone.localdate() + timedelta(days=3)
+        self.client.post(self.followup_url, {"note": "Sent breakup sheet via email", "followup_type": "EMAIL",
+                                             "next_followup_date": str(nxt), "assignment": self.task.pk,
+                                             "category": "COST_BREAKUP", "file": self._pdf()})
+        f = EnquiryFollowup.objects.get()
+        self.assertEqual((f.user, f.department, f.assignment, f.next_followup_date), (self.mkt, self.marketing, self.task, nxt))
+        a = EnquiryAttachment.objects.get()
+        self.assertEqual((a.followup, a.category, a.file_name, a.uploaded_by), (f, "COST_BREAKUP", "breakup.pdf", self.mkt))
+        kinds = [i["kind"] for i in negotiation.timeline("ENQ-1")]
+        self.assertIn("followup", kinds)
+        self.assertIn("attachment", kinds)
+
+    def test_a_followup_needs_a_note_and_a_valid_date(self, *_):
+        from enquiries.models import EnquiryFollowup
+        self.client.force_login(self.mkt)
+        self.client.post(self.followup_url, {"note": "  "})
+        self.client.post(self.followup_url, {"note": "x", "next_followup_date": "soon"})
+        self.assertFalse(EnquiryFollowup.objects.exists())
+
+    def test_a_followup_is_due_from_its_date_until_done_or_replaced(self, *_):
+        from enquiries.models import EnquiryFollowup
+        today = timezone.localdate()
+        soon = EnquiryFollowup.objects.create(enquiry_id="ENQ-1", department=self.marketing, user=self.mkt, note="a",
+                                              next_followup_date=today + timedelta(days=1))
+        late = EnquiryFollowup.objects.create(enquiry_id="ENQ-2", department=self.marketing, user=self.mkt, note="b",
+                                              next_followup_date=today)
+        self.assertFalse(soon.is_due)
+        self.assertTrue(late.is_due)
+        self.assertEqual([f.enquiry_id for f in negotiation.due_followups(self.mkt)], ["ENQ-2"])
+        self.assertEqual(negotiation.due_followups(self.acct), [])  # another department does not see it
+        self.client.force_login(self.mkt)
+        self.assertContains(self.client.get(reverse("enquiries:tasks")), "Follow-ups due (1)")
+        self.client.post(reverse("enquiries:followup_done", args=[late.pk]))
+        self.assertEqual(negotiation.due_followups(self.mkt), [])
+
+    def test_a_new_followup_clears_the_earlier_one_that_was_waiting_for_it(self, *_):
+        from enquiries.models import EnquiryFollowup
+        old = EnquiryFollowup.objects.create(enquiry_id="ENQ-1", user=self.mkt, note="a",
+                                             next_followup_date=timezone.localdate() - timedelta(days=1))
+        self.client.force_login(self.mkt)
+        self.client.post(self.followup_url, {"note": "Called the customer"})
+        old.refresh_from_db()
+        self.assertTrue(old.next_done)
+
+    def test_attachment_type_and_size_are_checked(self, *_):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from enquiries import attachments
+        from enquiries.models import EnquiryAttachment
+        self.client.force_login(self.mkt)
+        url = reverse("enquiries:attachment_add", args=["ENQ-1"])
+        self.client.post(url, {"file": SimpleUploadedFile("run.exe", b"MZ")})
+        self.client.post(url, {"file": SimpleUploadedFile("empty.pdf", b"")})
+        with mock.patch.object(attachments, "MAX_BYTES", 5):
+            self.client.post(url, {"file": SimpleUploadedFile("big.pdf", b"123456789")})
+        self.assertFalse(EnquiryAttachment.objects.exists())
+        self.client.post(url, {"file": self._pdf("email.pdf"), "category": "CUSTOMER_EMAIL"})
+        self.assertEqual(EnquiryAttachment.objects.get().category, "CUSTOMER_EMAIL")
+
+    def test_the_attached_file_downloads_for_signed_in_users_only(self, *_):
+        from enquiries.models import EnquiryAttachment
+        self.client.force_login(self.mkt)
+        self.client.post(reverse("enquiries:attachment_add", args=["ENQ-1"]), {"file": self._pdf("email.pdf")})
+        att = EnquiryAttachment.objects.get()
+        url = reverse("enquiries:attachment_download", args=[att.pk])
+        response = self.client.get(url)
+        self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.4 test")
+        self.assertIn("email.pdf", response["Content-Disposition"])
+        self.client.logout()
+        self.assertNotEqual(self.client.get(url).status_code, 200)
+
+    def test_forwarding_can_carry_a_file(self, *_):
+        from enquiries.models import EnquiryAttachment
+        self.client.force_login(self.manager)
+        self.client.post(reverse("enquiries:negotiation_forward", args=["ENQ-2"]), {
+            "department": self.marketing.pk, "comment": "Please follow up", "file": self._pdf("customer-mail.pdf"),
+            "category": "CUSTOMER_EMAIL"})
+        task = EnquiryAssignment.objects.get(enquiry_id="ENQ-2")
+        self.assertEqual(EnquiryAttachment.objects.get().assignment, task)
+
+    def test_the_negotiation_page_shows_the_forms(self, *_):
+        self.client.force_login(self.mkt)
+        page = self.client.get(reverse("enquiries:negotiation", args=["ENQ-1"]))
+        for text in ("Add Follow-up", "Attach file", "Attachments", "Follow-ups"):
+            self.assertContains(page, text)
+
+
+@override_settings(**BASE)
+class LostReasonTests(TestCase):
+    def test_reason_parsing(self):
+        from enquiries.views import _is_new_rejection, _lost_reason_from
+        self.assertEqual(_lost_reason_from({"lost_reason": "Price too high"}), "Price too high")
+        self.assertEqual(_lost_reason_from({"lost_reason": "Other", "lost_reason_note": " bought   elsewhere "}), "Other: bought elsewhere")
+        self.assertEqual(_lost_reason_from({"lost_reason": "Because"}), "")
+        self.assertEqual(_lost_reason_from({}), "")
+        self.assertTrue(_is_new_rejection("open", "rejected"))
+        self.assertFalse(_is_new_rejection("rejected", "rejected"))
+        self.assertFalse(_is_new_rejection("open", "accepted"))
+
+    def test_the_reason_is_logged_with_the_rejection_and_shown_on_the_timeline(self):
+        from enquiries import views as enquiry_views
+        who = user("rabin", "rabin@avigiri.com")
+        request = RequestFactory().post("/")
+        request.user = who
+        with mock.patch.object(enquiry_views.status_emails, "send_status_email", return_value={}):
+            enquiry_views._after_status_change(request, "ENQ-5", {"status": "open"}, "rejected", lost_reason="Price too high")
+        log = EnquiryStatusLog.objects.get(enquiry_id="ENQ-5")
+        self.assertEqual((log.new_status, log.lost_reason), ("rejected", "Price too high"))
+        self.assertEqual(negotiation.timeline("ENQ-5")[0]["detail"], "Reason: Price too high")
+
+    @mock.patch("enquiries.views._get_api_root", return_value="http://svc")
+    @mock.patch("enquiries.views.services.fetch_subdivisions", return_value=[])
+    @mock.patch("enquiries.views.services.fetch_enquiry", return_value={
+        "enquiry_id": "ENQ-1", "status": "open", "priority": "high", "subject": "S", "description": "D",
+        "detail_items": [], "attachments": []})
+    def test_the_enquiry_page_asks_for_the_reason_when_status_is_rejected(self, *_):
+        self.client.force_login(user("rabin", "rabin@avigiri.com"))
+        page = self.client.get(reverse("enquiries:detail", args=["ENQ-1"]))
+        self.assertContains(page, 'id="lostReasonBox"')
+        self.assertContains(page, "Went with competitor")
+
+    @mock.patch("enquiries.views._get_api_root", return_value="http://svc")
+    @mock.patch("enquiries.views.services.fetch_subdivisions", return_value=[])
+    @mock.patch("enquiries.views.services.fetch_enquiry", return_value={"enquiry_id": "ENQ-1", "status": "open"})
+    def test_rejecting_without_a_reason_is_refused_and_with_one_goes_through(self, *_):
+        from enquiries import views as enquiry_views
+
+        class FakeForm:
+            fields = mock.MagicMock()
+            errors = {}
+
+            def __init__(self, *a, **k):
+                self.cleaned_data = {"status": "rejected"}
+
+            def is_valid(self):
+                return True
+
+            def add_error(self, *a, **k):
+                pass
+
+            def cleaned_payload(self):
+                return {"status": "rejected"}
+
+        self.client.raise_request_exception = False
+        self.client.force_login(user("rabin", "rabin@avigiri.com"))
+        url = reverse("enquiries:detail", args=["ENQ-1"])
+        with mock.patch.object(enquiry_views.forms, "EnquiryUpdateForm", FakeForm), \
+                mock.patch.object(enquiry_views.services, "update_enquiry") as update, \
+                mock.patch.object(enquiry_views.status_emails, "send_status_email", return_value={}):
+            self.client.post(url, {"status": "rejected"})
+            update.assert_not_called()
+            response = self.client.post(url, {"status": "rejected", "lost_reason": "No response"})
+            update.assert_called_once()
+            self.assertEqual(response.status_code, 302)
+        log = EnquiryStatusLog.objects.get(enquiry_id="ENQ-1")
+        self.assertEqual(log.lost_reason, "No response")
