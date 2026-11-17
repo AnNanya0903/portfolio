@@ -596,6 +596,7 @@
                   onclick="window.setAppLoading && window.setAppLoading('Opening follow-up...');"
                 ><i class="bi bi-reply"></i></a>
                 {% endif %}
+                <a href="{% url 'enquiries:negotiation' enquiry.enquiry_id %}" class="btn btn-sm btn-light border" title="Negotiation and forward to a department"><i class="bi bi-chat-dots"></i></a>
                 <a href="{% url 'enquiries:preview' enquiry.enquiry_id %}" class="btn btn-sm btn-light border" title="Generate Link"><i class="bi bi-link-45deg"></i></a>
                 <button type="button" class="btn btn-sm btn-light border text-danger" data-enquiry-delete data-enquiry-id="{{ enquiry.enquiry_id }}" data-delete-url="{% url 'enquiries:delete_enquiry' enquiry.enquiry_id %}"><i class="bi bi-trash"></i></button>
             </div>

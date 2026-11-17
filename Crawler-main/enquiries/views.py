@@ -35,7 +35,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
 from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, FollowUpStart, GmailLeadAnalysis, ShareLink
-from . import customer_emails, payment_terms, share_email, status_emails
+from . import customer_emails, negotiation, payment_terms, share_email, status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
     COSTING_FIELD_ORDER,
@@ -3512,6 +3512,8 @@ def _after_status_change(request: HttpRequest, enquiry_id: str, enquiry: Mapping
     """Staff changed the status: email the customer when an order becomes rejected."""
     old_status = str((enquiry or {}).get("status") or "").strip().lower()
     new_status = str(new_status or "").strip().lower()
+    if new_status:
+        negotiation.log_status_change(getattr(request, "user", None), enquiry_id, old_status, new_status)
     if old_status == CONVERTED_STATUS and new_status and new_status != CONVERTED_STATUS:
         if _payment_status(enquiry_id) == EnquiryContact.PAYMENT_PAID:
             _save_payment(enquiry_id, EnquiryContact.PAYMENT_PENDING, request.user, keep_details=True)

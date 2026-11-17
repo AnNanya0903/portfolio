@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import api_views, views
+from . import api_views, negotiation_views, views
 from magicwand.access import require_service_access
 
 app_name = "enquiries"
@@ -13,6 +13,11 @@ urlpatterns = [
     path("api/auto-follow-ups/due/", api_views.due, name="auto_follow_up_due"),
     path("api/auto-follow-ups/<str:enquiry_id>/send/", api_views.send, name="auto_follow_up_send"),
     path("api/customer-emails/run/", api_views.run_customer_emails, name="customer_emails_run"),
+    path("tasks/", _enquiries(negotiation_views.tasks), name="tasks"),
+    path("tasks/<int:pk>/update/", _enquiries(negotiation_views.task_update), name="task_update"),
+    path("<str:enquiry_id>/negotiation/", _enquiries(negotiation_views.negotiation_page), name="negotiation"),
+    path("<str:enquiry_id>/negotiation/stage/", _enquiries(negotiation_views.set_stage), name="negotiation_stage"),
+    path("<str:enquiry_id>/negotiation/forward/", _enquiries(negotiation_views.forward), name="negotiation_forward"),
     path("gmail-ai-leads/", _enquiries(views.gmail_ai_leads), name="gmail_ai_leads"),
     path("google-sheet/create/", _enquiries(views.create_google_sheet), name="create_google_sheet"),
     path("google-sheet/import/", _enquiries(views.import_google_sheet), name="import_google_sheet"),

@@ -227,3 +227,78 @@ class CustomerStatusEmail(models.Model):
 
     def __str__(self) -> str:
         return f"CustomerStatusEmail:{self.enquiry_id}:{self.event_key}:{self.status}"
+
+
+class EnquiryNegotiation(models.Model):
+    """Where a quotation stands when the customer neither accepts nor rejects it (asks a question instead).
+
+    Kept next to the enquiry's own status (open / accepted / converted / rejected), which the enquiry
+    service owns. An enquiry with no row here is not in negotiation.
+    """
+
+    STAGE_NONE = ""
+    STAGE_NEGOTIATION = "under_negotiation"
+    STAGE_REVISED = "revised_quotation_sent"
+    STAGE_CHOICES = (
+        (STAGE_NONE, "No negotiation"),
+        (STAGE_NEGOTIATION, "Under negotiation"),
+        (STAGE_REVISED, "Revised quotation sent"),
+    )
+
+    enquiry_id = models.CharField(max_length=64, unique=True)
+    stage = models.CharField(max_length=24, choices=STAGE_CHOICES, blank=True, default=STAGE_NONE)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "enquiry_negotiation"
+
+    def __str__(self) -> str:
+        return f"{self.enquiry_id}: {self.get_stage_display()}"
+
+
+class EnquiryStatusLog(models.Model):
+    """Every status change of an enquiry: who, when, from what, to what."""
+
+    enquiry_id = models.CharField(max_length=64, db_index=True)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    username = models.CharField(max_length=150, blank=True, default="")
+    old_status = models.CharField(max_length=40, blank=True, default="")
+    new_status = models.CharField(max_length=40, blank=True, default="")
+    note = models.CharField(max_length=500, blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "enquiry_status_log"
+        ordering = ["-created_at", "-id"]
+
+
+class EnquiryAssignment(models.Model):
+    """An enquiry forwarded to a department as a task. Forwarding does not change who owns the enquiry."""
+
+    PRIORITY_LOW, PRIORITY_MEDIUM, PRIORITY_HIGH = "LOW", "MEDIUM", "HIGH"
+    PRIORITY_CHOICES = ((PRIORITY_LOW, "Low"), (PRIORITY_MEDIUM, "Medium"), (PRIORITY_HIGH, "High"))
+    STATUS_PENDING, STATUS_IN_PROGRESS, STATUS_COMPLETED = "PENDING", "IN_PROGRESS", "COMPLETED"
+    STATUS_CHOICES = ((STATUS_PENDING, "Pending"), (STATUS_IN_PROGRESS, "In progress"), (STATUS_COMPLETED, "Completed"))
+
+    enquiry_id = models.CharField(max_length=64, db_index=True)
+    customer_name = models.CharField(max_length=255, blank=True, default="")  # as it was when forwarded
+    from_department = models.ForeignKey("kyc.Department", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    to_department = models.ForeignKey("kyc.Department", on_delete=models.PROTECT, related_name="enquiry_tasks")
+    assigned_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    # Empty: any user in the target department can pick it up.
+    assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="enquiry_tasks")
+    comment = models.TextField()
+    due_date = models.DateField(null=True, blank=True)
+    priority = models.CharField(max_length=8, choices=PRIORITY_CHOICES, default=PRIORITY_MEDIUM)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "enquiry_assignments"
+        ordering = ["-created_at", "-id"]
+
+    @property
+    def is_overdue(self) -> bool:
+        return bool(self.due_date and self.status != self.STATUS_COMPLETED and self.due_date < timezone.localdate())

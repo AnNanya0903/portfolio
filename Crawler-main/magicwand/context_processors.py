@@ -20,4 +20,6 @@ def service_access(request):
         slug: slug not in hidden and user_has_service_access(user, slug)
         for slug in SERVICE_DEFINITIONS.keys()
     }
-    return {"mw_service_access": flags}
+    from enquiries.negotiation import pending_task_count
+
+    return {"mw_service_access": flags, "mw_pending_tasks": pending_task_count(user) if flags.get("enquiries") else 0}
