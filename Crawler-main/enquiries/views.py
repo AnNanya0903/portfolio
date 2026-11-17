@@ -53,7 +53,7 @@ from .constants import (
     STATUS_CHOICES,
 )
 from .pdf_preview import generate_preview_pdf
-from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE
+from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, STAGE_CHOICES as FOLLOW_UP_STAGE_CHOICES
 from kyc import links as kyc_links
 from dashboard.gmail_service import GmailService, GmailAPIError
 from dashboard.ai_service import AIReplyRequest, AIReplyService, AIServiceError
@@ -1083,31 +1083,34 @@ def _payment_follow_up_count(enquiry_id: str) -> int:
 
 
 def _follow_up_summaries(enquiry_ids: Iterable[str]) -> Dict[str, Dict[str, Any]]:
-    """Per enquiry: how many follow-ups were sent, the last one (date, sender) and when the next is due."""
+    """Per enquiry: where its follow-ups stand (current stage only), the last email, and when the next is due.
+
+    A quotation or proforma invoice emailed with "Send to customer" counts from that moment: the board shows
+    the first follow-up as due 2 days later, before any follow-up has been sent. Marketing's own emails
+    (after a rejection) are not shown here; the Marketing portal shows those.
+    """
+    from . import auto_follow_up
+
     today = timezone.localdate()
     summaries: Dict[str, Dict[str, Any]] = {}
-    rows = (
-        FollowUpSent.objects.filter(enquiry_id__in=list(enquiry_ids), status=FollowUpSent.STATUS_SENT)
-        .select_related("sent_by")
-        .order_by("enquiry_id", "-sent_at")
-    )
-    for row in rows:
-        summary = summaries.get(row.enquiry_id)
-        if summary is None:  # first row per enquiry is the latest
-            sender = row.sent_by
-            due = row.next_follow_up_on
-            summaries[row.enquiry_id] = {
-                "count": 1,
-                "last_sent_at": row.sent_at,
-                "last_sent_by": (sender.get_full_name() or sender.username) if sender else "",
-                "due": due,
-                "due_state": None if due is None else ("overdue" if due < today else "today" if due == today else "later"),
-                "last_auto": row.source == FollowUpSent.SOURCE_AUTO,
-                "last_stage": row.stage,
-                "last_cc": row.cc,
-            }
-        else:
-            summary["count"] += 1
+    ids = [str(i) for i in enquiry_ids]
+    for enquiry_id, cycle in auto_follow_up.cycles(ids, include_marketing=False).items():
+        latest, start = cycle.latest, cycle.start
+        sender = latest.sent_by if latest is not None else (start.started_by if start is not None else None)
+        due = cycle.next_on
+        summaries[enquiry_id] = {
+            "count": cycle.count,
+            "last_sent_at": cycle.last_sent_at,
+            "last_sent_by": (sender.get_full_name() or sender.username) if sender else "",
+            "due": due,
+            "due_state": None if due is None else ("overdue" if due < today else "today" if due == today else "later"),
+            "last_auto": bool(latest is not None and latest.source == FollowUpSent.SOURCE_AUTO),
+            "last_stage": cycle.stage,
+            "last_cc": cycle.cc,
+            # "Quotation sent" / "Proforma invoice sent" while no follow-up has gone out yet.
+            "started_with": ((dict(FOLLOW_UP_STAGE_CHOICES).get(cycle.stage) or "Sent")
+                             if cycle.count == 0 else ""),
+        }
     return summaries
 
 
@@ -1639,6 +1642,16 @@ def board(request: HttpRequest) -> HttpResponse:
                 if _follow_up_stopped_reason(enquiry, summary["count"]):
                     # closed/converted/rejected or limit reached: no more follow-ups are due
                     summary.update(due=None, due_state="closed" if status in FOLLOW_UP_CLOSED_STATUSES else "limit")
+                    closing = (status_email_rows.get(str(enquiry.get("enquiry_id")), {})
+                               .get(CustomerStatusEmail.KIND_CLOSING))
+                    if closing is not None and closing.status == CustomerStatusEmail.STATUS_SENT:
+                        summary["closed_no_reply"] = True  # all follow-ups unanswered: the closing email went out
+                    elif (summary["due_state"] == "limit" and getattr(settings, "FOLLOW_UP_AUTO_ENABLED", False)
+                          and not enquiry["auto_paused"] and summary.get("last_sent_at")):
+                        # All follow-ups are sent: the closing email follows automatically.
+                        wait = int(getattr(settings, "FOLLOW_UP_CLOSE_AFTER_DAYS", 2) or 0)
+                        summary.update(due_state="closing",
+                                       closing_on=timezone.localdate(summary["last_sent_at"]) + timedelta(days=wait))
                 elif status == "accepted" and (enquiry.get("payment") or {}).get("in_credit"):
                     # Inside the agreed credit period: no payment reminders until the due date.
                     summary.update(due=enquiry["payment"]["due"], due_state="credit")

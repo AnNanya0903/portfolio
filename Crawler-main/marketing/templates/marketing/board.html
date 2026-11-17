@@ -172,6 +172,7 @@
                 <td>
                   <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
                   {% if row.stage == 'waiting' and row.ready_on %}<div class="mk-muted">from {{ row.ready_on|date:"d M" }}</div>{% endif %}
+                  {% if row.auto_follow_up %}<div class="mk-muted" data-auto-follow-up="{{ row.auto_follow_up.state }}" title="Marketing's automatic follow-ups, in their own email thread">Auto: {{ row.auto_follow_up.label }}</div>{% endif %}
                 </td>
               </tr>
             {% empty %}

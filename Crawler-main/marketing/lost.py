@@ -18,12 +18,15 @@ from django.conf import settings
 from django.db.models import prefetch_related_objects
 from django.utils import timezone
 
-from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE
+from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, follow_up_count
 from enquiries.models import CustomerStatusEmail, EnquiryContact, FollowUpSent
 from kyc import links as kyc_links
 from kyc.models import CustomerContact
 
-from .models import MarketingLead
+from .models import MarketingActivity, MarketingLead
+
+# Written on the lead when the customer answers Marketing's automatic follow-up (the follow-ups then stop).
+REPLY_NOTE = "Customer replied to Marketing's follow-up"
 
 REJECTED = "rejected"
 NO_RESPONSE = "no_response"
@@ -106,6 +109,32 @@ def kyc_campaign_emails(customer) -> List[str]:
                 if address and address not in out:
                     out.append(address)
     return out
+
+
+def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, replied: bool) -> Optional[Dict[str, Any]]:
+    """Where Marketing's automatic follow-ups stand for a rejected enquiry, for the lists:
+    {"state", "label", "sent", "limit", "next_on"}; None when there are none (not rejected, or not started)."""
+    if kind != REJECTED or cycle is None or cycle.stage != MARKETING_STAGE:
+        return None
+    limit = follow_up_count(MARKETING_STAGE)
+    sent = cycle.count
+    state, label = "running", ""
+    if lead is not None and lead.do_not_contact:
+        state, label = "stopped", "Stopped: do not contact"
+    elif lead is not None and (lead.revived_enquiry_id or lead.accepted_at):
+        state, label = "stopped", "Stopped: won back"
+    elif replied:
+        state, label = "replied", "Customer replied: follow-ups stopped"
+    elif sent > limit:
+        state, label = "closed", "Closing email sent"
+    elif sent == 0:
+        label = f"First follow-up {cycle.next_on:%d %b}" if cycle.next_on else "First follow-up due"
+    elif sent < limit:
+        label = f"{sent} of {limit} sent" + (f", next {cycle.next_on:%d %b}" if cycle.next_on else "")
+    else:
+        label = f"{limit} of {limit} sent" + (f", closing email {cycle.next_on:%d %b}" if cycle.next_on else "")
+    return {"state": state, "label": label, "sent": min(sent, limit), "limit": limit,
+            "next_on": cycle.next_on if state == "running" else None}
 
 
 def wait_days() -> int:
@@ -225,6 +254,12 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             if address not in others.setdefault(enquiry_id, []):
                 others[enquiry_id].append(address)
 
+    from enquiries import auto_follow_up  # Marketing's automatic follow-ups share the enquiry follow-up engine
+
+    mk_cycles = {eid: c for eid, c in auto_follow_up.cycles(list(found)).items() if c.stage == MARKETING_STAGE}
+    replied_ids = set(MarketingActivity.objects.filter(
+        lead__enquiry_id__in=list(mk_cycles), text__startswith=REPLY_NOTE).values_list("lead__enquiry_id", flat=True))
+
     leads: List[Dict[str, Any]] = []
     for enquiry_id, item in found.items():
         enquiry = item["enquiry"]
@@ -279,6 +314,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "stage_label": STAGE_LABELS[stage],
             "revived_enquiry_id": lead.revived_enquiry_id if lead else "",
             "lead": lead,
+            "auto_follow_up": auto_follow_up_status(item["kind"], lead, mk_cycles.get(enquiry_id),
+                                                    enquiry_id in replied_ids),
             "kyc_customer": kyc_customer,
             "kyc_code": kyc_customer.code if kyc_customer is not None else "",
         })

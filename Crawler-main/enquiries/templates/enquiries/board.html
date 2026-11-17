@@ -522,15 +522,19 @@
             {% with fu=enquiry.follow_up %}
             {% if fu %}
             <div class="fu-block" data-last-follow-up
-                 title="Followed up {{ fu.count }} time{{ fu.count|pluralize }}, last on {{ fu.last_sent_at|date:'d M Y' }}{% if fu.last_sent_by %} by {{ fu.last_sent_by }}{% endif %}{% if fu.last_auto %} (sent automatically){% endif %}{% if fu.last_cc %}, CC: {{ fu.last_cc }}{% endif %}">
+                 title="{% if fu.count %}Followed up {{ fu.count }} time{{ fu.count|pluralize }}, last on {{ fu.last_sent_at|date:'d M Y' }}{% else %}{{ fu.started_with }} on {{ fu.last_sent_at|date:'d M Y' }}; no follow-up sent yet{% endif %}{% if fu.last_sent_by %} by {{ fu.last_sent_by }}{% endif %}{% if fu.last_auto %} (sent automatically){% endif %}{% if fu.last_cc %}, CC: {{ fu.last_cc }}{% endif %}">
               <div class="fu-head">
                 <span class="fu-steps" aria-hidden="true">{% for done in fu.steps %}<span class="fu-step{% if done %} is-done{% endif %}"></span>{% endfor %}</span>
                 <span class="fu-count">{{ fu.count }}<span class="fu-of">/{{ fu.limit }}</span></span>
                 {% if fu.last_auto %}<span class="fu-tag" data-auto-follow-up>Auto</span>{% endif %}
               </div>
-              <div class="fu-meta">Last sent {{ fu.last_sent_at|date:'d M Y' }}</div>
+              <div class="fu-meta">{% if fu.count %}Last sent{% else %}{{ fu.started_with }}{% endif %} {{ fu.last_sent_at|date:'d M Y' }}</div>
               <div class="fu-foot">
-                {% if fu.due_state == 'credit' %}
+                {% if fu.closed_no_reply %}
+                  <span class="fu-chip fu-chip--muted" data-follow-up-state="closed-no-reply" title="All follow-ups went unanswered, so the closing email was sent and the enquiry closed. Marketing continues from here.">Closed, no reply</span>
+                {% elif fu.due_state == 'closing' %}
+                  <span class="fu-chip fu-chip--later" data-follow-up-state="closing" title="All follow-ups are sent. The closing email goes out automatically on {{ fu.closing_on|date:'d M' }} if the customer does not reply.">Closing email · {{ fu.closing_on|date:'d M' }}</span>
+                {% elif fu.due_state == 'credit' %}
                   <span class="fu-chip fu-chip--later" data-follow-up-state="credit" title="Within the agreed credit period. Payment reminders start on the due date.">Credit period · due {{ fu.due|date:'d M' }}</span>
                 {% elif fu.due %}
                   <span class="fu-chip fu-chip--{{ fu.due_state }}" data-follow-up-due="{{ fu.due_state }}">
@@ -539,13 +543,13 @@
                 {% elif fu.due_state == 'limit' %}
                   <span class="fu-chip fu-chip--muted" data-follow-up-state="limit" title="All follow-ups sent. Please call the customer.">Completed</span>
                 {% elif fu.due_state == 'payment' %}
-                  <span class="fu-chip fu-chip--today" data-follow-up-state="payment" title="Order accepted. Send a “Payment pending” follow-up to start payment reminders.">Payment follow-up</span>
+                  <span class="fu-chip fu-chip--today" data-follow-up-state="payment" title="Order accepted. Send the proforma invoice with Send to customer, and payment reminders follow automatically.">Payment follow-up</span>
                 {% elif fu.due_state == 'closed' %}
                   <span class="fu-chip fu-chip--muted" data-follow-up-state="closed" title="Enquiry is {{ enquiry.status }}">Stopped</span>
                 {% else %}
                   <span class="fu-chip fu-chip--muted">No reminder</span>
                 {% endif %}
-                {% if fu.due_state != 'limit' and fu.due_state != 'closed' %}
+                {% if fu.due_state != 'limit' and fu.due_state != 'closed' and not fu.closed_no_reply %}
                 <form method="post" action="{% url 'enquiries:toggle_auto_follow_up' enquiry.enquiry_id %}" class="fu-toggle" data-auto-follow-up-toggle>
                   {% csrf_token %}
                   <input type="hidden" name="next" value="{{ request.get_full_path }}">

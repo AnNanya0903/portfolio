@@ -97,7 +97,7 @@ class Cycle:
         self.start = start
 
 
-def cycles(enquiry_ids: Optional[List[str]] = None) -> Dict[str, Cycle]:
+def cycles(enquiry_ids: Optional[List[str]] = None, *, include_marketing: bool = True) -> Dict[str, Cycle]:
     """The current follow-up cycle of every enquiry that has one.
 
     The newest of these wins: a FollowUpStart (quotation / PI / rejection email) with the follow-ups sent
@@ -106,6 +106,9 @@ def cycles(enquiry_ids: Optional[List[str]] = None) -> Dict[str, Cycle]:
     """
     rows = FollowUpSent.objects.filter(status=FollowUpSent.STATUS_SENT)
     starts = FollowUpStart.objects.all()
+    if not include_marketing:  # the Enquiries board shows the enquiry's own emails, not Marketing's
+        rows = rows.exclude(stage=MARKETING_STAGE)
+        starts = starts.exclude(stage=MARKETING_STAGE)
     if enquiry_ids is not None:
         rows = rows.filter(enquiry_id__in=enquiry_ids)
         starts = starts.filter(enquiry_id__in=enquiry_ids)
@@ -400,7 +403,7 @@ def _note_marketing_reply(enquiry_id: str, sender, message: Dict[str, Any]) -> N
     except Exception:
         return
     lead, _ = MarketingLead.objects.get_or_create(enquiry_id=enquiry_id)
-    marker = "Customer replied to Marketing's follow-up"
+    from marketing.lost import REPLY_NOTE as marker
     if lead.activities.filter(text__startswith=marker).exists():
         return
     snippet = str(message.get("snippet") or "").strip()[:300]
