@@ -564,6 +564,10 @@
             </div>
             {% else %}
             <span class="fu-empty">Not followed up</span>
+            {% if enquiry.status == 'open' or enquiry.status == 'accepted' %}
+              <div><a class="small text-decoration-none" data-follow-up-start href="{% url 'enquiries:follow_up_start' enquiry.enquiry_id %}"
+                      title="The quotation or proforma invoice was already emailed from Gmail: start the automatic follow-ups">Start follow-ups</a></div>
+            {% endif %}
             {% endif %}
             {% endwith %}
           </td>
