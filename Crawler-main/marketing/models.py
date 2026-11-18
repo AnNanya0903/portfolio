@@ -26,6 +26,8 @@ class MarketingLead(models.Model):
     # Customer name typed by marketing, used when the enquiry's name is missing or is really an email subject.
     customer_name = models.CharField(max_length=255, blank=True, default="")
     lost_reason = models.CharField(max_length=20, choices=REASON_CHOICES, blank=True, default="")
+    # What marketing wrote when the reason is "Other".
+    lost_reason_note = models.CharField(max_length=300, blank=True, default="")
     do_not_contact = models.BooleanField(default=False)
     revived_enquiry_id = models.CharField(max_length=128, blank=True, default="")
     revived_at = models.DateTimeField(null=True, blank=True)

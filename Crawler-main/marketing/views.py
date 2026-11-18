@@ -220,14 +220,19 @@ def _handle_post(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, A
             messages.success(request, "Note saved.")
     elif action == "set_reason":
         reason = (request.POST.get("lost_reason") or "").strip()
+        # What marketing wrote for "Other"; any other reason has no note.
+        note = " ".join((request.POST.get("lost_reason_note") or "").split())[:300] if reason == "other" else ""
         if reason and reason not in lost.REASON_LABELS:
             messages.error(request, "Choose a reason from the list.")
-        elif reason != lead.lost_reason:
+        elif reason == "other" and not note:
+            messages.error(request, "Write the reason in the box when you choose Other.")
+        elif reason != lead.lost_reason or note != lead.lost_reason_note:
             lead.lost_reason = reason
+            lead.lost_reason_note = note
             lead.updated_by = request.user
-            lead.save(update_fields=["lost_reason", "updated_by", "updated_at"])
-            _log(lead, request.user, MarketingActivity.KIND_SYSTEM,
-                 f"Reason set to: {lost.REASON_LABELS.get(reason, 'not recorded')}.")
+            lead.save(update_fields=["lost_reason", "lost_reason_note", "updated_by", "updated_at"])
+            shown = lost.REASON_LABELS.get(reason, 'not recorded') + (f": {note}" if note else "")
+            _log(lead, request.user, MarketingActivity.KIND_SYSTEM, f"Reason set to: {shown}.")
             messages.success(request, "Reason saved.")
     elif action == "set_customer_name":
         name = " ".join((request.POST.get("customer_name") or "").split())[:255]

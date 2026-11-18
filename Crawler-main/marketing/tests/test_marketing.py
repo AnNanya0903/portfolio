@@ -189,6 +189,41 @@ class MarketingViewTests(TestCase):
             self.client.post(url, {"action": "set_reason", "lost_reason": "alternative_gasket"})
         self.assertEqual(MarketingLead.objects.get(enquiry_id="E1").lost_reason, "alternative_gasket")
 
+    def test_other_reason_has_a_text_box_and_the_note_is_saved(self):
+        url = reverse("marketing:detail", args=["E1"])
+        with self._fetch():
+            page = self.client.get(url)
+            self.assertContains(page, 'name="lost_reason_note"')
+            self.client.post(url, {"action": "set_reason", "lost_reason": "other",
+                                   "lost_reason_note": "  Bought  a   rubber   seal elsewhere  "})
+        lead = MarketingLead.objects.get(enquiry_id="E1")
+        self.assertEqual((lead.lost_reason, lead.lost_reason_note), ("other", "Bought a rubber seal elsewhere"))
+        with self._fetch():
+            page = self.client.get(url)
+        self.assertContains(page, "Reason written: Bought a rubber seal elsewhere")
+        self.assertContains(page, 'value="Bought a rubber seal elsewhere"')
+        self.assertTrue(MarketingActivity.objects.filter(
+            lead=lead, text="Reason set to: Other: Bought a rubber seal elsewhere.").exists())
+
+    def test_other_needs_a_written_reason(self):
+        url = reverse("marketing:detail", args=["E1"])
+        with self._fetch():
+            self.client.post(url, {"action": "set_reason", "lost_reason": "other", "lost_reason_note": "   "})
+        self.assertFalse(MarketingLead.objects.filter(enquiry_id="E1", lost_reason="other").exists())
+
+    def test_the_note_is_dropped_when_another_reason_is_chosen(self):
+        url = reverse("marketing:detail", args=["E1"])
+        with self._fetch():
+            self.client.post(url, {"action": "set_reason", "lost_reason": "other", "lost_reason_note": "Some text"})
+            self.client.post(url, {"action": "set_reason", "lost_reason": "price", "lost_reason_note": "ignored"})
+        lead = MarketingLead.objects.get(enquiry_id="E1")
+        self.assertEqual((lead.lost_reason, lead.lost_reason_note), ("price", ""))
+
+    def test_the_written_reason_shows_in_the_lost_list_label(self):
+        lead = MarketingLead.objects.create(enquiry_id="E9", lost_reason="other", lost_reason_note="Cheaper local supplier")
+        rows = lost.build_lost_leads([_enquiry("E9", "rejected")])
+        self.assertEqual(rows[0]["reason_label"], "Other: Cheaper local supplier")
+
     def test_revive_creates_linked_enquiry(self):
         url = reverse("marketing:detail", args=["E1"])
         with self._fetch(), patch("enquiries.services.create_enquiry", return_value={"enquiry_id": "E50"}) as create:

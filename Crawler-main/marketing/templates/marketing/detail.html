@@ -95,17 +95,36 @@
     <div class="card border-0 shadow-sm mb-4">
       <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Reason lost</h6></div>
       <div class="card-body">
-        <form method="post" class="d-flex gap-2">
+        <form method="post" class="d-flex gap-2 flex-wrap" data-reason-form>
           {% csrf_token %}
           <input type="hidden" name="action" value="set_reason">
-          <select name="lost_reason" class="form-select form-select-sm" aria-label="Reason lost">
+          <select name="lost_reason" class="form-select form-select-sm" style="max-width:340px" aria-label="Reason lost" data-reason-select>
             <option value="">Not recorded</option>
             {% for key, label in reason_choices %}
               <option value="{{ key }}"{% if row.lead.lost_reason == key %} selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
           <button class="btn btn-primary btn-sm" type="submit">Save</button>
+          <input type="text" name="lost_reason_note" value="{{ row.lead.lost_reason_note|default:'' }}" maxlength="300"
+                 class="form-control form-control-sm w-100" placeholder="Write the reason" aria-label="Write the reason"
+                 data-reason-note{% if row.lead.lost_reason != 'other' %} hidden{% endif %}>
         </form>
+        <script>
+          (function () {
+            var form = document.querySelector('[data-reason-form]');
+            if (!form) return;
+            var select = form.querySelector('[data-reason-select]'), note = form.querySelector('[data-reason-note]');
+            function sync() {
+              var other = select.value === 'other';
+              note.hidden = !other;
+              note.required = other;
+            }
+            select.addEventListener('change', sync); sync();
+          })();
+        </script>
+        {% if row.lead.lost_reason == 'other' and row.lead.lost_reason_note %}
+          <p class="mk-muted mt-2 mb-0">Reason written: {{ row.lead.lost_reason_note }}</p>
+        {% endif %}
         {% if row.kind == 'no_response' and not row.lead.lost_reason %}
           <p class="mk-muted mt-2 mb-0">Shown as "Never replied" until a reason is chosen.</p>
         {% endif %}

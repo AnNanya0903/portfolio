@@ -301,7 +301,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "kind": item["kind"],
             "kind_label": KIND_LABELS[item["kind"]],
             "reason_key": reason_key,
-            "reason_label": REASON_LABELS.get(reason_key, ""),
+            "reason_label": REASON_LABELS.get(reason_key, "")
+            + (f": {lead.lost_reason_note}" if reason_key == "other" and lead and lead.lost_reason_note else ""),
             "customer_reason": customer_reason_from_remarks(enquiry.get("remarks")),  # typed on the share link
             "price": _price_text(enquiry),
             "follow_up_count": item["follow_ups"]["count"],
