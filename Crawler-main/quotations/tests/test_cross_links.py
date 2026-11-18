@@ -28,9 +28,9 @@ class CrossLinkTests(TestCase):
 
     def test_the_menu_lists_quotations_above_enquiries(self):
         html = self.client.get(reverse("quotations:list")).content.decode()
-        self.assertLess(html.index('href="/quotations/"'), html.index('href="/enquiries/"'))
+        self.assertLess(html.index('href="/quotations/"'), html.index('href="/kyc/"'))
+        self.assertLess(html.index('href="/kyc/"'), html.index('href="/enquiries/"'))
         self.assertLess(html.index('href="/enquiries/"'), html.index('href="/marketing/"'))
-        self.assertLess(html.index('href="/marketing/"'), html.index('href="/kyc/"'))
 
     def test_a_quotation_links_to_its_enquiry_and_its_kyc_customer(self):
         page = self.client.get(reverse("quotations:detail", args=[self.q1.pk]))
