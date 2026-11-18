@@ -266,7 +266,7 @@ FOLLOW_UP_DEFAULT_GAP_DAYS = config('FOLLOW_UP_DEFAULT_GAP_DAYS', default=2, cas
 # Addresses prefilled in CC on every follow-up (comma-separated), e.g. customerservice@avigiri.com.
 FOLLOW_UP_DEFAULT_CC = config('FOLLOW_UP_DEFAULT_CC', default='')
 
-# Stage 2: automatic follow-ups, triggered by n8n through /enquiries/api/auto-follow-ups/...
+# Stage 2: automatic follow-ups, run once an hour by App Engine cron (cron.yaml, enquiries/scheduler.py)
 FOLLOW_UP_AUTO_ENABLED = config('FOLLOW_UP_AUTO_ENABLED', default=False, cast=bool)  # master on/off switch
 FOLLOW_UP_AUTO_DRY_RUN = config('FOLLOW_UP_AUTO_DRY_RUN', default=True, cast=bool)  # log only, send nothing
 FOLLOW_UP_AUTO_SENDER = config('FOLLOW_UP_AUTO_SENDER', default='')  # username whose Gmail sends
@@ -301,7 +301,7 @@ MARKETING_CAMPAIGN_DRY_RUN = config('MARKETING_CAMPAIGN_DRY_RUN', default=True, 
 MARKETING_CAMPAIGN_MAX_RECIPIENTS = config('MARKETING_CAMPAIGN_MAX_RECIPIENTS', default=50, cast=int)
 # Do not email the same address again within this many days of an earlier campaign email.
 MARKETING_CAMPAIGN_GAP_DAYS = config('MARKETING_CAMPAIGN_GAP_DAYS', default=30, cast=int)
-# Scheduled reply checks (n8n) look at campaigns sent in the last this many days.
+# Scheduled reply checks look at campaigns sent in the last this many days.
 MARKETING_REPLY_CHECK_DAYS = config('MARKETING_REPLY_CHECK_DAYS', default=60, cast=int)
 # On Revive, also email the chosen salesperson (from the reviver's Gmail) besides the phone notification.
 MARKETING_REVIVE_NOTIFY_EMAIL = config('MARKETING_REVIVE_NOTIFY_EMAIL', default=True, cast=bool)
@@ -309,7 +309,6 @@ MARKETING_REVIVE_NOTIFY_EMAIL = config('MARKETING_REVIVE_NOTIFY_EMAIL', default=
 # FOLLOW_UP_AUTO_ENABLED / FOLLOW_UP_AUTO_DRY_RUN switches and FOLLOW_UP_AUTO_GAP_DAYS), then sends a closing email.
 MARKETING_AUTO_FOLLOW_UP = config('MARKETING_AUTO_FOLLOW_UP', default=True, cast=bool)
 MARKETING_FOLLOW_UP_COUNT = config('MARKETING_FOLLOW_UP_COUNT', default=4, cast=int)  # before the closing email
-N8N_API_TOKEN = config('N8N_API_TOKEN', default='')  # shared secret sent by n8n in X-N8N-Token
 
 # Material Test Certificate (MTC) generation (DOCX templates)
 MTC_TEMPLATES_BUCKET = config('MTC_TEMPLATES_BUCKET', default='')

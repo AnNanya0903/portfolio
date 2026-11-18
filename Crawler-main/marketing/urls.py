@@ -2,7 +2,7 @@ from django.urls import path
 
 from magicwand.access import require_service_access
 
-from . import api_views, campaign_views, views
+from . import campaign_views, views
 
 app_name = "marketing"
 
@@ -10,8 +10,6 @@ _marketing = require_service_access("marketing")
 
 urlpatterns = [
     path("", _marketing(views.board), name="board"),
-    # Called by n8n with the X-N8N-Token header (no login session).
-    path("api/check-replies/", api_views.check_replies, name="api_check_replies"),
     path("campaigns/", _marketing(campaign_views.campaign_list), name="campaign_list"),
     path("campaigns/new/", _marketing(campaign_views.campaign_new), name="campaign_new"),
     path("campaigns/<int:pk>/", _marketing(campaign_views.campaign_detail), name="campaign_detail"),

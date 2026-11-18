@@ -1,6 +1,6 @@
 """Stage 2: automatic enquiry follow-ups.
 
-n8n calls two endpoints on a schedule (see enquiries/api_views.py):
+The scheduler (enquiries/scheduler.py, run hourly by App Engine cron) calls two functions:
   1. due_follow_ups()        -> which enquiries are due today
   2. run_auto_follow_up(id)  -> check the rules again and send one follow-up
 
@@ -339,7 +339,7 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
                     customer_email)
         return _result(enquiry_id, DRY_RUN, "dry run: nothing was sent", **details)
 
-    # The unique token means one automatic follow-up per enquiry per day, even if n8n retries.
+    # The unique token means one automatic follow-up per enquiry per day, even if a run is repeated.
     try:
         with transaction.atomic():
             record = FollowUpSent.objects.create(

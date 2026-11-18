@@ -1,4 +1,4 @@
-"""Tests for Stage 2 automatic follow-ups (the n8n endpoints and the rules behind them)."""
+"""Tests for Stage 2 automatic follow-ups (the rules, and what the hourly scheduler does with them)."""
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -9,14 +9,12 @@ from django.urls import reverse
 from django.utils import timezone
 
 from dashboard.follow_up_templates import build_follow_up_body
-from enquiries import auto_follow_up
+from enquiries import auto_follow_up, scheduler
 from enquiries.models import EnquiryContact, FollowUpSent
 
-TOKEN = "test-n8n-token"
 TODAY = timezone.localdate()
 
 AUTO_SETTINGS = dict(
-    N8N_API_TOKEN=TOKEN,
     FOLLOW_UP_AUTO_ENABLED=True,
     FOLLOW_UP_AUTO_DRY_RUN=False,
     FOLLOW_UP_AUTO_SENDER="sales",
@@ -62,18 +60,13 @@ class AutoFollowUpTests(TestCase):
             submission_token=token,
         )
 
-    def _call(self, name, method="get", token=TOKEN, **kwargs):
-        headers = {"HTTP_X_N8N_TOKEN": token} if token else {}
-        return getattr(self.client, method)(reverse(f"enquiries:{name}", kwargs=kwargs), **headers)
+    def _due(self):
+        """What the scheduler finds due today: {"enabled", "dry_run", "due": [...]} (nothing is sent)."""
+        return {**scheduler._flags(), "due": auto_follow_up.due_follow_ups() if scheduler._flags()["enabled"] else []}
 
-    # --- security -------------------------------------------------------------------------
-    def test_missing_or_wrong_token_is_rejected(self):
-        self.assertEqual(self._call("auto_follow_up_due", token=None).status_code, 401)
-        self.assertEqual(self._call("auto_follow_up_due", token="wrong").status_code, 401)
-
-    @override_settings(N8N_API_TOKEN="")
-    def test_unconfigured_token_refuses_everything(self):
-        self.assertEqual(self._call("auto_follow_up_due").status_code, 503)
+    def _send_one(self, enquiry_id):
+        """What the scheduler does for one due enquiry: the follow-up outcome."""
+        return {**scheduler._flags(), **auto_follow_up.run_auto_follow_up(enquiry_id)}
 
     # --- due list -------------------------------------------------------------------------
     def test_due_list_includes_only_eligible_enquiries(self):
@@ -93,7 +86,7 @@ class AutoFollowUpTests(TestCase):
         })
         EnquiryContact.objects.create(enquiry_id="E4", auto_follow_up_paused=True)
 
-        data = self._call("auto_follow_up_due").json()
+        data = self._due()
         self.assertEqual([d["enquiry_id"] for d in data["due"]], ["E1"])
         self.assertEqual(data["due"][0]["attempt"], 2)
         self.assertEqual(data["due"][0]["stage"], "waiting_po")
@@ -101,7 +94,7 @@ class AutoFollowUpTests(TestCase):
     @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
     def test_due_list_empty_when_turned_off(self):
         self._sent("E1")
-        data = self._call("auto_follow_up_due").json()
+        data = self._due()
         self.assertEqual(data["due"], [])
         self.assertFalse(data["enabled"])
 
@@ -110,9 +103,8 @@ class AutoFollowUpTests(TestCase):
         self._sent("E1")
         gmail = _gmail()
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            resp = self._call("auto_follow_up_send", method="post", enquiry_id="E1")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["result"], "sent")
+            outcome = self._send_one("E1")
+        self.assertEqual(outcome["result"], "sent")
         kwargs = gmail.send_reply.call_args.kwargs
         self.assertEqual(kwargs["to"], "buyer@acme.example")
         self.assertIn("status of your evaluation of our quotation", kwargs["body"])  # follow-up #2 wording
@@ -124,10 +116,10 @@ class AutoFollowUpTests(TestCase):
         self._sent("E1")
         gmail = _gmail()
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            self._call("auto_follow_up_send", method="post", enquiry_id="E1")
-            # Pretend the first send is still due (e.g. n8n retried with an old due list).
+            self._send_one("E1")
+            # Pretend the first send is still due (e.g. a run was repeated with an old due list).
             FollowUpSent.objects.filter(source=FollowUpSent.SOURCE_AUTO).update(next_follow_up_on=TODAY)
-            second = self._call("auto_follow_up_send", method="post", enquiry_id="E1").json()
+            second = self._send_one("E1")
         self.assertEqual(second["result"], "skipped")
         self.assertEqual(gmail.send_reply.call_count, 1)
 
@@ -135,7 +127,7 @@ class AutoFollowUpTests(TestCase):
         self._sent("E1")
         gmail = _gmail(last_sender="Buyer <buyer@acme.example>")
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            data = self._call("auto_follow_up_send", method="post", enquiry_id="E1").json()
+            data = self._send_one("E1")
         self.assertEqual(data["result"], "skipped")
         self.assertIn("customer replied", data["reason"])
         gmail.send_reply.assert_not_called()
@@ -145,28 +137,27 @@ class AutoFollowUpTests(TestCase):
         self._sent("E1")
         gmail = _gmail()
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            data = self._call("auto_follow_up_send", method="post", enquiry_id="E1").json()
+            data = self._send_one("E1")
         self.assertEqual(data["result"], "dry_run")
         gmail.send_reply.assert_not_called()
         self.assertFalse(FollowUpSent.objects.filter(source=FollowUpSent.SOURCE_AUTO).exists())
 
-    def test_gmail_failure_is_recorded_and_returns_500(self):
+    def test_gmail_failure_is_recorded(self):
         self._sent("E1")
         gmail = _gmail(send_error=RuntimeError("quota exceeded"))
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            resp = self._call("auto_follow_up_send", method="post", enquiry_id="E1")
-        self.assertEqual(resp.status_code, 500)
-        self.assertEqual(resp.json()["result"], "failed")
+            outcome = self._send_one("E1")
+        self.assertEqual(outcome["result"], "failed")
         self.assertEqual(FollowUpSent.objects.get(source=FollowUpSent.SOURCE_AUTO).status, FollowUpSent.STATUS_FAILED)
 
     def test_enquiry_without_manual_follow_up_is_skipped(self):
-        data = self._call("auto_follow_up_send", method="post", enquiry_id="E1").json()
+        data = self._send_one("E1")
         self.assertEqual(data["result"], "skipped")
 
     @override_settings(FOLLOW_UP_AUTO_SENDER="")
     def test_missing_sender_fails(self):
         self._sent("E1")
-        self.assertEqual(self._call("auto_follow_up_send", method="post", enquiry_id="E1").json()["result"], "failed")
+        self.assertEqual(self._send_one("E1")["result"], "failed")
 
     # --- pause button ---------------------------------------------------------------------
     def test_pause_button_toggles(self):

@@ -362,7 +362,7 @@ class AutoFollowUpOnConvertedTests(TestCase):
         self.assertEqual(auto_follow_up._skip_reason("E1", open_enquiry, cycle, timezone.localdate()), "")
 
 
-@override_settings(**AUTO_ON, FOLLOW_UP_ACK_WITHIN_DAYS=2, FOLLOW_UP_CLOSE_AFTER_DAYS=7, N8N_API_TOKEN="tok")
+@override_settings(**AUTO_ON, FOLLOW_UP_ACK_WITHIN_DAYS=2, FOLLOW_UP_CLOSE_AFTER_DAYS=7)
 class CustomerEmailTests(TestCase):
     """Acknowledgement, payment received and closing emails."""
 
@@ -448,20 +448,22 @@ class CustomerEmailTests(TestCase):
         self.assertIn("(payment reference: UTR123, received on 01 Nov 2026)", body)
         self.assertIn("confirmed for production", body)
 
-    # --- scheduled endpoint ----------------------------------------------------------------
-    def test_scheduled_run_needs_the_token_and_runs_both(self):
-        url = reverse("enquiries:customer_emails_run")
-        self.assertEqual(self.client.post(url).status_code, 401)
+    # --- scheduled step --------------------------------------------------------------------
+    def test_scheduled_run_sends_both(self):
+        from enquiries import scheduler
+
         self._followed_up("DONE")
         rows = [self._enq("NEW"), self._enq("DONE", days_ago=30)]
         with patch("enquiries.services.list_enquiries", return_value=rows):
-            data = self.client.post(url, HTTP_X_N8N_TOKEN="tok").json()
+            data = scheduler.customer_email_step()
         self.assertEqual([r["enquiry_id"] for r in data["acknowledgement"]], ["NEW"])
         self.assertEqual([r["enquiry_id"] for r in data["closing"]], ["DONE"])
 
     @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
     def test_scheduled_run_does_nothing_when_turned_off(self):
-        data = self.client.post(reverse("enquiries:customer_emails_run"), HTTP_X_N8N_TOKEN="tok").json()
+        from enquiries import scheduler
+
+        data = scheduler.customer_email_step()
         self.assertEqual((data["acknowledgement"], data["closing"]), ([], []))
         self.gmail.send_reply.assert_not_called()
 

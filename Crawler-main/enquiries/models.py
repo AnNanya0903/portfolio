@@ -355,3 +355,26 @@ class EnquiryAttachment(models.Model):
         # Not "enquiry_attachments": the enquiry service already has a table of that name in the same database.
         db_table = "enquiry_files"
         ordering = ["-created_at", "-id"]
+
+
+class AutomationRun(models.Model):
+    """One run of the scheduled automations (follow-ups, customer emails, reply checks): when, what, how it ended.
+
+    Also the lock that stops two runs from overlapping: a run that has not finished within
+    AutomationRun.STALE_MINUTES is treated as dead.
+    """
+
+    STALE_MINUTES = 15
+
+    started_at = models.DateTimeField(default=timezone.now, db_index=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    trigger = models.CharField(max_length=20, default="cron")  # cron, command or manual
+    ok = models.BooleanField(default=False)
+    summary = models.TextField(blank=True, default="")  # JSON: what each step did
+
+    class Meta:
+        db_table = "enquiry_automation_runs"
+        ordering = ["-started_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.started_at:%Y-%m-%d %H:%M} {self.trigger} {'ok' if self.ok else 'not ok'}"

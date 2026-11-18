@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import api_views, negotiation_views, views
+from . import cron_views, negotiation_views, views
 from magicwand.access import require_service_access
 
 app_name = "enquiries"
@@ -9,10 +9,8 @@ _enquiries = require_service_access("enquiries")
 
 urlpatterns = [
     path("", _enquiries(views.board), name="board"),
-    # Stage 2: called by n8n with the X-N8N-Token header (no login session).
-    path("api/auto-follow-ups/due/", api_views.due, name="auto_follow_up_due"),
-    path("api/auto-follow-ups/<str:enquiry_id>/send/", api_views.send, name="auto_follow_up_send"),
-    path("api/customer-emails/run/", api_views.run_customer_emails, name="customer_emails_run"),
+    # Called by App Engine cron every hour (cron.yaml): automatic follow-ups, customer emails, reply checks.
+    path("api/cron/automations/", cron_views.automations, name="cron_automations"),
     path("tasks/", _enquiries(negotiation_views.tasks), name="tasks"),
     path("tasks/<int:pk>/update/", _enquiries(negotiation_views.task_update), name="task_update"),
     path("<str:enquiry_id>/negotiation/", _enquiries(negotiation_views.negotiation_page), name="negotiation"),

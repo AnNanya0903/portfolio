@@ -246,7 +246,7 @@ def latest_status_emails(enquiry_ids) -> Dict[str, Dict[str, CustomerStatusEmail
 
 
 # ------------------------------------------------------------------------------------------
-# Scheduled run (n8n calls POST enquiries/api/customer-emails/run/ every hour or so)
+# Scheduled run (enquiries/scheduler.py calls this every hour)
 # ------------------------------------------------------------------------------------------
 
 def _status_of(enquiry: Mapping[str, Any]) -> str:

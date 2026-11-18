@@ -126,7 +126,7 @@ class StatusEmailCcTests(TestCase):
 
 
 
-@override_settings(N8N_API_TOKEN="t", FOLLOW_UP_AUTO_ENABLED=True, FOLLOW_UP_AUTO_DRY_RUN=False,
+@override_settings(FOLLOW_UP_AUTO_ENABLED=True, FOLLOW_UP_AUTO_DRY_RUN=False,
                    FOLLOW_UP_AUTO_SENDER="sales", FOLLOW_UP_AUTO_GAP_DAYS=[4, 7, 7], FOLLOW_UP_MAX_COUNT=4)
 class AutoFollowUpCcTests(TestCase):
     def setUp(self):
@@ -153,7 +153,6 @@ class AutoFollowUpCcTests(TestCase):
             next_follow_up_on=timezone.localdate(), sent_at=timezone.now() - timedelta(days=4))
         gmail = auto_gmail()
         with patch.object(self.auto, "GmailService", return_value=gmail):
-            response = self.client.post(reverse("enquiries:auto_follow_up_send", kwargs={"enquiry_id": "E1"}),
-                                        HTTP_X_N8N_TOKEN="t")
-        self.assertEqual(response.json()["result"], "sent")
+            outcome = self.auto.run_auto_follow_up("E1")
+        self.assertEqual(outcome["result"], "sent")
         self.assertEqual(gmail.send_reply.call_args.kwargs["cc"], ["boss@acme.example", "manager@ours.example"])

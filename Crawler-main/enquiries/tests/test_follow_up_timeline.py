@@ -62,7 +62,7 @@ class TimelineTests(TestCase):
         self.addCleanup(patch.stopall)
 
     def _day(self, day):
-        """What the hourly n8n run does on this day: due follow-ups, then the closing email. Returns what went out."""
+        """What the hourly scheduled run does on this day: due follow-ups, then the closing email. Returns what went out."""
         self.clock.now = DAY0.replace(day=DAY0.day + day)
         today = timezone.localdate()
         sent = []

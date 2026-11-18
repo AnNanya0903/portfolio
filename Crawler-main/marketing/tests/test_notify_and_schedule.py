@@ -1,4 +1,4 @@
-"""Tests for notifying the salesperson on Revive and the scheduled (n8n) reply check."""
+"""Tests for notifying the salesperson on Revive and the scheduled reply check."""
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
@@ -8,12 +8,13 @@ from django.urls import reverse
 from django.utils import timezone
 
 from dashboard.gmail_service import GmailAPIError
+from enquiries import scheduler
 from marketing import campaigns, notify
 from marketing.models import Campaign, CampaignRecipient, MarketingActivity, MarketingLead
 
 BASE = dict(
     FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7, MARKETING_WAIT_DAYS=30, MARKETING_REPLY_CHECK_DAYS=60,
-    MARKETING_REVIVE_NOTIFY_EMAIL=True, N8N_API_TOKEN="secret-token",
+    MARKETING_REVIVE_NOTIFY_EMAIL=True,
     STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage",
 )
 
@@ -131,7 +132,6 @@ class ReviveNoticeTests(TestCase):
 class ScheduledReplyCheckTests(TestCase):
     def setUp(self):
         self.sender = User.objects.create_user("mk", "mk@ourcompany.example", "x")
-        self.url = reverse("marketing:api_check_replies")
 
     def _campaign(self, name, sent_days_ago, sender=None):
         campaign = Campaign.objects.create(name=name, subject="S", body="B", status=Campaign.STATUS_SENT,
@@ -143,15 +143,6 @@ class ScheduledReplyCheckTests(TestCase):
                                          sent_at=campaign.sent_at)
         return campaign
 
-    def test_token_required(self):
-        self.assertEqual(self.client.post(self.url).status_code, 401)
-        self.assertEqual(self.client.post(self.url, HTTP_X_N8N_TOKEN="wrong").status_code, 401)
-        self.assertEqual(self.client.get(self.url, HTTP_X_N8N_TOKEN="secret-token").status_code, 405)
-
-    @override_settings(N8N_API_TOKEN="")
-    def test_not_configured(self):
-        self.assertEqual(self.client.post(self.url, HTTP_X_N8N_TOKEN="x").status_code, 503)
-
     def test_checks_recent_campaigns_with_their_senders_gmail(self):
         recent = self._campaign("recent", 5)
         self._campaign("old", 90)  # outside MARKETING_REPLY_CHECK_DAYS
@@ -161,9 +152,7 @@ class ScheduledReplyCheckTests(TestCase):
                                                   {"sender": "recent@cust.example", "snippet": "Interested"}]
         with patch("marketing.campaigns.GmailService", return_value=gmail) as gmail_cls, \
                 patch("push_notifications.services.send_push_to_users", return_value=1) as push:
-            response = self.client.post(self.url, HTTP_X_N8N_TOKEN="secret-token")
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
+            data = scheduler.reply_check_step()
         self.assertEqual(data["replied"], 1)
         self.assertEqual([c["name"] for c in data["campaigns"]], ["recent"])
         gmail_cls.assert_called_once_with(self.sender)
