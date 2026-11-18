@@ -1597,12 +1597,16 @@ def board(request: HttpRequest) -> HttpResponse:
         paused_ids = {eid for eid, c in contacts.items() if c.auto_follow_up_paused}
         status_email_rows = status_emails.latest_status_emails(page_ids)
         kyc_customers = kyc_links.customers_for(page_ids)
+        from quotations import links as quotation_links
+
+        quotation_counts = quotation_links.counts_for_enquiries(page_ids)
         kyc_suggestions = kyc_links.suggestions_for(
             e.get("customer_name") for e in enquiries_page if str(e.get("enquiry_id")) not in kyc_customers)
         for enquiry in enquiries_page:
             enquiry["auto_paused"] = str(enquiry.get("enquiry_id")) in paused_ids
             contact = contacts.get(str(enquiry.get("enquiry_id")))
             enquiry["kyc_customer"] = kyc_customers.get(str(enquiry.get("enquiry_id")))
+            enquiry["quotation_count"] = quotation_counts.get(str(enquiry.get("enquiry_id")), 0)
             if enquiry["kyc_customer"] is None:  # same company name as exactly one KYC customer: offer the link
                 enquiry["kyc_suggestion"] = kyc_suggestions.get(
                     " ".join(str(enquiry.get("customer_name") or "").split()).lower())

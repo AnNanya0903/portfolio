@@ -47,11 +47,11 @@
             <td class="text-nowrap"><a class="qt-code text-decoration-none" href="{% url 'quotations:detail' row.pk %}">{{ row.number }}</a></td>
             <td>
               <span class="fw-semibold">{{ row.customer_name }}</span>
-              {% if row.customer %}<div class="qt-muted">Code {{ row.customer.code }}</div>{% endif %}
+              {% if row.customer %}<div class="qt-muted">Code {% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' row.customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ row.customer.code }}</a>{% else %}{{ row.customer.code }}{% endif %}</div>{% endif %}
             </td>
             <td>
               <a class="text-decoration-none" href="{% url 'quotations:detail' row.pk %}">{{ row.title }}</a>
-              {% if row.enquiry_id %}<div class="qt-muted">Enquiry #{{ row.enquiry_id }}</div>{% endif %}
+              {% if row.enquiry_id %}<div class="qt-muted">{% if mw_service_access.enquiries|default:False %}<a href="{% url 'enquiries:detail' row.enquiry_id %}" class="text-decoration-none" title="Open the enquiry">Enquiry #{{ row.enquiry_id }}</a>{% else %}Enquiry #{{ row.enquiry_id }}{% endif %}</div>{% endif %}
             </td>
             <td><span class="qt-chip qt-chip--{{ row.status }}">{{ row.get_status_display }}</span></td>
             <td class="text-nowrap">{{ row.updated_at|date:"d M Y" }}</td>

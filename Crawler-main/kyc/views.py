@@ -105,6 +105,8 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
     customer = get_object_or_404(
         Customer.objects.select_related("created_by", "updated_by").prefetch_related("departments__contacts"), pk=pk)
     log_audit(request.user, customer, KycAuditLog.ACTION_VIEW)
+    from quotations import links as quotation_links
+
     contacts = list(customer.contacts.all())
     groups = [
         {"key": key, "label": label, "contacts": [c for c in contacts if c.category == key]}
@@ -121,6 +123,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "has_email": any(c.email for c in contacts),
         "enquiry_links": list(customer.enquiry_links.all()[:50]),
         "enquiry_link_count": customer.enquiry_links.count(),
+        "quotations": quotation_links.for_customer(customer),
         "marketing": _marketing_activity(customer),
         "delete_summary": {
             "contacts": len(contacts),

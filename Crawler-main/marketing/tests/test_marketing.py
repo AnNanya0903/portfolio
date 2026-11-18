@@ -136,6 +136,13 @@ class MarketingViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Could not load enquiries")
 
+    def test_the_marketing_page_links_to_the_enquirys_quotations(self):
+        from quotations.models import Quotation
+        quotation = Quotation.objects.create(customer_name="Customer E1", enquiry_id="E1", title="Gasket quote")
+        with self._fetch():
+            page = self.client.get(reverse("marketing:detail", args=["E1"]))
+        self.assertContains(page, reverse("quotations:detail", args=[quotation.pk]))
+
     def test_open_enquiry_buttons_open_the_generated_pdf(self):
         url = reverse("marketing:detail", args=["E1"])
         with self._fetch():

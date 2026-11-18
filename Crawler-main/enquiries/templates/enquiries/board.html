@@ -365,6 +365,9 @@
             {{ enquiry.customer_name|default:'—' }}
             {% if enquiry.customer_email_saved %}<div class="small text-muted text-truncate" style="max-width:180px;">{{ enquiry.customer_email_saved }}</div>{% endif %}
             {% for other in enquiry.other_customer_emails_saved %}<div class="small text-muted text-truncate" style="max-width:180px;" title="Copied (CC) on every email">CC: {{ other }}</div>{% endfor %}
+            {% if mw_service_access.quotations|default:False %}
+              <div class="small">{% if enquiry.quotation_count %}<a href="{% url 'quotations:list' %}?q={{ enquiry.enquiry_id|urlencode }}" class="text-decoration-none" title="Quotations of this enquiry"><i class="bi bi-file-earmark-text"></i> Quotations ({{ enquiry.quotation_count }})</a>{% else %}<a href="{% url 'quotations:new' %}?enquiry={{ enquiry.enquiry_id|urlencode }}{% if enquiry.kyc_customer %}&customer={{ enquiry.kyc_customer.code|urlencode }}{% endif %}&customer_name={{ enquiry.customer_name|default:''|urlencode }}" class="text-decoration-none text-muted" title="Upload a quotation for this enquiry"><i class="bi bi-plus-lg"></i> Quotation</a>{% endif %}</div>
+            {% endif %}
             {% if enquiry.kyc_customer %}
               <div class="small">{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' enquiry.kyc_customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ enquiry.kyc_customer.code }}</a>{% else %}<span class="text-muted">{{ enquiry.kyc_customer.code }}</span>{% endif %}</div>
             {% elif enquiry.kyc_suggestion %}

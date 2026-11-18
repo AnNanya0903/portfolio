@@ -99,6 +99,29 @@
       </div>
     </div>
 
+    {% if mw_service_access.quotations|default:False %}
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Quotations <span class="kyc-muted">({{ quotations|length }})</span></h6>
+        <span class="d-flex gap-3 small">
+          <a class="text-decoration-none" href="{% url 'quotations:list' %}?customer={{ customer.code|urlencode }}">All</a>
+          <a class="text-decoration-none" href="{% url 'quotations:new' %}?customer={{ customer.code|urlencode }}"><i class="bi bi-plus-lg"></i> New</a>
+        </span>
+      </div>
+      <div>
+        {% for q in quotations %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center">
+            <span><a class="text-decoration-none" href="{% url 'quotations:detail' q.pk %}">{{ q.number }}</a>
+              <span class="kyc-muted">{{ q.title|truncatechars:40 }}{% if q.enquiry_id %} · enquiry #{{ q.enquiry_id }}{% endif %}</span></span>
+            <span class="kyc-muted">{{ q.get_status_display }}</span>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No quotations for this customer yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     <div class="card border-0 shadow-sm mt-4">
       <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Enquiries <span class="kyc-muted">({{ enquiry_link_count }})</span></h6></div>
       <div>

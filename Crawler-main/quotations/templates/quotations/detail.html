@@ -11,8 +11,8 @@
     <h2 class="page-title">{{ quotation.title }}</h2>
     <p class="page-subtitle">
       <span class="qt-code">{{ quotation.number }}</span> · {{ quotation.customer_name }}
-      {% if quotation.customer %}(code <span class="qt-code">{{ quotation.customer.code }}</span>){% endif %}
-      {% if quotation.enquiry_id %} · Enquiry #{{ quotation.enquiry_id }}{% endif %}
+      {% if quotation.customer %}(code {% if mw_service_access.kyc|default:False %}<a class="qt-code text-decoration-none" href="{% url 'kyc:detail' quotation.customer.pk %}" title="Open in KYC">{{ quotation.customer.code }}</a>{% else %}<span class="qt-code">{{ quotation.customer.code }}</span>{% endif %}){% endif %}
+      {% if quotation.enquiry_id %} · {% if mw_service_access.enquiries|default:False %}<a class="text-decoration-none" href="{% url 'enquiries:detail' quotation.enquiry_id %}" title="Open the enquiry">Enquiry #{{ quotation.enquiry_id }}</a>{% else %}Enquiry #{{ quotation.enquiry_id }}{% endif %}{% endif %}
       <span class="qt-chip qt-chip--{{ quotation.status }} ms-2">{{ quotation.get_status_display }}</span>
     </p>
   </div>

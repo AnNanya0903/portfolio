@@ -70,6 +70,7 @@
           <dt>KYC customer</dt><dd data-kyc-customer>{% if row.kyc_customer %}{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' row.kyc_customer.pk %}" class="text-decoration-none">{{ row.kyc_code }}</a>{% else %}{{ row.kyc_code }}{% endif %} · {{ row.kyc_customer.name }}
             <div class="mk-muted">Campaign emails also go to this customer's purchaser and Sales and marketing contacts.</div>{% else %}—
             <div class="mk-muted">Not linked. Link the enquiry to a customer code in the Enquiries portal (Edit customer).</div>{% endif %}</dd>
+          {% if mw_service_access.quotations|default:False %}<dt>Quotations</dt><dd>{% for q in quotations %}<div><a href="{% url 'quotations:detail' q.pk %}" class="text-decoration-none">{{ q.number }}</a> <span class="mk-muted">{{ q.get_status_display }}</span></div>{% empty %}—{% endfor %}</dd>{% endif %}
           <dt>Customer email</dt><dd>{{ row.customer_email|default:"—" }}</dd>
           {% if row.other_emails %}<dt>Other customer emails</dt><dd>{{ row.other_emails|join:", " }}
             <div class="mk-muted">CC'd on campaign emails. Change them in the Enquiries portal (Edit customer) or in KYC.</div></dd>{% endif %}

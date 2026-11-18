@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from enquiries import services
 from enquiries.models import EnquiryContact, FollowUpSent
+from quotations import links as quotation_links
 
 from . import lost, notify
 from .models import CampaignRecipient, MarketingActivity, MarketingLead
@@ -281,5 +282,6 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "team": notify.team_members(),
         "matched_salesperson": notify.find_user(enquiry.get("assigned_to") or ""),
         "wait_days": lost.wait_days(),
+        "quotations": quotation_links.for_enquiry(enquiry_id),
     }
     return render(request, "marketing/detail.html", context)

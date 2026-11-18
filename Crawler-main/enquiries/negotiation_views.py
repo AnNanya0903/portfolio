@@ -10,6 +10,8 @@ from django.views.decorators.http import require_POST
 from kyc.departments import departments_of
 from kyc.models import Department
 
+from quotations import links as quotation_links
+
 from . import attachments as attachment_rules
 from . import negotiation, services
 from .models import EnquiryAssignment, EnquiryAttachment, EnquiryFollowup, EnquiryNegotiation
@@ -41,6 +43,7 @@ def negotiation_page(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "departments": departments,
         "members": members,
         "priorities": EnquiryAssignment.PRIORITY_CHOICES,
+        "quotations": quotation_links.for_enquiry(enquiry_id),
         "assignments": EnquiryAssignment.objects.filter(enquiry_id=enquiry_id).select_related("to_department", "assigned_to"),
         "followups": EnquiryFollowup.objects.filter(enquiry_id=enquiry_id).select_related("user", "department"),
         "attachments": EnquiryAttachment.objects.filter(enquiry_id=enquiry_id),
