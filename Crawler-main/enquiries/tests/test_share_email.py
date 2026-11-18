@@ -51,8 +51,9 @@ class DefaultMessageTests(TestCase):
                       "https://x/share/1\nPassword: AG-Pass\n\nPlease let us know if you have any questions.", body)
         self.assertNotIn("supporting documents", body)
         tail = body.split("questions.\n\n")[1]
-        self.assertTrue(tail.startswith("Kind Regards,\nNaveen Kumar H B\nCustomer Representative Officer\n"
-                                        + "*" * 52 + "\nAVIGIRI Urethane and Rubber Industries Pvt. Ltd.\n"))
+        self.assertTrue(tail.startswith("Kind Regards,\nNaveen Kumar H B\nCustomer Representative Officer\n\n"
+                                        "AVIGIRI Urethane and Rubber Industries Pvt. Ltd.\n"))
+        self.assertNotIn("*", tail)
         self.assertTrue(tail.endswith("Tel : (+91) 9606016345\nVisit: www.avigiri.com"))
 
     def test_documents_skip_the_quotation_itself(self):

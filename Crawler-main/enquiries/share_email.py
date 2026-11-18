@@ -184,7 +184,6 @@ def customer_email(enquiry_id: str, enquiry: Mapping[str, Any]) -> str:
     return ((contact.customer_email if contact else "") or str(enquiry.get("customer_email") or "")).strip()
 
 
-SIGNATURE_RULE = "*" * 52
 DEFAULT_DESIGNATION = "Customer Representative Officer"
 DEFAULT_FOOTER = "\n".join((
     "AVIGIRI Urethane and Rubber Industries Pvt. Ltd.",
@@ -207,7 +206,7 @@ def sender_name(user) -> str:
 
 
 def signature(name: str = "") -> str:
-    """Kind Regards, the sender's name and designation, a line of asterisks and the company details.
+    """Kind Regards, the sender's name and designation, then the company details.
 
     Settings QUOTATION_EMAIL_DESIGNATION and QUOTATION_EMAIL_FOOTER change the last two. Without a name the
     email is signed by the team, as before. (The logo comes from the Gmail signature, not from this text.)
@@ -219,8 +218,8 @@ def signature(name: str = "") -> str:
     lines = ["Kind Regards,", name]
     if designation:
         lines.append(designation)
-    lines.append(SIGNATURE_RULE)
     if footer:
+        lines.append("")  # a blank line before the company details; no divider (it shows as stars in mail clients)
         lines.append(footer)
     return "\n".join(lines)
 
