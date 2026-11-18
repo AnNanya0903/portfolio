@@ -11,6 +11,7 @@ from django.urls import reverse
 
 from dashboard.gmail_service import GmailAPIError, GmailService
 from enquiries import share_email
+from kyc.tests import *  # noqa: F401,F403  (Python 3.14 test-client fix for Django 4.2)
 from enquiries.models import EnquiryContact, ShareLink
 from enquiries.views import _create_share_link_from_values
 
@@ -38,7 +39,21 @@ class DefaultMessageTests(TestCase):
         self.assertEqual(subject, "Quotation ENQ-7 - Viton gaskets")
         self.assertTrue(body.startswith("Dear Sir/Madam,"))
         self.assertIn("https://x/share/1\nPassword: Secret-123", body)
-        self.assertTrue(body.endswith("Best regards,\nAVIGIRI Team"))
+        self.assertTrue(body.endswith("Kind Regards,\nAVIGIRI Team"))  # no sender name given
+
+    def test_body_matches_the_house_sample_with_the_senders_name_and_footer(self):
+        _, body = share_email.default_message("ENQ-3321", {"subject": "RFQ (TEST)"}, "https://x/share/1",
+                                              "AG-Pass", name="Naveen Kumar H B")
+        self.assertEqual(body.split("\n\n")[:2], [
+            "Dear Sir/Madam,",
+            'Thank you for your enquiry. Please find attached our quotation for "RFQ (TEST)" (reference ENQ-3321)'])
+        self.assertIn("You can also view the quotation online and accept or reject it using the link below:\n"
+                      "https://x/share/1\nPassword: AG-Pass\n\nPlease let us know if you have any questions.", body)
+        self.assertNotIn("supporting documents", body)
+        tail = body.split("questions.\n\n")[1]
+        self.assertTrue(tail.startswith("Kind Regards,\nNaveen Kumar H B\nCustomer Representative Officer\n"
+                                        + "*" * 52 + "\nAVIGIRI Urethane and Rubber Industries Pvt. Ltd.\n"))
+        self.assertTrue(tail.endswith("Tel : (+91) 9606016345\nVisit: www.avigiri.com"))
 
     def test_documents_skip_the_quotation_itself(self):
         docs = share_email.enquiry_documents(ENQUIRY, skip_name="Quote.pdf")

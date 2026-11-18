@@ -10,6 +10,7 @@ import os
 import re
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.core import signing
 from django.urls import reverse
@@ -183,8 +184,49 @@ def customer_email(enquiry_id: str, enquiry: Mapping[str, Any]) -> str:
     return ((contact.customer_email if contact else "") or str(enquiry.get("customer_email") or "")).strip()
 
 
+SIGNATURE_RULE = "*" * 52
+DEFAULT_DESIGNATION = "Customer Representative Officer"
+DEFAULT_FOOTER = "\n".join((
+    "AVIGIRI Urethane and Rubber Industries Pvt. Ltd.",
+    "169-D Vasanthanarasapura Industrial Area",
+    "Kora Hobli 572128, Tumkur District,",
+    "Karnataka, India",
+    "Phone # : 0816 2970025/27",
+    "CIN: U25203KA2011PTC059765",
+    "",
+    "Tel : (+91) 9606016345",
+    "Visit: www.avigiri.com",
+))
+
+
+def sender_name(user) -> str:
+    """The employee's own name for the sign-off ('' when there is no user or no name to show)."""
+    if not getattr(user, "is_authenticated", False):
+        return ""
+    return (user.get_full_name() or "").strip()
+
+
+def signature(name: str = "") -> str:
+    """Kind Regards, the sender's name and designation, a line of asterisks and the company details.
+
+    Settings QUOTATION_EMAIL_DESIGNATION and QUOTATION_EMAIL_FOOTER change the last two. Without a name the
+    email is signed by the team, as before. (The logo comes from the Gmail signature, not from this text.)
+    """
+    if not name:
+        return "Kind Regards,\nAVIGIRI Team"
+    designation = getattr(settings, "QUOTATION_EMAIL_DESIGNATION", DEFAULT_DESIGNATION)
+    footer = getattr(settings, "QUOTATION_EMAIL_FOOTER", DEFAULT_FOOTER)
+    lines = ["Kind Regards,", name]
+    if designation:
+        lines.append(designation)
+    lines.append(SIGNATURE_RULE)
+    if footer:
+        lines.append(footer)
+    return "\n".join(lines)
+
+
 def default_message(enquiry_id: str, enquiry: Mapping[str, Any], url: str, password: str,
-                    voucher_no: str = "", document: str = "quotation") -> Tuple[str, str]:
+                    voucher_no: str = "", document: str = "quotation", name: str = "") -> Tuple[str, str]:
     """Subject and body for the quotation (or proforma invoice) email.
 
     With a Voucher No. (read from the PDF) the subject is "Quotation <Voucher No.> - <title>";
@@ -208,22 +250,19 @@ def default_message(enquiry_id: str, enquiry: Mapping[str, Any], url: str, passw
             f"{url}\n"
             f"Password: {password}\n\n"
             "Please let us know if you have any questions.\n\n"
-            "Best regards,\n"
-            "AVIGIRI Team"
+            + signature(name)
         )
         return subject, body
     subject = f"Quotation {voucher_no or reference}" + (f" - {title}" if title else "")
     numbers = f"quotation no. {voucher_no}, reference {reference}" if voucher_no else f"reference {reference}"
     body = (
         "Dear Sir/Madam,\n\n"
-        f"Thank you for your enquiry. Please find attached our quotation{about} ({numbers}), "
-        "along with the supporting documents.\n\n"
+        f"Thank you for your enquiry. Please find attached our quotation{about} ({numbers})\n\n"
         "You can also view the quotation online and accept or reject it using the link below:\n"
         f"{url}\n"
         f"Password: {password}\n\n"
         "Please let us know if you have any questions.\n\n"
-        "Best regards,\n"
-        "AVIGIRI Team"
+        + signature(name)
     )
     return subject, body
 
@@ -254,7 +293,7 @@ def form_defaults(request, record: ShareLink, data: Mapping[str, Any], password:
     voucher_no = voucher_number(pdf_bytes)
     url = share_url(request, record)
     messages = {key: dict(zip(("subject", "body"), default_message(enquiry_id, enquiry, url, password, voucher_no,
-                                                                   document=key)))
+                                                                   document=key, name=sender_name(request.user))))
                 for key in DOCUMENTS}
     thread = existing_thread(enquiry_id) if enquiry_id else None
     return {
