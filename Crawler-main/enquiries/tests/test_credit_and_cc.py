@@ -126,9 +126,8 @@ class BoardCreditTests(TestCase):
         row = board.context["enquiries"][0]
         self.assertTrue(row["payment"]["in_credit"])
         self.assertEqual(row["follow_up"]["due_state"], "credit")
-        self.assertContains(board, "Credit period (45 days)")
-        self.assertContains(board, '<option value="credit" selected>Credit period</option>')
-        self.assertContains(board, "(in credit period)")
+        self.assertContains(board, "Credit Period (45 days)")
+        self.assertContains(board, '<option value="credit" selected>Credit Period</option>')
         self.assertContains(board, 'data-follow-up-state="credit"')
         self.assertContains(board, "CC: boss@avigiri.com")
 

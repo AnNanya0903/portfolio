@@ -1,5 +1,6 @@
 """Tests for the order process: PI status, payment tracking, and automatic rejection / PI-disagree emails."""
-from datetime import datetime, timedelta
+import re
+from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
@@ -199,11 +200,10 @@ class BoardTrackingTests(TestCase):
         return self.client.post(reverse("enquiries:board"), data)
 
     def test_paid_converts_the_order_and_filters_work(self):
-        due = (timezone.localdate() - timedelta(days=1)).isoformat()
-        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_amount_received="1500")
-        self._post(action="update_payment", enquiry_id="C2", payment_status="partial", payment_due_on=due)
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid")
+        self._post(action="update_payment", enquiry_id="C2", payment_status="partial")
         contact = EnquiryContact.objects.get(enquiry_id="C1")
-        self.assertEqual((contact.payment_status, str(contact.payment_amount_received)), ("paid", "1500.00"))
+        self.assertEqual(contact.payment_status, "paid")
         self.assertEqual(contact.payment_updated_by, self.user)
         self.assertEqual(self.statuses["C1"], "converted")  # paid -> converted
         paid_calls = [c for c in self.send.call_args_list if c.args[0] == "payment_received"]
@@ -212,7 +212,6 @@ class BoardTrackingTests(TestCase):
 
         unpaid = self.client.get(reverse("enquiries:board"), {"payment": "unpaid"})
         self.assertEqual([e["enquiry_id"] for e in unpaid.context["enquiries"]], ["C2"])
-        self.assertContains(unpaid, "(overdue)")
         paid = self.client.get(reverse("enquiries:board"), {"payment": "paid"})
         self.assertEqual([e["enquiry_id"] for e in paid.context["enquiries"]], ["C1"])
 
@@ -235,7 +234,7 @@ class BoardTrackingTests(TestCase):
         self.assertEqual(self.statuses["C1"], "accepted")
 
     def test_undoing_a_conversion_sets_payment_back_to_pending(self):
-        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_reference="UTR123")
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid")
         url = reverse("enquiries:toggle_converted", args=["C1"])
         self.client.post(url, {"converted": "false", "previous_status": "accepted"})
         self.assertEqual(self.statuses["C1"], "accepted")
@@ -243,20 +242,61 @@ class BoardTrackingTests(TestCase):
         self.assertEqual(contact.payment_status, "pending")
         self.assertIsNone(contact.payment_paid_on)
 
-    def test_paid_records_date_and_reference(self):
-        self._post(action="update_payment", enquiry_id="C1", payment_status="paid",
-                   payment_paid_on="2026-11-01", payment_reference="UTR123")
-        contact = EnquiryContact.objects.get(enquiry_id="C1")
-        self.assertEqual((contact.payment_paid_on.isoformat(), contact.payment_reference), ("2026-11-01", "UTR123"))
-        response = self.client.get(reverse("enquiries:board"))
-        self.assertContains(response, "Paid · 01 Nov 2026")
+    def _store_confidential(self):
+        return EnquiryContact.objects.create(
+            enquiry_id="C1", payment_status="partial", payment_amount_received="1500.50",
+            payment_due_on=timezone.localdate() - timedelta(days=2), payment_paid_on=date(2026, 11, 1),
+            payment_reference="UTR987654")
 
-    def test_paid_defaults_to_today_and_refuses_future_dates(self):
-        future = (timezone.localdate() + timedelta(days=3)).isoformat()
-        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_paid_on=future)
-        self.assertEqual(self.statuses["C1"], "accepted")
+    def test_the_payment_form_has_only_the_status_dropdown(self):
+        self._store_confidential()
+        page = self.client.get(reverse("enquiries:board"))
+        html = page.content.decode()
+        for gone in ("Amount received", "Payment due on", "Paid on (when Paid)", "Payment reference", "UTR / cheque",
+                     "This is the only way to convert an order", "payment_amount_received", "payment_due_on",
+                     "payment_paid_on", "payment_reference"):
+            self.assertNotIn(gone, html)
+        self.assertContains(page, ">Payment Status</label>")
+        labels = re.findall(r'<option value="(pending|partial|credit|paid)"[^>]*>([^<]+)</option>',
+                            html.split('name="payment_status"', 1)[1])[:4]
+        self.assertEqual(labels, [("pending", "Payment Pending"), ("partial", "Partially Paid"),
+                                  ("credit", "Credit Period"), ("paid", "Paid")])
+        self.assertContains(page, "Mark this order as Paid and Converted?")
+
+    def test_the_confidential_values_are_never_shown_or_sent_to_the_page(self):
+        self._store_confidential()
+        page = self.client.get(reverse("enquiries:board"))
+        html = page.content.decode()
+        for secret in ("1500.50", "UTR987654", "01 Nov 2026"):
+            self.assertNotIn(secret, html)
+        payment = {e["enquiry_id"]: e for e in page.context["enquiries"]}["C1"]["payment"]
+        for key in ("amount", "paid_on", "reference"):
+            self.assertNotIn(key, payment)
+        self.assertIsNone(payment["due"])  # the entered due date is not sent (only a credit period's end is)
+        self.assertEqual(payment["label"], "Partially Paid")
+
+    def test_saving_the_status_keeps_the_stored_confidential_data(self):
+        self._store_confidential()
+        self._post(action="update_payment", enquiry_id="C1", payment_status="paid",
+                   payment_amount_received="1", payment_reference="ignored", payment_paid_on="2020-01-01")
+        contact = EnquiryContact.objects.get(enquiry_id="C1")
+        self.assertEqual(contact.payment_status, "paid")
+        self.assertEqual((str(contact.payment_amount_received), contact.payment_reference, contact.payment_paid_on),
+                         ("1500.50", "UTR987654", date(2026, 11, 1)))  # posted values are ignored, nothing wiped
+        self.assertEqual(self.statuses["C1"], "converted")
+
+    def test_paid_needs_nothing_but_the_status_and_the_email_carries_no_payment_detail(self):
+        self._store_confidential()
         self._post(action="update_payment", enquiry_id="C1", payment_status="paid")
-        self.assertEqual(EnquiryContact.objects.get(enquiry_id="C1").payment_paid_on, timezone.localdate())
+        self.assertEqual(self.statuses["C1"], "converted")
+        call = [c for c in self.send.call_args_list if c.args[0] == "payment_received"][0]
+        self.assertNotIn("payment_detail", call.kwargs)
+
+    def test_partial_pending_and_credit_leave_the_order_unconverted(self):
+        for value, extra in (("pending", {}), ("partial", {}), ("credit", {"credit_period_days": "30"})):
+            self._post(action="update_payment", enquiry_id="C1", payment_status=value, **extra)
+            self.assertEqual(self.statuses["C1"], "accepted")
+            self.assertEqual(EnquiryContact.objects.get(enquiry_id="C1").payment_status, value)
 
     def test_conversion_rule(self):
         from enquiries.views import _conversion_block_reason
@@ -270,8 +310,10 @@ class BoardTrackingTests(TestCase):
 
     def test_bad_payment_values_are_rejected(self):
         self._post(action="update_payment", enquiry_id="C1", payment_status="lots")
-        self._post(action="update_payment", enquiry_id="C1", payment_status="paid", payment_amount_received="-5")
+        for bad in ("PAID", "Paid ", "payment_pending", "", "converted"):
+            self._post(action="update_payment", enquiry_id="C1", payment_status=bad)
         self.assertFalse(EnquiryContact.objects.filter(enquiry_id="C1").exists())
+        self.assertEqual(self.statuses["C1"], "accepted")
 
     def test_skipped_email_is_shown_with_retry(self):
         self.rows[2]["status"] = "rejected"
@@ -444,3 +486,22 @@ class EmailWordingTests(TestCase):
         self.assertIn("payment reference", last_paragraph("payment_pending", attempt=4))
         closings = {last_paragraph(k) for k in STAGE_KEYS} | {last_paragraph(k, 4) for k in STAGE_KEYS}
         self.assertEqual(len(closings), 2 * len(STAGE_KEYS))  # no two stages share a closing line
+
+
+class PaymentStatusMigrationTests(TestCase):
+    def test_existing_records_become_pending_or_paid(self):
+        import importlib
+        from django.apps import apps as live_apps
+
+        migration = importlib.import_module("enquiries.migrations.0016_payment_status_only")
+        blank = EnquiryContact.objects.create(enquiry_id="M1", payment_status="")
+        paid = EnquiryContact.objects.create(enquiry_id="M2", payment_status="", payment_paid_on=date(2026, 11, 1),
+                                             payment_reference="UTR1")
+        credit = EnquiryContact.objects.create(enquiry_id="M3", payment_status="credit", credit_period_days=30)
+        migration.set_payment_status(live_apps, None)
+        statuses = {c.enquiry_id: c.payment_status for c in EnquiryContact.objects.all()}
+        self.assertEqual(statuses, {"M1": "pending", "M2": "paid", "M3": "credit"})
+        self.assertEqual(EnquiryContact.objects.get(enquiry_id="M2").payment_reference, "UTR1")  # nothing dropped
+
+    def test_the_default_is_payment_pending(self):
+        self.assertEqual(EnquiryContact.objects.create(enquiry_id="M4").payment_status, "pending")

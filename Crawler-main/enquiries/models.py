@@ -143,18 +143,19 @@ class EnquiryContact(models.Model):
     # More customer addresses besides customer_email (comma separated). CC'd on every email to the customer.
     other_customer_emails = models.CharField(max_length=1000, blank=True, default="")
 
-    # Payment for an accepted order. Empty means "pending"; when it is paid the order becomes converted.
+    # Payment for an accepted order; when it is paid the order becomes converted. The amount, due date, paid-on
+    # date and reference below are confidential: they are kept but no longer shown or asked for anywhere.
     PAYMENT_PENDING = "pending"
     PAYMENT_PARTIAL = "partial"
     PAYMENT_CREDIT = "credit"  # payment on credit terms: due credit_period_days after credit_starts_on
     PAYMENT_PAID = "paid"
     PAYMENT_STATUS_CHOICES = (
-        (PAYMENT_PENDING, "Payment pending"),
-        (PAYMENT_PARTIAL, "Partially paid"),
-        (PAYMENT_CREDIT, "Credit period"),
+        (PAYMENT_PENDING, "Payment Pending"),
+        (PAYMENT_PARTIAL, "Partially Paid"),
+        (PAYMENT_CREDIT, "Credit Period"),
         (PAYMENT_PAID, "Paid"),
     )
-    payment_status = models.CharField(max_length=16, choices=PAYMENT_STATUS_CHOICES, blank=True, default="")
+    payment_status = models.CharField(max_length=16, choices=PAYMENT_STATUS_CHOICES, default=PAYMENT_PENDING)
     payment_amount_received = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     payment_due_on = models.DateField(null=True, blank=True)
     # Credit period agreed with the customer: payment is due credit_period_days after credit_starts_on

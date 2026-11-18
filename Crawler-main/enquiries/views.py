@@ -1240,10 +1240,10 @@ def _attach_order_tracking(enquiry: MutableMapping[str, Any], contact: Optional[
         enquiry["payment"] = {
             "status": payment,
             "label": dict(EnquiryContact.PAYMENT_STATUS_CHOICES)[payment],
-            "amount": contact.payment_amount_received if contact else None,
-            "paid_on": contact.payment_paid_on if contact else None,
-            "reference": contact.payment_reference if contact else "",
-            "due": due,
+            # Only the status is shown. The amount received, the entered due date, the paid-on date and the
+            # reference are confidential and are not sent to the page. "due" is only the end of a credit period
+            # (worked out from the credit days and start date), which the follow-up chip needs.
+            "due": due if payment == EnquiryContact.PAYMENT_CREDIT else None,
             "overdue": bool(due and payment != EnquiryContact.PAYMENT_PAID and due < timezone.localdate()),
             "credit_days": contact.credit_period_days if contact else None,
             "credit_starts_on": contact.credit_starts_on if contact else None,
@@ -1265,27 +1265,11 @@ def _attach_order_tracking(enquiry: MutableMapping[str, Any], contact: Optional[
 
 
 def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) -> None:
-    from decimal import Decimal, InvalidOperation
-
     value = (request.POST.get("payment_status") or "").strip()
     if value not in {key for key, _ in EnquiryContact.PAYMENT_STATUS_CHOICES}:
         messages.error(request, "Unknown payment status.")
         return
-    amount_raw = (request.POST.get("payment_amount_received") or "").strip().replace(",", "")
-    amount = None
-    if amount_raw:
-        try:
-            amount = Decimal(amount_raw)
-        except InvalidOperation:
-            amount = None
-        if amount is None or amount < 0:
-            messages.error(request, "Please enter a valid amount received.")
-            return
-    due_raw = (request.POST.get("payment_due_on") or "").strip()
-    due = parse_date(due_raw) if due_raw else None
-    if due_raw and due is None:
-        messages.error(request, "Please enter a valid payment due date.")
-        return
+    due = None
     # "Credit period" in the Payment list: payment is due N days after the invoice / dispatch date.
     credit_days, credit_start = None, None
     if value == EnquiryContact.PAYMENT_CREDIT:
@@ -1300,13 +1284,6 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
             messages.error(request, "Please enter a valid credit start date (invoice / dispatch date).")
             return
         due = credit_start + timedelta(days=credit_days)  # the credit period sets the due date
-    paid_on, reference = None, (request.POST.get("payment_reference") or "").strip()[:120]
-    if value == EnquiryContact.PAYMENT_PAID:
-        paid_raw = (request.POST.get("payment_paid_on") or "").strip()
-        paid_on = parse_date(paid_raw) if paid_raw else timezone.localdate()
-        if paid_on is None or paid_on > timezone.localdate():
-            messages.error(request, "Please enter the date the payment was received (not a future date).")
-            return
     try:
         enquiry = services.fetch_enquiry(api_root, enquiry_id, request=request)
     except services.EnquiryServiceError as exc:
@@ -1329,15 +1306,13 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
         conversions[enquiry_id] = "accepted"
         request.session[CONVERSION_SESSION_KEY] = conversions
         request.session.modified = True
-    _save_payment(enquiry_id, value, request.user, amount=amount, due=due, paid_on=paid_on, reference=reference,
-                  credit_days=credit_days, credit_start=credit_start)
+    # The confidential amount, due date, paid-on date and reference already stored are left exactly as they are.
+    _save_payment(enquiry_id, value, request.user, due=due, credit_days=credit_days, credit_start=credit_start,
+                  leave_confidential=True)
     label = dict(EnquiryContact.PAYMENT_STATUS_CHOICES)[value]
     if value == EnquiryContact.PAYMENT_PAID:
         messages.success(request, f"Order #{enquiry_id}: {label}. The status is now Converted.")
-        outcome = status_emails.send_status_email(
-            CustomerStatusEmail.KIND_PAYMENT_RECEIVED, enquiry_id, enquiry,
-            payment_detail=status_emails.payment_detail_text(paid_on, reference),
-        )
+        outcome = status_emails.send_status_email(CustomerStatusEmail.KIND_PAYMENT_RECEIVED, enquiry_id, enquiry)
         _report_status_email(request, outcome, "payment received")
     elif credit_days:
         messages.success(request, f"Order #{enquiry_id}: {label} of {credit_days} days. Payment is due on "
@@ -1348,10 +1323,18 @@ def _board_update_payment(request: HttpRequest, api_root: str, enquiry_id: str) 
 
 
 def _save_payment(enquiry_id: str, value: str, user, *, amount=None, due=None, paid_on=None, reference="",
-                  credit_days=None, credit_start=None, keep_details: bool = False) -> None:
+                  credit_days=None, credit_start=None, keep_details: bool = False,
+                  leave_confidential: bool = False) -> None:
+    """Save the payment status. leave_confidential keeps the stored amount, paid-on date and reference as they are
+    (the form no longer has them); the due date is only set from a credit period."""
     contact, _ = EnquiryContact.objects.get_or_create(enquiry_id=str(enquiry_id))
     contact.payment_status = value
-    if not keep_details:
+    if leave_confidential:
+        if due is not None:
+            contact.payment_due_on = due
+        contact.credit_period_days = credit_days
+        contact.credit_starts_on = credit_start
+    elif not keep_details:
         contact.payment_amount_received = amount
         contact.payment_due_on = due
         contact.payment_paid_on = paid_on
@@ -1410,8 +1393,7 @@ def _board_retry_status_email(request: HttpRequest, api_root: str, enquiry_id: s
         outcome = status_emails.send_closing_email(enquiry, api_root)
     elif kind == CustomerStatusEmail.KIND_PAYMENT_RECEIVED:
         contact = EnquiryContact.objects.filter(enquiry_id=enquiry_id).first()
-        detail = status_emails.payment_detail_text(contact.payment_paid_on, contact.payment_reference) if contact else ""
-        outcome = status_emails.send_status_email(kind, enquiry_id, enquiry, payment_detail=detail)
+        outcome = status_emails.send_status_email(kind, enquiry_id, enquiry)  # no payment reference or date in the email
     else:
         outcome = status_emails.send_status_email(kind, enquiry_id, enquiry,
                                                   reason=_share_reason(enquiry, kind=kind) if kind in _SHARE_REASON_MARKERS else "")

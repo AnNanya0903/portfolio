@@ -452,25 +452,24 @@
             <div class="order-track" data-order-tracking="{{ enquiry.enquiry_id }}">
               {% if enquiry.payment and enquiry.status == 'converted' %}
               <span class="order-chip order-chip--ok" data-payment-status="paid"
-                    title="{% if enquiry.payment.reference %}Ref: {{ enquiry.payment.reference }}{% endif %}">Paid{% if enquiry.payment.paid_on %} · {{ enquiry.payment.paid_on|date:'d M Y' }}{% endif %}</span>
+                    >Paid</span>
               {% elif enquiry.payment %}
               <details class="order-track-payment" data-payment-status="{{ enquiry.payment.status }}">
                 <summary class="order-chip order-chip--{% if enquiry.payment.status == 'paid' %}ok{% elif enquiry.payment.overdue %}alert{% else %}warn{% endif %}">
-                  {{ enquiry.payment.label }}{% if enquiry.payment.amount %} · {{ enquiry.payment.amount }} received{% endif %}{% if enquiry.payment.status == 'credit' and enquiry.payment.credit_days %} ({{ enquiry.payment.credit_days }} days){% endif %}{% if enquiry.payment.due and enquiry.payment.status != 'paid' %} · due {{ enquiry.payment.due|date:'d M' }}{% if enquiry.payment.overdue %} (overdue){% elif enquiry.payment.in_credit %} (in credit period){% endif %}{% endif %}
+                  {{ enquiry.payment.label }}{% if enquiry.payment.status == 'credit' and enquiry.payment.credit_days %} ({{ enquiry.payment.credit_days }} days){% endif %}
                 </summary>
-                <form method="post" class="order-track-form">
+                <form method="post" class="order-track-form"
+                      onsubmit="return this.payment_status.value !== 'paid' || confirm('Mark this order as Paid and Converted?');">
                   {% csrf_token %}
                   <input type="hidden" name="action" value="update_payment">
                   <input type="hidden" name="enquiry_id" value="{{ enquiry.enquiry_id }}">
                   <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                  <label class="small text-muted" for="payStatus{{ enquiry.enquiry_id }}">Payment</label>
+                  <label class="small text-muted" for="payStatus{{ enquiry.enquiry_id }}">Payment Status</label>
                   <select id="payStatus{{ enquiry.enquiry_id }}" name="payment_status" class="form-select form-select-sm">
                     {% for value, label in payment_status_choices %}
                     <option value="{{ value }}"{% if enquiry.payment.status == value %} selected{% endif %}>{{ label }}</option>
                     {% endfor %}
                   </select>
-                  <label class="small text-muted" for="payAmount{{ enquiry.enquiry_id }}">Amount received</label>
-                  <input id="payAmount{{ enquiry.enquiry_id }}" type="number" step="0.01" min="0" name="payment_amount_received" class="form-control form-control-sm" value="{{ enquiry.payment.amount|default_if_none:'' }}">
                   <div data-pay-show="credit"{% if enquiry.payment.status != 'credit' %} hidden{% endif %}>
                     <label class="small text-muted" for="payCredit{{ enquiry.enquiry_id }}">Credit period (days)</label>
                     <input id="payCredit{{ enquiry.enquiry_id }}" type="number" min="1" max="365" step="1" name="credit_period_days" list="creditPeriodOptions" class="form-control form-control-sm" value="{{ enquiry.payment.credit_days|default_if_none:'' }}" placeholder="e.g. 30">
@@ -478,15 +477,6 @@
                     <input id="payCreditStart{{ enquiry.enquiry_id }}" type="date" name="credit_starts_on" class="form-control form-control-sm" value="{{ enquiry.payment.credit_starts_on|date:'Y-m-d' }}">
                     <div class="small text-muted">The due date is worked out for you, and payment reminders wait until then.</div>
                   </div>
-                  <div data-pay-hide="credit"{% if enquiry.payment.status == 'credit' %} hidden{% endif %}>
-                  <label class="small text-muted" for="payDue{{ enquiry.enquiry_id }}">Payment due on</label>
-                  <input id="payDue{{ enquiry.enquiry_id }}" type="date" name="payment_due_on" class="form-control form-control-sm" value="{{ enquiry.payment.due|date:'Y-m-d' }}">
-                  </div>
-                  <label class="small text-muted" for="payPaidOn{{ enquiry.enquiry_id }}">Paid on (when Paid)</label>
-                  <input id="payPaidOn{{ enquiry.enquiry_id }}" type="date" name="payment_paid_on" class="form-control form-control-sm">
-                  <label class="small text-muted" for="payRef{{ enquiry.enquiry_id }}">Payment reference (UTR / cheque no.)</label>
-                  <input id="payRef{{ enquiry.enquiry_id }}" type="text" maxlength="120" name="payment_reference" class="form-control form-control-sm" value="{{ enquiry.payment.reference|default:'' }}">
-                  <div class="small text-muted">Choosing “Paid” marks the payment as received and changes the status to Converted. This is the only way to convert an order.</div>
                   <button type="submit" class="btn btn-sm btn-primary mt-1">Save payment</button>
                 </form>
               </details>
