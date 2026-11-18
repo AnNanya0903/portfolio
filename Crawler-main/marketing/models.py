@@ -17,6 +17,7 @@ class MarketingLead(models.Model):
         ("competitor", "Went to a competitor"),
         ("payment_terms", "Payment terms"),
         ("cancelled", "Project cancelled"),
+        ("alternative_gasket", "Alternative gasket purchased from AVIGIRI"),
         ("no_reply", "Never replied"),
         ("other", "Other"),
     )

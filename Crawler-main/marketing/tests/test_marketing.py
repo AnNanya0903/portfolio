@@ -181,6 +181,14 @@ class MarketingViewTests(TestCase):
             self.client.post(url, {"action": "set_reason", "lost_reason": "made-up"})
         self.assertEqual(MarketingLead.objects.get(enquiry_id="E1").lost_reason, "price")
 
+    def test_alternative_gasket_is_a_reason_in_the_drop_down(self):
+        url = reverse("marketing:detail", args=["E1"])
+        with self._fetch():
+            page = self.client.get(url)
+            self.assertContains(page, '<option value="alternative_gasket">Alternative gasket purchased from AVIGIRI</option>')
+            self.client.post(url, {"action": "set_reason", "lost_reason": "alternative_gasket"})
+        self.assertEqual(MarketingLead.objects.get(enquiry_id="E1").lost_reason, "alternative_gasket")
+
     def test_revive_creates_linked_enquiry(self):
         url = reverse("marketing:detail", args=["E1"])
         with self._fetch(), patch("enquiries.services.create_enquiry", return_value={"enquiry_id": "E50"}) as create:
