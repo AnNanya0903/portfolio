@@ -555,7 +555,6 @@
                 fileAccept: ".pdf",
                 suggestions: [
                     { icon: "📊", text: "View Full Enquiry Board", action: () => navigateTo("{% url 'enquiries:board' %}") },
-                    { icon: "📝", text: "Create New Sheet Enquiry", action: () => primeAiRequest("Create a new enquiry sheet called ") },
                     { icon: "📂", text: "Upload PDF RFQ", action: () => primeAiRequest("Create a new enquiry from this PDF", ".pdf", true, "upload_pdf_enquiry") },
                     { icon: "📈", text: "View Summary Report", action: () => navigateTo("{% url 'enquiries:summary' %}") },
                 ],
