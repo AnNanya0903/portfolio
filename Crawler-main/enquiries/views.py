@@ -1403,6 +1403,22 @@ def _board_retry_status_email(request: HttpRequest, api_root: str, enquiry_id: s
         _report_status_email(request, outcome, label)
 
 
+# Board filter "Document": the choice, its label, and words that identify the document in the attached file name.
+DOCUMENT_FILTERS = {
+    "proforma": ("PROFORMA INVOICE", ("proforma",)),
+    "feasibility": ("Feasibility & Quotation Report", ("feasibility", "quotation")),
+}
+
+
+def _has_document(enquiry: Mapping[str, Any], words: tuple) -> bool:
+    """True when one of the enquiry's attached files has one of the words in its name (case ignored)."""
+    for attachment in enquiry.get("general_attachments") or enquiry.get("attachments") or []:
+        name = str((attachment or {}).get("file_name") if isinstance(attachment, Mapping) else "").lower()
+        if any(word in name for word in words):
+            return True
+    return False
+
+
 @login_required
 def board(request: HttpRequest) -> HttpResponse:
     api_root = _get_api_root()
@@ -1470,6 +1486,9 @@ def board(request: HttpRequest) -> HttpResponse:
     payment_filter = (request.GET.get("payment") or "").strip()
     if payment_filter not in {"unpaid", "paid"}:
         payment_filter = ""
+    document_filter = (request.GET.get("document") or "").strip()
+    if document_filter not in DOCUMENT_FILTERS:
+        document_filter = ""
 
     page_size_options = [25, 50, 100]
     try:
@@ -1532,6 +1551,11 @@ def board(request: HttpRequest) -> HttpResponse:
         else:
             wanted = paid_ids | {str(e.get("enquiry_id")) for e in enquiries if _status_of(e) == "converted"}
         enquiries = [e for e in enquiries if str(e.get("enquiry_id")) in wanted]
+
+    # Document filter: only the enquiries with that document attached (matched on the attached file's name).
+    if document_filter:
+        words = DOCUMENT_FILTERS[document_filter][1]
+        enquiries = [e for e in enquiries if _has_document(e, words)]
 
     # Financial year + month filter
     if fin_year or month:
@@ -1662,6 +1686,8 @@ def board(request: HttpRequest) -> HttpResponse:
         base_params["status"] = status
     if payment_filter:
         base_params["payment"] = payment_filter
+    if document_filter:
+        base_params["document"] = document_filter
 
     prev_url = None
     if page > 1:
@@ -1700,6 +1726,8 @@ def board(request: HttpRequest) -> HttpResponse:
         "status_choices": STATUS_CHOICES,
         "selected_status": status,
         "selected_payment": payment_filter,
+        "document_filter_choices": [(key, label) for key, (label, _words) in DOCUMENT_FILTERS.items()],
+        "selected_document": document_filter,
         "payment_status_choices": EnquiryContact.PAYMENT_STATUS_CHOICES,
     }
     return render(request, "enquiries/board.html", context)

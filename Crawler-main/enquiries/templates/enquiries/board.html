@@ -323,6 +323,17 @@
           </select>
         </div>
 
+        <!-- Document filter: enquiries that have this document attached -->
+        <div class="d-flex align-items-center gap-2">
+          <label for="documentFilter" class="small text-muted mb-0">Document</label>
+          <select id="documentFilter" name="document" class="form-select form-select-sm" style="width: auto;">
+            <option value="">All</option>
+            {% for key, label in document_filter_choices %}
+            <option value="{{ key }}"{% if selected_document == key %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
         <div class="input-group input-group-sm" style="width: 300px;">
           <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
           <input type="search" class="form-control border-start-0" placeholder="Search project or customer..." name="q" value="{{ search_query|default:'' }}">
