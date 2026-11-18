@@ -284,7 +284,7 @@ FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=2, cas
 MAGICWAND_HIDDEN_SERVICES = {
     slug.strip() for slug in config(
         'MAGICWAND_HIDDEN_SERVICES',
-        default='design,discussion,document_scanner,gasket_counter',
+        default='design,discussion,document_scanner,gasket_counter,mrp,deskera,accounts,compounding_planning,compounding_board',
     ).split(',') if slug.strip()
 }
 # KYC verification emails. Test mode is on by default: nothing is sent until this is set to False.

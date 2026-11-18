@@ -79,11 +79,6 @@
                         <i class="bi bi-journal-text"></i> Enquiries
                     </a>
                     {% endif %}
-                    {% if mw_service_access.enquiries|default:False %}
-                    <a href="{% url 'enquiries:tasks' %}" class="nav-pill-custom {% if '/enquiries/tasks/' in request.path %}active{% endif %}">
-                        <i class="bi bi-list-task"></i> Pending Tasks{% if mw_pending_tasks %} <span class="badge text-bg-danger ms-1">{{ mw_pending_tasks }}</span>{% endif %}
-                    </a>
-                    {% endif %}
                     {% if mw_service_access.marketing|default:False %}
                     <a href="{% url 'marketing:board' %}" class="nav-pill-custom {% if '/marketing/' in request.path %}active{% endif %}">
                         <i class="bi bi-megaphone"></i> Marketing

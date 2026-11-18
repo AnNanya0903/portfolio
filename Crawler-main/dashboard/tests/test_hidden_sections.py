@@ -25,12 +25,12 @@ class HiddenSectionTests(TestCase):
 
     def test_default_setting_hides_only_the_rarely_used_sections(self):
         from django.conf import settings
-        rarely_used = {"design", "discussion", "document_scanner", "gasket_counter"}
+        rarely_used = {"design", "discussion", "document_scanner", "gasket_counter",
+                       "mrp", "deskera", "accounts", "compounding_planning", "compounding_board"}
         self.assertEqual(settings.MAGICWAND_HIDDEN_SERVICES, rarely_used)
         shown = {slug for slug, on in self._flags().items() if on}
         self.assertEqual(shown, set(SERVICE_DEFINITIONS) - rarely_used)
-        for kept in ("gmail_ai", "enquiries", "marketing", "kyc", "quotations", "deskera", "mrp", "accounts",
-                     "compounding_planning", "compounding_board"):
+        for kept in ("gmail_ai", "enquiries", "marketing", "kyc", "quotations"):
             self.assertIn(kept, shown)
 
     @override_settings(MAGICWAND_HIDDEN_SERVICES=HIDE_OTHERS)
@@ -67,12 +67,12 @@ class HiddenSectionTests(TestCase):
     @override_settings(**STATIC)
     def test_default_menus_hide_the_rarely_used_sections_but_keep_the_rest(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
-        for text in (">Operations</summary>", ">Integrations</summary>", ">Utilities</summary>",  # Accounts keeps Utilities
-                     ">Intelligence</summary>", "</i> Gmail AI",  # Gmail AI stays visible
-                     "</i> Manufacturing", "</i> Deskera MRP", "</i> Quotations"):
+        for text in (">Intelligence</summary>", "</i> Gmail AI", "</i> Quotations"):  # Gmail AI stays visible
             self.assertIn(text, page, text)
-        for text in (">Collaboration</summary>",  # nothing left in it
-                     "</i> Design Match", "</i> Documents", "</i> Gasket Counter", "</i> Forum"):
+        for text in (">Operations</summary>", ">Integrations</summary>", ">Utilities</summary>", ">Collaboration</summary>",
+                     "</i> Manufacturing", "</i> Deskera MRP", "</i> Accounts Portal", "</i> Compounding",
+                     "</i> Design Match", "</i> Documents", "</i> Gasket Counter", "</i> Forum",
+                     "Pending Tasks"):
             self.assertNotIn(text, page, text)
 
     @override_settings(MAGICWAND_HIDDEN_SERVICES=set(), **STATIC)
