@@ -97,7 +97,7 @@ class TimelineTests(TestCase):
     def test_proforma_invoice_follow_ups_use_the_same_rhythm(self):
         FollowUpStart.objects.create(enquiry_id="E1", stage="payment_pending", gmail_thread_id="T-Q",
                                      customer_email="buyer@acme.example", started_at=DAY0)
-        self.enquiry["status"] = "accepted"
+        self.enquiry["status"] = "open"  # PI follow-ups are sent only while the enquiry is Open
         timeline = self._run()
         self.assertEqual([day for day, events in timeline.items() if events[0][0] == "payment_pending"], [2, 4, 6, 8])
         self.assertEqual(timeline[10], [("closing", 0, "enquiry closed")])  # an unpaid PI is closed too

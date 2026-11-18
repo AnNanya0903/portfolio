@@ -353,11 +353,13 @@ class AutoFollowUpOnConvertedTests(TestCase):
         accepted = {"enquiry_id": "E1", "status": "accepted"}
         cycle = auto_follow_up.cycles(["E1"])["E1"]
         reason = auto_follow_up._skip_reason("E1", accepted, cycle, timezone.localdate())
-        self.assertIn("send the proforma invoice", reason)
+        self.assertIn("only while it is Open", reason)  # accepted enquiries get no automatic follow-ups
         latest.stage = "payment_pending"
         latest.save()
         cycle = auto_follow_up.cycles(["E1"])["E1"]
-        self.assertEqual(auto_follow_up._skip_reason("E1", accepted, cycle, timezone.localdate()), "")
+        self.assertIn("only while it is Open", auto_follow_up._skip_reason("E1", accepted, cycle, timezone.localdate()))
+        open_enquiry = {"enquiry_id": "E1", "status": "open"}
+        self.assertEqual(auto_follow_up._skip_reason("E1", open_enquiry, cycle, timezone.localdate()), "")
 
 
 @override_settings(**AUTO_ON, FOLLOW_UP_ACK_WITHIN_DAYS=2, FOLLOW_UP_CLOSE_AFTER_DAYS=7, N8N_API_TOKEN="tok")

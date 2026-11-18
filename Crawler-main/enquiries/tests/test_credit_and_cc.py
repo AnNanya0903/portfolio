@@ -87,7 +87,7 @@ class CreditPeriodRuleTests(TestCase):
                                              next_follow_up_on=today)
         EnquiryContact.objects.create(enquiry_id="E1", payment_status="credit", credit_period_days=30,
                                       credit_starts_on=today)
-        enquiry = {"enquiry_id": "E1", "status": "accepted"}
+        enquiry = {"enquiry_id": "E1", "status": "open"}  # PI follow-ups are sent only while the enquiry is Open
         cycle = auto_follow_up.cycles(["E1"])["E1"]
         reason = auto_follow_up._skip_reason("E1", enquiry, cycle, today)
         self.assertIn("credit period", reason)

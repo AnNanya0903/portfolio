@@ -191,12 +191,13 @@ def _skip_reason(enquiry_id: str, enquiry: Optional[Dict[str, Any]], cycle: Cycl
         if stopped:
             return stopped
     else:
+        # Quotation and PI follow-ups are sent only while the enquiry is Open.
+        status = str(enquiry.get("status") or "").strip().lower()
+        if status != "open":
+            return f"the enquiry is {status or 'not set'}; quotation and PI follow-ups are sent only while it is Open"
         stopped = _follow_up_stopped_reason({**enquiry, "enquiry_id": enquiry_id}, cycle.count)
         if stopped:
             return stopped
-        accepted = str(enquiry.get("status") or "").strip().lower() == "accepted"
-        if accepted and cycle.stage != PAYMENT_STAGE:
-            return "order accepted; send the proforma invoice to start the payment follow-ups"
         if cycle.stage == PAYMENT_STAGE:
             hold = payment_terms.credit_hold_until(enquiry_id, today)
             if hold:
