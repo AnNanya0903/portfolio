@@ -142,4 +142,24 @@
   </div>
 </div>
 {% endif %}
+
+{% if can_cost %}
+<div class="card border-danger-subtle shadow-sm mt-4" data-delete-quotation>
+  <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0 text-danger">Delete this quotation</h6></div>
+  <div class="card-body">
+    <p class="small mb-2">This removes <strong>{{ quotation.number }} - {{ quotation.title }}</strong> for good, with its
+      {{ quotation.versions.count }} version{{ quotation.versions.count|pluralize }}, the approval history and every stored file.
+      The customer and the enquiry are not changed.</p>
+    <form method="post" action="{% url 'quotations:delete' quotation.pk %}" class="d-flex flex-wrap align-items-end gap-2"
+          onsubmit="return confirm('Delete quotation {{ quotation.number|escapejs }} for good? This cannot be undone.');">
+      {% csrf_token %}
+      <div>
+        <label class="form-label small mb-1" for="confirmNumber">Type the quotation number <strong>{{ quotation.number }}</strong> to confirm</label>
+        <input id="confirmNumber" name="confirm_number" class="form-control form-control-sm" autocomplete="off" required>
+      </div>
+      <button type="submit" class="btn btn-sm btn-outline-danger">Delete quotation</button>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

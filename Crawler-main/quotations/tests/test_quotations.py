@@ -311,3 +311,50 @@ class ListTests(Base):
         self.assertNotContains(page, "Upload quotation")
         self.client.force_login(self.costing)
         self.assertContains(self.client.get(url), "Upload quotation")
+
+
+class DeleteTests(Base):
+    """Deleting a quotation: only costing users, the number must be typed, and the stored files go too."""
+
+    def test_costing_deletes_it_with_its_versions_and_files(self):
+        quotation = self._quotation()
+        version = quotation.versions.get()
+        stored = [version.pdf.name, version.excel.name]
+        self.client.force_login(self.costing)
+        response = self.client.post(reverse("quotations:delete", args=[quotation.pk]),
+                                    {"confirm_number": f" {quotation.number.lower()} "})
+        self.assertRedirects(response, reverse("quotations:list"))
+        self.assertFalse(Quotation.objects.filter(pk=quotation.pk).exists())
+        self.assertFalse(QuotationVersion.objects.filter(quotation_id=quotation.pk).exists())
+        self.assertFalse(QuotationEvent.objects.filter(quotation_id=quotation.pk).exists())
+        for name in stored:
+            self.assertFalse(default_storage_exists(name), name)
+
+    def test_the_number_must_be_typed(self):
+        quotation = self._quotation()
+        self.client.force_login(self.costing)
+        self.client.post(reverse("quotations:delete", args=[quotation.pk]), {"confirm_number": "QT-99999"})
+        self.client.post(reverse("quotations:delete", args=[quotation.pk]), {})
+        self.assertTrue(Quotation.objects.filter(pk=quotation.pk).exists())
+
+    def test_only_costing_users_may_delete(self):
+        quotation = self._quotation()
+        url = reverse("quotations:delete", args=[quotation.pk])
+        for user in (self.boss, self.cro):
+            self.client.force_login(user)
+            self.client.post(url, {"confirm_number": quotation.number})
+        self.assertTrue(Quotation.objects.filter(pk=quotation.pk).exists())
+
+    def test_get_does_not_delete_and_the_card_shows_only_to_costing(self):
+        quotation = self._quotation()
+        self.client.force_login(self.costing)
+        self.assertEqual(self.client.get(reverse("quotations:delete", args=[quotation.pk])).status_code, 405)
+        self.assertContains(self.client.get(reverse("quotations:detail", args=[quotation.pk])), "data-delete-quotation")
+        self.client.force_login(self.cro)
+        self.assertNotContains(self.client.get(reverse("quotations:detail", args=[quotation.pk])), "data-delete-quotation")
+
+
+def default_storage_exists(name):
+    from django.core.files.storage import default_storage  # noqa: F401  (the upload storage is replaced in tests)
+    from docscanner.storage import document_scan_storage
+    return document_scan_storage.exists(name)

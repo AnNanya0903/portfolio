@@ -1,9 +1,12 @@
 """Quotation and feasibility portal: list, new quotation, detail with versions and tracker, decisions, files."""
 from __future__ import annotations
 
+import logging
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse, Http404, HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -150,6 +153,38 @@ def mark_sent(request: HttpRequest, pk: int) -> HttpResponse:
     except workflow.WorkflowError as exc:
         messages.error(request, str(exc))
     return redirect("quotations:detail", pk=pk)
+
+
+logger = logging.getLogger(__name__)
+
+
+@require_POST
+def quotation_delete(request: HttpRequest, pk: int) -> HttpResponse:
+    """Delete a quotation for good: its versions, approval history and every stored file go with it.
+
+    Only users who can upload quotations may delete one. The quotation number must be typed to confirm.
+    The KYC customer and the enquiry it belongs to are not touched.
+    """
+    quotation = get_object_or_404(Quotation, pk=pk)
+    if not roles.can_cost(request.user):
+        return _denied(request, "delete a quotation", quotation)
+    typed = "".join((request.POST.get("confirm_number") or "").split()).upper()
+    if typed != (quotation.number or "").upper():
+        messages.error(request, f"Not deleted. Type the quotation number {quotation.number} exactly to confirm.")
+        return redirect("quotations:detail", pk=pk)
+    label = f"{quotation.number} - {quotation.title}"
+    stored = [v.pdf for v in quotation.versions.all() if v.pdf] + [v.excel for v in quotation.versions.all() if v.excel]
+    stored += [e.file for e in quotation.events.all() if e.file]
+    with transaction.atomic():
+        quotation.delete()
+    for field in stored:  # after the records are gone; a storage problem must not bring them back
+        try:
+            field.delete(save=False)
+        except Exception:
+            logger.warning("Quotations: could not remove the stored file %s of deleted quotation %s", field.name, label)
+    logger.info("Quotation %s deleted by %s", label, request.user)
+    messages.success(request, f"Quotation {label} was deleted.")
+    return redirect("quotations:list")
 
 
 def _serve(field, name: str, content_type: str, *, inline: bool = False) -> HttpResponse:
