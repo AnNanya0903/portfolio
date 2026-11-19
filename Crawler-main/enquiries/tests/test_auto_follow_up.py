@@ -261,3 +261,51 @@ class TemplateAndScheduleTests(TestCase):
         # Marketing: 4 follow-ups, then one more step for its closing email.
         self.assertEqual(auto_follow_up.next_follow_up_date(4, d, "marketing"), date(2026, 11, 8))
         self.assertIsNone(auto_follow_up.next_follow_up_date(5, d, "marketing"))
+
+
+@override_settings(**AUTO_SETTINGS)
+class ShareLinkInFollowUpTests(TestCase):
+    """Every automatic follow-up repeats the link and password of its quotation / PI email."""
+
+    URL = "https://www.magicwand.biz/enquiries/share/magicwand/ENQ-3331/Akz7QxkCbOpW/"
+    PASSWORD = "AG-p9xkKwZR"
+
+    def setUp(self):
+        self.sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
+        enquiry = {"enquiry_id": "E1", "status": "open", "subject": "Gasket quote", "customer_name": "Acme"}
+        for name, value in (("list_enquiries", [enquiry]), ("fetch_enquiry", enquiry)):
+            p = patch.object(auto_follow_up.services, name, return_value=value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _start(self, *, days_ago=4, url=URL, password=PASSWORD):
+        from enquiries.models import FollowUpStart
+        return FollowUpStart.objects.create(
+            enquiry_id="E1", stage="waiting_po", gmail_thread_id="t1", gmail_message_id="m1",
+            customer_email="buyer@acme.example", subject="Gasket quote", share_url=url, share_password=password,
+            started_at=timezone.now() - timedelta(days=days_ago))
+
+    def test_the_start_record_keeps_the_link_and_password(self):
+        start = auto_follow_up.record_start("E1", "waiting_po", sent={"threadId": "t1", "id": "m1"},
+                                            customer_email="buyer@acme.example", cc=[], subject="Gasket quote",
+                                            share_url=self.URL, share_password=self.PASSWORD)
+        self.assertEqual((start.share_url, start.share_password), (self.URL, self.PASSWORD))
+
+    def test_the_automatic_email_has_the_link_and_password(self):
+        self._start()
+        gmail = _gmail()
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
+            outcome = auto_follow_up.run_auto_follow_up("E1")
+        self.assertEqual(outcome["result"], "sent")
+        body = gmail.send_reply.call_args.kwargs["body"]
+        self.assertIn(self.URL, body)
+        self.assertIn(f"Password: {self.PASSWORD}", body)
+        self.assertIn("view the quotation online", body)
+
+    def test_an_enquiry_without_a_saved_link_gets_the_email_without_one(self):
+        self._start(url="", password="")
+        gmail = _gmail()
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
+            outcome = auto_follow_up.run_auto_follow_up("E1")
+        self.assertEqual(outcome["result"], "sent")
+        self.assertNotIn("Password:", gmail.send_reply.call_args.kwargs["body"])

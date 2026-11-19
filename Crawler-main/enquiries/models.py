@@ -122,6 +122,9 @@ class FollowUpStart(models.Model):
     cc = models.CharField(max_length=1000, blank=True, default="")
     subject = models.CharField(max_length=500, blank=True, default="")
     document_no = models.CharField(max_length=64, blank=True, default="")  # quotation / PI voucher number
+    # The share link and password sent with this email, so every follow-up can repeat them.
+    share_url = models.CharField(max_length=500, blank=True, default="")
+    share_password = models.CharField(max_length=64, blank=True, default="")
     started_at = models.DateTimeField(default=timezone.now)
     started_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
 

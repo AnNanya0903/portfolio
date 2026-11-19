@@ -266,12 +266,15 @@ def run_auto_follow_up(enquiry_id: str, today: Optional[date] = None) -> Dict[st
     reason = _skip_reason(enquiry_id, enquiry, cycle, today)
     if reason:
         return _result(enquiry_id, SKIPPED, reason)
+    start = cycle.start
     return _send(enquiry_id, enquiry, sender, today, thread_id=cycle.thread_id,
-                 customer_email=cycle.customer_email, stage=cycle.stage, attempt=cycle.count + 1, cc=cycle.cc)
+                 customer_email=cycle.customer_email, stage=cycle.stage, attempt=cycle.count + 1, cc=cycle.cc,
+                 share_url=(start.share_url if start else ""), share_password=(start.share_password if start else ""))
 
 
 def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thread_id: str,
-          customer_email: str, stage: str, attempt: int, cc: str = "") -> Dict[str, Any]:
+          customer_email: str, stage: str, attempt: int, cc: str = "", share_url: str = "",
+          share_password: str = "") -> Dict[str, Any]:
     """Reply in the conversation unless the customer wrote last; record the follow-up.
 
     Marketing has its own conversation: its first email is a NEW email (a new Gmail thread, separate from the
@@ -312,6 +315,7 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
         stage, attempt=attempt, reference=enquiry_id,
         subject=str(enquiry.get("subject") or ""), user=sender,
         due_on=due_on, credit_days=credit_days, today=today,
+        share_url=share_url, share_password=share_password,
     )
     # The other customer emails, then the same CC as the last follow-up; never the customer or our own addresses.
     cc_list = customer_emails.with_customer_cc(
@@ -414,7 +418,8 @@ def _note_marketing_reply(enquiry_id: str, sender, message: Dict[str, Any]) -> N
 
 
 def record_start(enquiry_id: str, stage: str, *, sent: Dict[str, Any], customer_email: str, cc: List[str],
-                 subject: str, user=None, document_no: str = "") -> Optional[FollowUpStart]:
+                 subject: str, user=None, document_no: str = "", share_url: str = "",
+                 share_password: str = "") -> Optional[FollowUpStart]:
     """Remember the email that starts a follow-up sequence (its Gmail thread is where follow-ups reply)."""
     thread_id = str((sent or {}).get("threadId") or "")
     if not thread_id and stage != MARKETING_STAGE:
@@ -423,4 +428,5 @@ def record_start(enquiry_id: str, stage: str, *, sent: Dict[str, Any], customer_
         enquiry_id=str(enquiry_id), stage=stage, gmail_thread_id=thread_id,
         gmail_message_id=str((sent or {}).get("id") or ""), customer_email=(customer_email or "").lower(),
         cc=", ".join(cc or []), subject=(subject or "")[:500], document_no=(document_no or "")[:64],
+        share_url=(share_url or "")[:500], share_password=(share_password or "")[:64],
         started_by=user if getattr(user, "is_authenticated", False) else None)

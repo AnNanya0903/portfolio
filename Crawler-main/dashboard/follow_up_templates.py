@@ -155,7 +155,8 @@ def _payment_terms_line(due_on, credit_days, today) -> str:
 
 
 def build_follow_up_body(stage: str, *, reference: str, subject: str, user=None, attempt: int = 1,
-                         due_on=None, credit_days=None, today=None) -> str:
+                         due_on=None, credit_days=None, today=None, share_url: str = "",
+                         share_password: str = "") -> str:
     """Body for follow-up number `attempt` (1 = first; 4 or more = the final email).
 
     For payment reminders, `due_on` adds a sentence about the agreed due date (not for a credit period).
@@ -181,13 +182,19 @@ def build_follow_up_body(stage: str, *, reference: str, subject: str, user=None,
         terms = _payment_terms_line(due_on, credit_days, today)
         if terms:
             paragraph = f"{paragraph} {terms}"
-    return "\n\n".join([
+    link = ""
+    if share_url and share_password:  # the same link and password as the quotation / PI email
+        document = "proforma invoice" if key == PAYMENT_STAGE else "quotation"
+        link = (f"You can also view the {document} online and accept or reject it using the link below:\n"
+                f"{share_url}\nPassword: {share_password}")
+    return "\n\n".join(part for part in [
         "Dear Sir/Madam,",
         paragraph,
+        link,
         question,
         closing,
         sender_signature(user),
-    ])
+    ] if part)
 
 
 def all_stage_bodies(*, reference: str, subject: str, user=None, due_on=None, credit_days=None,

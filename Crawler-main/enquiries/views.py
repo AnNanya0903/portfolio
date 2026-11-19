@@ -3508,7 +3508,8 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
         from . import auto_follow_up
         auto_follow_up.record_start(enquiry_id, what["stage"], sent=result, customer_email=to, cc=cc,
                                     subject=original.get("subject") if original is not None else email["subject"],
-                                    user=request.user, document_no=email.get("voucher_no") or "")
+                                    user=request.user, document_no=email.get("voucher_no") or "",
+                                    share_url=share_email.share_url(request, record), share_password=password)
         if getattr(settings, "FOLLOW_UP_AUTO_ENABLED", False):
             gap = (list(getattr(settings, "FOLLOW_UP_AUTO_GAP_DAYS", []) or [2]))[0]
             then = (f" Automatic follow-ups will reply in this same email thread every {gap} days until the "
