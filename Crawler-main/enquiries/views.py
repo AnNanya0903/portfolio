@@ -1418,6 +1418,71 @@ def _has_document(enquiry: Mapping[str, Any], words: tuple) -> bool:
             return True
     return False
 
+# Words in the report's own title (checked inside the PDF). A PDF is decided by its text when it can be read;
+# the file name is only used for files whose text can't be read.
+DOCUMENT_TITLE_PHRASES = {
+    "proforma": ("proforma invoice",),
+    "feasibility": ("feasibility & quotation report",),
+}
+DOCUMENT_TEXT_CACHE_SECONDS = 60 * 60 * 24 * 7
+
+
+def _pdf_first_pages_text(content: bytes, pages: int = 2) -> str:
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    reader = PdfReader(BytesIO(content))
+    text = " ".join((reader.pages[i].extract_text() or "") for i in range(min(pages, len(reader.pages))))
+    return " ".join(text.lower().split())
+
+
+def _attachment_text(enquiry_id: str, attachment: Mapping[str, Any], api_root: str, request) -> Optional[str]:
+    """Lower-case text of the first pages of an attached PDF, cached per attachment; None if it can't be read."""
+    from django.core.cache import cache
+
+    attachment_id = str(attachment.get("attachment_id") or "")
+    if not attachment_id:
+        return None
+    key = f"enquiry-document-text:{attachment_id}"
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    download_path = str(attachment.get("download_url") or "") or f"/enquiries/{enquiry_id}/attachments/{attachment_id}"
+    try:
+        content, _filename, _content_type = services.download_attachment(api_root, download_path, request=request)
+        text = _pdf_first_pages_text(content)
+    except Exception:
+        return None
+    cache.set(key, text, DOCUMENT_TEXT_CACHE_SECONDS)
+    return text
+
+
+def _may_be_pdf(attachment: Mapping[str, Any]) -> bool:
+    name = str(attachment.get("file_name") or "").lower()
+    content_type = str(attachment.get("content_type") or "").lower()
+    return "pdf" in content_type or name.endswith(".pdf") or "." not in name
+
+
+def _has_document_by_content(enquiry: Mapping[str, Any], key: str, api_root: str, request) -> bool:
+    """True when an attached PDF's title (its text) has the document's phrase, or a non-PDF file's name has its word."""
+    enquiry_id = str(enquiry.get("enquiry_id") or "")
+    phrases = DOCUMENT_TITLE_PHRASES[key]
+    words = DOCUMENT_FILTERS[key][1]
+    for attachment in enquiry.get("general_attachments") or enquiry.get("attachments") or []:
+        if not isinstance(attachment, Mapping):
+            continue
+        if _may_be_pdf(attachment):
+            text = _attachment_text(enquiry_id, attachment, api_root, request)
+            if text is not None:
+                if any(phrase in text for phrase in phrases):
+                    return True
+                continue  # readable PDF with a different title: its file name does not count
+        name = str(attachment.get("file_name") or "").lower()
+        if any(word in name for word in words):
+            return True
+    return False
+
 
 @login_required
 def board(request: HttpRequest) -> HttpResponse:
@@ -1554,8 +1619,7 @@ def board(request: HttpRequest) -> HttpResponse:
 
     # Document filter: only the enquiries with that document attached (matched on the attached file's name).
     if document_filter:
-        words = DOCUMENT_FILTERS[document_filter][1]
-        enquiries = [e for e in enquiries if _has_document(e, words)]
+        enquiries = [e for e in enquiries if _has_document_by_content(e, document_filter, api_root, request)]
 
     # Financial year + month filter
     if fin_year or month:
