@@ -143,13 +143,14 @@ def sender_signature(user=None) -> str:
 
 
 def _payment_terms_line(due_on, credit_days, today) -> str:
-    """One sentence about the agreed credit period / due date for payment reminders, or ''."""
-    if not due_on:
+    """One sentence about the agreed due date for payment reminders, or ''.
+
+    A credit period is not mentioned in the email (the sentence about the credit period was removed).
+    """
+    if not due_on or credit_days:
         return ""
     when = f"{due_on.day} {due_on:%B %Y}"
     verb = "is" if today is None or due_on >= today else "was"
-    if credit_days:
-        return f"As per the agreed credit period of {credit_days} days, the payment {verb} due on {when}."
     return f"As agreed, the payment {verb} due on {when}."
 
 
@@ -157,7 +158,7 @@ def build_follow_up_body(stage: str, *, reference: str, subject: str, user=None,
                          due_on=None, credit_days=None, today=None) -> str:
     """Body for follow-up number `attempt` (1 = first; 4 or more = the final email).
 
-    For payment reminders, `due_on` / `credit_days` add a sentence about the agreed credit period.
+    For payment reminders, `due_on` adds a sentence about the agreed due date (not for a credit period).
     """
     key = stage if stage in STAGE_KEYS else DEFAULT_STAGE
     closing, final_closing = _CLOSINGS[key]

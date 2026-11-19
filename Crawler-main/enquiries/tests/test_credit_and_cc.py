@@ -65,14 +65,15 @@ class CreditPeriodRuleTests(TestCase):
         EnquiryContact.objects.create(enquiry_id="E1", payment_due_on=timezone.localdate() + timedelta(days=5))
         self.assertIsNone(payment_terms.credit_hold_until("E1"))
 
-    def test_payment_reminder_mentions_the_credit_period(self):
+    def test_payment_reminder_does_not_mention_the_credit_period(self):
         due = datetime(2026, 12, 12).date()
         body = build_follow_up_body("payment_pending", reference="E1", subject="Gasket", due_on=due,
                                     credit_days=30, today=datetime(2026, 12, 20).date())
-        self.assertIn("As per the agreed credit period of 30 days, the payment was due on 12 December 2026.", body)
+        self.assertNotIn("credit period", body)  # the credit period line is not in the email
+        self.assertNotIn("12 December 2026", body)
         early = build_follow_up_body("payment_pending", reference="E1", subject="Gasket", due_on=due,
                                      credit_days=30, today=datetime(2026, 12, 1).date())
-        self.assertIn("the payment is due on 12 December 2026", early)
+        self.assertNotIn("12 December 2026", early)  # the credit-period email has no due-date line either
         # other stages and orders without terms are unchanged
         self.assertNotIn("credit period", build_follow_up_body("general", reference="E1", subject="G", due_on=due,
                                                                 credit_days=30))
@@ -233,7 +234,7 @@ class ComposeCcTests(TestCase):
         due = today + timedelta(days=30)
         self.assertContains(page, "data-credit-period")
         self.assertEqual(page.context["next_follow_up_default"], due.isoformat())
-        self.assertIn("agreed credit period of 30 days", page.context["form"].initial["body"])
+        self.assertNotIn("credit period", page.context["form"].initial["body"])
 
 
 @override_settings(**AUTO_ON)
