@@ -248,7 +248,7 @@
       <span class="badge badge-primary-soft badge-copilot">{{ enquiries_total_count }} active</span>
     </div>
     <div class="ms-auto">
-      <form class="d-flex align-items-center gap-2 flex-wrap justify-content-end enquiry-search-stack" action="{% url 'enquiries:board' %}" method="get" data-search-form="true">
+      <form class="d-flex align-items-center gap-2 flex-wrap justify-content-end enquiry-search-stack" action="{% url 'enquiries:board' %}" method="get" data-search-form="true" autocomplete="off">
         <div class="d-flex align-items-center gap-2">
           <label for="enquiryPerPage" class="small text-muted mb-0">Per page</label>
           <select
@@ -304,6 +304,7 @@
             name="status"
             class="form-select form-select-sm"
             style="width: auto;"
+            autocomplete="off"
           >
             <option value="">All Statuses</option>
             {% for status_value, status_label in status_choices %}
@@ -316,7 +317,7 @@
         <div class="d-flex align-items-center gap-2">
           <datalist id="creditPeriodOptions"><option value="15"><option value="30"><option value="45"><option value="60"><option value="90"></datalist>
           <label for="paymentFilter" class="small text-muted mb-0">Payment</label>
-          <select id="paymentFilter" name="payment" class="form-select form-select-sm" style="width: auto;">
+          <select id="paymentFilter" name="payment" class="form-select form-select-sm" style="width: auto;" autocomplete="off">
             <option value="">All</option>
             <option value="unpaid"{% if selected_payment == 'unpaid' %} selected{% endif %}>Accepted, payment pending</option>
             <option value="paid"{% if selected_payment == 'paid' %} selected{% endif %}>Paid (converted)</option>
@@ -326,7 +327,7 @@
         <!-- Document filter: enquiries that have this document attached -->
         <div class="d-flex align-items-center gap-2">
           <label for="documentFilter" class="small text-muted mb-0">Document</label>
-          <select id="documentFilter" name="document" class="form-select form-select-sm" style="width: auto;">
+          <select id="documentFilter" name="document" class="form-select form-select-sm" style="width: auto;" autocomplete="off">
             <option value="">All</option>
             {% for key, label in document_filter_choices %}
             <option value="{{ key }}"{% if selected_document == key %} selected{% endif %}>{{ label }}</option>

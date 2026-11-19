@@ -58,3 +58,26 @@ class DocumentFilterTests(TestCase):
         self.assertTrue(_has_document({"general_attachments": [{"file_name": "PROFORMA invoice.PDF"}]}, ("proforma",)))
         self.assertTrue(_has_document({"general_attachments": [{"file_name": "x.pdf"}, {"file_name": "quotation-v2.pdf"}]}, ("quotation",)))
         self.assertFalse(_has_document({"general_attachments": []}, ("proforma",)))
+
+
+@override_settings(STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage", DEBUG=True)
+@mock.patch("enquiries.views._get_api_root", return_value="http://svc")
+@mock.patch("enquiries.views.services.list_enquiries", side_effect=lambda *a, **k: [dict(r) for r in ROWS])
+class StatusFilterDoesNotRememberTests(TestCase):
+    """The browser must not put back an old Status choice (it made the filter show Accepted by itself)."""
+
+    def setUp(self):
+        self.client.force_login(get_user_model().objects.create_superuser("boss2", "b2@example.com", "x"))
+
+    def test_the_filters_do_not_let_the_browser_remember_a_choice(self, *_):
+        html = self.client.get(reverse("enquiries:board")).content.decode()
+        for name in ("statusFilter", "paymentFilter", "documentFilter"):
+            start = html.index(f'id="{name}"')
+            tag = html[html.rindex("<select", 0, start):html.index(">", start)]
+            self.assertIn('autocomplete="off"', tag, name)
+        self.assertIn('data-search-form="true" autocomplete="off"', html)
+
+    def test_a_fresh_visit_shows_all_statuses(self, *_):
+        page = self.client.get(reverse("enquiries:board"))
+        self.assertEqual(page.context["selected_status"], "")
+        self.assertIn('<option value="">All Statuses</option>', page.content.decode())
