@@ -169,7 +169,8 @@ class AuditTests(TestCase):
 
     def test_contact_changes_and_deletion_are_logged(self):
         self.client.post(reverse("kyc:contact_new", args=[self.customer.pk]),
-                         {"category": "accounts", "name": "Rahul", "email": "r@acme.example"})
+                         {"category": "accounts", "name": "Rahul", "designation": "Accounts Manager",
+                          "phone": "9845012345", "email": "r@acme.example"})
         self.assertTrue(KycAuditLog.objects.filter(field_changed="contact added: Rahul").exists())
         self.client.post(reverse("kyc:delete", args=[self.customer.pk]), {"confirm_code": "AV-0001"})
         row = KycAuditLog.objects.get(action="delete")

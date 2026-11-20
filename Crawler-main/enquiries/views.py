@@ -20,8 +20,9 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.hashers import check_password, make_password
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import HttpRequest, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.urls import reverse
 from django.utils.text import slugify
 from django.core import signing
@@ -34,7 +35,8 @@ from googleapiclient.errors import HttpError
 from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
-from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, FollowUpStart, GmailLeadAnalysis, ShareLink
+from . import work_orders
+from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, FollowUpStart, GmailLeadAnalysis, ShareLink, WorkOrder
 from . import customer_emails, negotiation, payment_terms, share_email, status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
@@ -620,6 +622,8 @@ PRIORITY_CHOICES = [
 DEFAULT_PRIORITY = "medium"
 CONVERTED_STATUS = "converted"
 STATUS_VALUE_SET = {value for value, _ in STATUS_CHOICES}
+# Board status filter for enquiries marked “Converted to Work Order” (kept apart from the enquiry status).
+WORK_ORDER_FILTER = "work_order"
 NON_CONVERTED_STATUS_SET = {value for value in STATUS_VALUE_SET if value != CONVERTED_STATUS}
 CONVERSION_SESSION_KEY = "enquiry_converted_previous_statuses"
 
@@ -1485,6 +1489,28 @@ def _has_document_by_content(enquiry: Mapping[str, Any], key: str, api_root: str
 
 
 @login_required
+@require_POST
+def work_order_convert(request: HttpRequest, enquiry_id: str) -> HttpResponse:
+    """Mark an enquiry as converted to a Work Order. Once only; the enquiry's own status is not changed."""
+    if not work_orders.can_convert(request.user):
+        return HttpResponseForbidden("Only Sales and Top Management can mark an enquiry as converted to Work Order.")
+    enquiry_id = (enquiry_id or "").strip()
+    if not enquiry_id:
+        messages.error(request, "Missing enquiry identifier.")
+    else:
+        created, order = work_orders.convert(enquiry_id, request.user)
+        if created:
+            messages.success(request, f"Enquiry {enquiry_id} is converted to Work Order.")
+        else:
+            when = timezone.localtime(order.converted_at).strftime("%d %b %Y")
+            messages.info(request, f"Enquiry {enquiry_id} was already converted to Work Order on {when}.")
+    back = request.META.get("HTTP_REFERER") or reverse("enquiries:board")
+    if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        back = reverse("enquiries:board")
+    return redirect(back)
+
+
+@login_required
 def board(request: HttpRequest) -> HttpResponse:
     api_root = _get_api_root()
 
@@ -1546,7 +1572,7 @@ def board(request: HttpRequest) -> HttpResponse:
     month = (request.GET.get("month") or "").strip()
     status = (request.GET.get("status") or "").strip()
 
-    if status and status not in STATUS_VALUE_SET:
+    if status and status not in STATUS_VALUE_SET and status != WORK_ORDER_FILTER:
         status = ""
     payment_filter = (request.GET.get("payment") or "").strip()
     if payment_filter not in {"unpaid", "paid"}:
@@ -1595,7 +1621,10 @@ def board(request: HttpRequest) -> HttpResponse:
         enquiries = filtered
 
     # Status filter
-    if status:
+    if status == WORK_ORDER_FILTER:
+        converted = set(WorkOrder.objects.values_list("enquiry_id", flat=True))
+        enquiries = [enquiry for enquiry in enquiries if str(enquiry.get("enquiry_id")) in converted]
+    elif status:
         enquiries = [
             enquiry for enquiry in enquiries
             if str(enquiry.get("status") or "").strip().lower() == status
@@ -1685,6 +1714,7 @@ def board(request: HttpRequest) -> HttpResponse:
         paused_ids = {eid for eid, c in contacts.items() if c.auto_follow_up_paused}
         status_email_rows = status_emails.latest_status_emails(page_ids)
         kyc_customers = kyc_links.customers_for(page_ids)
+        work_order_rows = work_orders.converted_for(page_ids)
         from quotations import links as quotation_links
 
         quotation_counts = quotation_links.counts_for_enquiries(page_ids)
@@ -1695,6 +1725,7 @@ def board(request: HttpRequest) -> HttpResponse:
             contact = contacts.get(str(enquiry.get("enquiry_id")))
             enquiry["kyc_customer"] = kyc_customers.get(str(enquiry.get("enquiry_id")))
             enquiry["quotation_count"] = quotation_counts.get(str(enquiry.get("enquiry_id")), 0)
+            enquiry["work_order"] = work_order_rows.get(str(enquiry.get("enquiry_id")))
             if enquiry["kyc_customer"] is None:  # same company name as exactly one KYC customer: offer the link
                 enquiry["kyc_suggestion"] = kyc_suggestions.get(
                     " ".join(str(enquiry.get("customer_name") or "").split()).lower())
@@ -1787,8 +1818,9 @@ def board(request: HttpRequest) -> HttpResponse:
             (2, "February"), (3, "March"),
         ],
         "selected_month": month,
-        "status_choices": STATUS_CHOICES,
+        "status_choices": list(STATUS_CHOICES) + [(WORK_ORDER_FILTER, "Converted to Work Order")],
         "selected_status": status,
+        "can_convert_work_order": work_orders.can_convert(request.user),
         "selected_payment": payment_filter,
         "document_filter_choices": [(key, label) for key, (label, _words) in DOCUMENT_FILTERS.items()],
         "selected_document": document_filter,

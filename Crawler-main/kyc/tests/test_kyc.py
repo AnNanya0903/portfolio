@@ -45,15 +45,19 @@ class CustomerFormTests(TestCase):
 
 
 class ContactFormTests(TestCase):
-    def test_contact_needs_email_or_phone(self):
+    def test_contact_needs_a_designation_and_a_ten_digit_mobile(self):
         form = CustomerContactForm({"category": "accounts", "name": "Ravi"})
         self.assertFalse(form.is_valid())
-        self.assertTrue(form.non_field_errors())
-        self.assertTrue(CustomerContactForm({"category": "accounts", "name": "Ravi", "phone": "98450"}).is_valid())
+        self.assertIn("designation", form.errors)
+        self.assertIn("phone", form.errors)
+        self.assertFalse(CustomerContactForm({"category": "accounts", "name": "Ravi", "designation": "Director",
+                                              "phone": "98450"}).is_valid())
+        self.assertTrue(CustomerContactForm({"category": "accounts", "name": "Ravi", "designation": "Director",
+                                             "phone": "9845012345"}).is_valid())
 
     def test_purchaser_needs_an_email(self):
-        form = CustomerContactForm({"category": "sales_marketing", "name": "Ravi", "phone": "98450",
-                                    "is_purchaser": "on"})
+        form = CustomerContactForm({"category": "sales_marketing", "name": "Ravi", "designation": "Director",
+                                    "phone": "9845012345", "is_purchaser": "on"})
         self.assertIn("email", form.errors)
 
     def test_unknown_team_is_rejected(self):
@@ -89,7 +93,8 @@ class PageTests(TestCase):
         self.assertEqual(customer.created_by, self.user)
 
         response = self.client.post(reverse("kyc:contact_new", args=[customer.pk]), {
-            "category": "sales_marketing", "name": "Meera", "email": "Meera@Bolt.example", "is_purchaser": "on"})
+            "category": "sales_marketing", "name": "Meera", "designation": "Director", "phone": "9845012345",
+            "email": "Meera@Bolt.example", "is_purchaser": "on"})
         self.assertRedirects(response, reverse("kyc:detail", args=[customer.pk]))
         contact = customer.contacts.get()
         self.assertEqual(contact.email, "meera@bolt.example")
@@ -144,7 +149,8 @@ class PageTests(TestCase):
         contact = CustomerContact.objects.create(customer=acme, category="accounts", name="Ravi",
                                                  email="ravi@acme.example")
         self.client.post(reverse("kyc:contact_edit", args=[acme.pk, contact.pk]),
-                         {"category": "top_management", "name": "Ravi K", "email": "ravi@acme.example"})
+                         {"category": "top_management", "name": "Ravi K", "designation": "Director",
+                          "phone": "9845012345", "email": "ravi@acme.example"})
         contact.refresh_from_db()
         self.assertEqual((contact.category, contact.name), ("top_management", "Ravi K"))
 

@@ -20,7 +20,8 @@ def normalize_code(code: str) -> str:
 
 def customer_for_code(code: str) -> Optional[Customer]:
     code = normalize_code(code)
-    return Customer.objects.filter(code=code).first() if code else None
+    # Either code works: the typed one (AV-0001) or the automatic one (AVG-26-1001).
+    return Customer.objects.filter(Q(code=code) | Q(customer_code=code)).first() if code else None
 
 
 def contact_email(customer: Customer) -> str:
@@ -76,9 +77,10 @@ def search(q: str) -> List[Dict[str, str]]:
     customers = Customer.objects.all()
     if q:
         customers = customers.filter(
-            Q(code__icontains=normalize_code(q)) | Q(name__icontains=q) | Q(contacts__email__icontains=q)
-            | Q(gstin__icontains=normalize_code(q))
+            Q(customer_code__icontains=normalize_code(q)) | Q(code__icontains=normalize_code(q))
+            | Q(name__icontains=q) | Q(contacts__email__icontains=q) | Q(gstin__icontains=normalize_code(q))
         ).distinct()
     customers = customers.order_by("code").prefetch_related("contacts")[:SEARCH_LIMIT]
-    return [{"code": c.code, "name": c.name, "city": c.city, "gstin": c.gstin, "email": contact_email(c)}
+    return [{"code": c.code, "customer_code": c.customer_code or "", "name": c.name, "city": c.city,
+             "gstin": c.gstin, "email": contact_email(c)}
             for c in customers]

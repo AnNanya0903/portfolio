@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Tuple
 from django.db import transaction
 
 from . import extraction
-from .forms import CustomerContactForm, CustomerForm
+from .forms import CustomerForm, ImportContactForm
 from .models import Customer
 from .teams import is_yes, looks_like_purchaser, team_from_text
 
@@ -178,7 +178,7 @@ def build_plan(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         contact = _contact_data(row)
         if not contact:
             continue
-        form = CustomerContactForm(contact)
+        form = ImportContactForm(contact)
         if form.is_valid():
             group["contacts"].append(contact)
         else:
@@ -225,7 +225,7 @@ def apply_plan(plan: Dict[str, Any], user) -> Dict[str, int]:
             customer.save()
             form.save_m2m()
             for data in group.get("contacts") or []:
-                contact_form = CustomerContactForm(data)
+                contact_form = ImportContactForm(data)
                 if not contact_form.is_valid():
                     continue
                 contact = contact_form.save(commit=False)

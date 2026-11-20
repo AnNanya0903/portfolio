@@ -7,12 +7,13 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, IntegerField, Q
+from django.db.models.functions import Cast, Substr
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from . import links, verification
+from . import links, mailer, verification
 from .forms import CustomerContactForm, CustomerForm
 from .departments import audit_field_name, can_see_full_pan, log_audit, pan_for
 from .models import Customer, CustomerContact, Department, KycAuditLog
@@ -20,6 +21,15 @@ from .models import Customer, CustomerContact, Department, KycAuditLog
 logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 50
+# Sort orders for the customer list. Customer code sorts by year, then running number (AVG-26-1002 before
+# AVG-26-10000), so it is ordered by the year and the number, not as text.
+LIST_SORTS = {
+    "customer_code": ("customer_code_year", "customer_code_number"),
+    "customer_code_desc": ("-customer_code_year", "-customer_code_number"),
+    "name": ("name", "code"),
+    "code": ("code",),
+    "updated": ("-updated_at",),
+}
 
 
 @login_required
@@ -31,11 +41,19 @@ def customer_list(request: HttpRequest) -> HttpResponse:
     ).prefetch_related("departments").order_by("name", "code")
     if q:
         customers = customers.filter(
-            Q(code__icontains=q) | Q(name__icontains=q) | Q(gstin__icontains=q) | Q(city__icontains=q)
-            | Q(contacts__name__icontains=q) | Q(contacts__email__icontains=q)
+            Q(customer_code__icontains=q) | Q(code__icontains=q) | Q(name__icontains=q) | Q(gstin__icontains=q)
+            | Q(city__icontains=q) | Q(contacts__name__icontains=q) | Q(contacts__email__icontains=q)
         ).distinct()
+    sort = request.GET.get("sort") or ""
+    if sort not in LIST_SORTS:
+        sort = "name"  # the list has always been in name order by default
+    # AVG-26-10000 comes after AVG-26-1002: sort on the year and the running number as numbers, not as text.
+    customers = customers.annotate(
+        customer_code_year=Cast(Substr("customer_code", 5, 2), IntegerField()),
+        customer_code_number=Cast(Substr("customer_code", 8), IntegerField()),
+    ).order_by(*LIST_SORTS[sort], "pk")
     page = Paginator(customers, PAGE_SIZE).get_page(request.GET.get("page"))
-    return render(request, "kyc/list.html", {"page": page, "q": q, "total": page.paginator.count})
+    return render(request, "kyc/list.html", {"page": page, "q": q, "sort": sort, "total": page.paginator.count})
 
 
 def _customer_form_page(request: HttpRequest, form: CustomerForm, customer=None) -> HttpResponse:
@@ -138,6 +156,7 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "groups": groups,
         "department_groups": department_groups,
         "documents": list(customer.documents.select_related("uploaded_by")),
+        "email_history": mailer.history_for_customer(customer),
         "verifications": [{"row": v, "state": verification.link_state(v)}
                           for v in customer.verifications.select_related("sent_by")[:5]],
         "has_email": any(c.email for c in contacts),
@@ -162,7 +181,8 @@ def _contact_form_page(request: HttpRequest, form: CustomerContactForm, customer
         "form": form,
         "customer": customer,
         "contact": contact,
-        "text_fields": [form[name] for name in ("category", "name", "designation", "email", "phone", "notes")],
+        "text_fields": [form[name] for name in ("category", "name", "designation", "phone", "alternate_phone", "email", "notes")],
+        "other_designation_field": form["designation_other"],
     })
 
 

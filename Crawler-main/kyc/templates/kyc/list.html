@@ -19,8 +19,9 @@
 </div>
 
 <form method="get" class="d-flex gap-2 mb-3" role="search">
+  <input type="hidden" name="sort" value="{{ sort }}">
   <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="max-width: 360px;"
-         placeholder="Customer code, name, GSTIN, city or contact" aria-label="Search customers">
+         placeholder="Customer code (AVG-26-1001), name, GSTIN, city or contact" aria-label="Search customers">
   <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
   {% if q %}<a class="btn btn-sm btn-link" href="{% url 'kyc:list' %}">Clear</a>{% endif %}
 </form>
@@ -29,12 +30,18 @@
   <div class="table-responsive">
     <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
       <thead>
-        <tr><th>Code</th><th>Customer</th><th>City</th><th>Team</th><th>Contacts</th><th>KYC</th><th>Updated</th></tr>
+        <tr>
+          <th class="text-nowrap"><a class="text-decoration-none" href="?q={{ q|urlencode }}&sort={% if sort == 'customer_code' %}customer_code_desc{% else %}customer_code{% endif %}">Customer code{% if sort == 'customer_code' %} <i class="bi bi-sort-down"></i>{% elif sort == 'customer_code_desc' %} <i class="bi bi-sort-up"></i>{% endif %}</a></th>
+          <th><a class="text-decoration-none" href="?q={{ q|urlencode }}&sort=name">Customer</a></th>
+          <th>Your code</th><th>City</th><th>Team</th><th>Contacts</th><th>KYC</th>
+          <th><a class="text-decoration-none" href="?q={{ q|urlencode }}&sort=updated">Updated</a></th>
+        </tr>
       </thead>
       <tbody>
         {% for c in page %}
           <tr>
-            <td class="text-nowrap"><a class="kyc-code text-decoration-none" href="{% url 'kyc:detail' c.pk %}">{{ c.code }}</a></td>
+            <td class="text-nowrap"><a class="kyc-code text-decoration-none" href="{% url 'kyc:detail' c.pk %}">{{ c.customer_code }}</a></td>
+            <td class="text-nowrap kyc-muted">{{ c.code }}</td>
             <td>
               <a class="fw-semibold text-decoration-none" href="{% url 'kyc:detail' c.pk %}">{{ c.name }}</a>
               {% if c.gstin %}<div class="kyc-muted">GSTIN {{ c.gstin }}</div>{% endif %}
@@ -49,7 +56,7 @@
             <td class="text-nowrap">{{ c.updated_at|date:"d M Y" }}</td>
           </tr>
         {% empty %}
-          <tr><td colspan="7" class="text-center text-muted py-5">
+          <tr><td colspan="8" class="text-center text-muted py-5">
             {% if q %}No customer matches “{{ q }}”.{% else %}No customers yet.
               <a href="{% url 'kyc:new' %}">Add the first one</a>.{% endif %}</td></tr>
         {% endfor %}

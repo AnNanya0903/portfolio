@@ -1,0 +1,284 @@
+{% comment %}
+The shared email compose box. Include it once on a page, with `compose` in the context (see kyc/mailer.py,
+compose_config). Any button on the page can open it with data-email-template="internal" or "customer"; the
+template fills in To, CC, Subject and the body, which the person can edit before sending.
+{% endcomment %}
+<div class="modal fade" id="emailComposeModal" tabindex="-1" aria-labelledby="emailComposeTitle" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <form id="emailComposeForm" novalidate>
+        <div class="modal-header">
+          <h5 class="modal-title" id="emailComposeTitle">Email</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body d-flex flex-column gap-3">
+          <div id="emailComposeAlert" class="alert mb-0 d-none" role="alert"></div>
+
+          <div>
+            <label class="form-label small mb-1" for="emailComposeToInput">To <span class="text-danger">*</span></label>
+            <div class="email-chip-box form-control form-control-sm d-flex flex-wrap gap-1 align-items-center" data-chip-field="to">
+              <input id="emailComposeToInput" type="text" class="border-0 flex-grow-1 email-chip-input" autocomplete="off"
+                     placeholder="Type an email, then Enter or comma" aria-label="To" data-chip-input="to">
+            </div>
+            <div class="form-text">Pick from the suggestions or type an address. Several are allowed.</div>
+          </div>
+
+          <div>
+            <label class="form-label small mb-1" for="emailComposeCcInput">CC</label>
+            <div class="email-chip-box form-control form-control-sm d-flex flex-wrap gap-1 align-items-center" data-chip-field="cc">
+              <input id="emailComposeCcInput" type="text" class="border-0 flex-grow-1 email-chip-input" autocomplete="off"
+                     placeholder="Type an email, then Enter or comma" aria-label="CC" data-chip-input="cc">
+            </div>
+          </div>
+
+          <div>
+            <label class="form-label small mb-1" for="emailComposeBccInput">BCC <span class="text-muted">(optional, hidden from the others)</span></label>
+            <div class="email-chip-box form-control form-control-sm d-flex flex-wrap gap-1 align-items-center" data-chip-field="bcc">
+              <input id="emailComposeBccInput" type="text" class="border-0 flex-grow-1 email-chip-input" autocomplete="off"
+                     placeholder="Type an email, then Enter or comma" aria-label="BCC" data-chip-input="bcc">
+            </div>
+          </div>
+
+          <div id="emailComposeSuggestions" class="list-group small d-none" role="listbox" aria-label="Suggested addresses"></div>
+
+          <div>
+            <label class="form-label small mb-1" for="emailComposeSubject">Subject <span class="text-danger">*</span></label>
+            <input id="emailComposeSubject" type="text" class="form-control form-control-sm" maxlength="300">
+          </div>
+
+          <div>
+            <label class="form-label small mb-1" for="emailComposeBody">Message <span class="text-danger">*</span></label>
+            <textarea id="emailComposeBody" class="form-control form-control-sm" rows="14"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="emailComposeSend">
+            <span class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true" id="emailComposeSpinner"></span>
+            Send
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{{ compose|json_script:"emailComposeData" }}
+
+<style>
+  .email-chip-box { min-height: 2rem; height: auto; cursor: text; }
+  .email-chip-input { min-width: 12rem; outline: none; background: transparent; }
+  .email-chip { display: inline-flex; align-items: center; gap: .25rem; }
+  .email-chip button { border: 0; background: transparent; line-height: 1; padding: 0 .1rem; }
+  .email-suggest-item { cursor: pointer; }
+</style>
+
+<script>
+(function () {
+  var dataEl = document.getElementById("emailComposeData");
+  var modalEl = document.getElementById("emailComposeModal");
+  if (!dataEl || !modalEl) return;
+  var config = JSON.parse(dataEl.textContent) || {};
+  var suggestions = config.suggestions || [];
+  var templates = config.templates || {};
+  var form = document.getElementById("emailComposeForm");
+  var alertBox = document.getElementById("emailComposeAlert");
+  var sendButton = document.getElementById("emailComposeSend");
+  var spinner = document.getElementById("emailComposeSpinner");
+  var suggestBox = document.getElementById("emailComposeSuggestions");
+  var subjectInput = document.getElementById("emailComposeSubject");
+  var bodyInput = document.getElementById("emailComposeBody");
+  var titleEl = document.getElementById("emailComposeTitle");
+  var EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  var chips = { to: [], cc: [], bcc: [] };
+  var titles = { internal: "Email internal", customer: "Email to customer" };
+
+  function fields() { return ["to", "cc", "bcc"]; }
+  function inputFor(field) { return document.querySelector('[data-chip-input="' + field + '"]'); }
+  function boxFor(field) { return document.querySelector('[data-chip-field="' + field + '"]'); }
+
+  function showAlert(kind, lines) {
+    alertBox.className = "alert alert-" + kind + " mb-0";
+    alertBox.textContent = "";
+    lines.forEach(function (line) {
+      var p = document.createElement("div");
+      p.textContent = line;
+      alertBox.appendChild(p);
+    });
+  }
+  function clearAlert() { alertBox.className = "alert mb-0 d-none"; alertBox.textContent = ""; }
+
+  function allAddresses() {
+    var all = [];
+    fields().forEach(function (f) { all = all.concat(chips[f]); });
+    return all;
+  }
+
+  function renderChips(field) {
+    var box = boxFor(field);
+    box.querySelectorAll(".email-chip").forEach(function (el) { el.remove(); });
+    var input = inputFor(field);
+    chips[field].forEach(function (address) {
+      var chip = document.createElement("span");
+      chip.className = "badge text-bg-light border email-chip";
+      var text = document.createElement("span");
+      text.textContent = address;
+      var remove = document.createElement("button");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "Remove " + address);
+      remove.textContent = "×";
+      remove.addEventListener("click", function () {
+        chips[field] = chips[field].filter(function (a) { return a !== address; });
+        renderChips(field);
+      });
+      chip.appendChild(text);
+      chip.appendChild(remove);
+      box.insertBefore(chip, input);
+    });
+  }
+
+  // Adds one address to a field. Returns "" when added, or the reason it was not.
+  function addAddress(field, raw) {
+    var address = String(raw || "").trim().toLowerCase();
+    if (!address) return "";
+    if (!EMAIL.test(address)) return "“" + raw.trim() + "” is not a valid email address.";
+    if (allAddresses().indexOf(address) !== -1) return "“" + address + "” is already added.";
+    chips[field].push(address);
+    renderChips(field);
+    return "";
+  }
+
+  function commitTyped(field) {
+    var input = inputFor(field);
+    var pieces = input.value.split(/[,;\s]+/).filter(function (p) { return p.length; });
+    input.value = "";
+    var problems = [];
+    pieces.forEach(function (piece) {
+      var reason = addAddress(field, piece);
+      if (reason) problems.push(reason);
+    });
+    hideSuggestions();
+    if (problems.length) showAlert("warning", problems);
+    else clearAlert();
+  }
+
+  function hideSuggestions() { suggestBox.classList.add("d-none"); suggestBox.textContent = ""; }
+
+  function showSuggestions(field) {
+    var typed = inputFor(field).value.trim().toLowerCase();
+    var taken = allAddresses();
+    var matches = suggestions.filter(function (s) {
+      if (taken.indexOf(s.email) !== -1) return false;
+      return !typed || s.email.indexOf(typed) !== -1 || s.label.toLowerCase().indexOf(typed) !== -1;
+    }).slice(0, 8);
+    suggestBox.textContent = "";
+    if (!matches.length) { hideSuggestions(); return; }
+    matches.forEach(function (s) {
+      var item = document.createElement("button");
+      item.type = "button";
+      item.className = "list-group-item list-group-item-action email-suggest-item d-flex justify-content-between";
+      var label = document.createElement("span");
+      label.textContent = s.label;
+      var address = document.createElement("span");
+      address.className = "text-muted";
+      address.textContent = s.email + "  (" + s.group + ")";
+      item.appendChild(label);
+      item.appendChild(address);
+      item.addEventListener("mousedown", function (event) {
+        event.preventDefault();  // keep focus in the input
+        addAddress(field, s.email);
+        inputFor(field).value = "";
+        hideSuggestions();
+        inputFor(field).focus();
+      });
+      suggestBox.appendChild(item);
+    });
+    suggestBox.classList.remove("d-none");
+  }
+
+  fields().forEach(function (field) {
+    var input = inputFor(field);
+    input.addEventListener("focus", function () { showSuggestions(field); });
+    input.addEventListener("input", function () { showSuggestions(field); });
+    input.addEventListener("blur", function () { setTimeout(function () { commitTyped(field); }, 150); });
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === ",") {
+        event.preventDefault();
+        commitTyped(field);
+      } else if (event.key === "Backspace" && !input.value && chips[field].length) {
+        chips[field].pop();
+        renderChips(field);
+      }
+    });
+    boxFor(field).addEventListener("click", function () { input.focus(); });
+  });
+
+  function resetFor(templateKey) {
+    var template = templates[templateKey] || { subject: "", body: "", to: [], cc: [] };
+    fields().forEach(function (f) { chips[f] = []; renderChips(f); });
+    (template.to || []).forEach(function (a) { addAddress("to", a); });
+    (template.cc || []).forEach(function (a) { addAddress("cc", a); });
+    inputFor("to").value = ""; inputFor("cc").value = ""; inputFor("bcc").value = "";
+    subjectInput.value = template.subject || "";
+    bodyInput.value = template.body || "";
+    titleEl.textContent = titles[templateKey] || "Email";
+    clearAlert();
+    hideSuggestions();
+  }
+
+  function openWith(templateKey) {
+    resetFor(templateKey);
+    var Modal = window.bootstrap && window.bootstrap.Modal;
+    if (Modal) Modal.getOrCreateInstance(modalEl).show();
+  }
+
+  document.querySelectorAll("[data-email-template]").forEach(function (button) {
+    button.addEventListener("click", function () { openWith(button.getAttribute("data-email-template")); });
+  });
+
+  function csrfToken() {
+    var input = form.querySelector('input[name="csrfmiddlewaretoken"]');
+    return input ? input.value : "";
+  }
+
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (sendButton.disabled) return;
+    fields().forEach(function (f) { commitTyped(f); });
+    var problems = [];
+    if (!chips.to.length) problems.push("Add at least one To address.");
+    if (!subjectInput.value.trim()) problems.push("Add a subject.");
+    if (!bodyInput.value.trim()) problems.push("Write the email.");
+    if (problems.length) { showAlert("warning", problems); return; }
+
+    sendButton.disabled = true;
+    spinner.classList.remove("d-none");
+    showAlert("info", ["Sending…"]);
+    fetch(config.url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken(), "Accept": "application/json" },
+      body: JSON.stringify({
+        to: chips.to, cc: chips.cc, bcc: chips.bcc,
+        subject: subjectInput.value, body: bodyInput.value,
+        customer_id: config.customer_id, enquiry_id: config.enquiry_id
+      })
+    }).then(function (response) {
+      return response.json().catch(function () { return { ok: false, error: "The email could not be sent. Try again." }; });
+    }).then(function (data) {
+      if (data.ok) {
+        showAlert("success", [data.message || "Email sent."]);
+        window.setTimeout(function () { window.location.reload(); }, 1200);
+      } else {
+        showAlert("danger", [data.error || "The email was not sent."].concat(data.problems || []));
+        sendButton.disabled = false;
+        spinner.classList.add("d-none");
+      }
+    }).catch(function () {
+      showAlert("danger", ["The email could not be sent. Check the connection and try again."]);
+      sendButton.disabled = false;
+      spinner.classList.add("d-none");
+    });
+  });
+})();
+</script>

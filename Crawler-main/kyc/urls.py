@@ -2,7 +2,7 @@ from django.urls import path
 
 from magicwand.access import require_any_service_access, require_service_access
 
-from . import department_views, import_views, verify_views, views
+from . import department_views, email_views, import_views, verify_views, views
 
 app_name = "kyc"
 
@@ -14,6 +14,9 @@ urlpatterns = [
     # The picker is used on the enquiries board, so enquiry users may search too.
     path("api/customers/", require_any_service_access(["kyc", "enquiries"], deny="json")(views.customer_search),
          name="customer_search"),
+    # The shared compose box (Marketing today): one endpoint for every portal's emails.
+    path("emails/send/", require_any_service_access(["kyc", "marketing"], deny="json")(email_views.send),
+         name="email_send"),
     path("departments/", _kyc(department_views.departments), name="departments"),
     path("departments/manage/", _kyc(department_views.departments_manage), name="departments_manage"),
     path("departments/save/", _kyc(department_views.department_save), name="department_add"),

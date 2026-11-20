@@ -22,6 +22,11 @@
       <div class="card border-0 shadow-sm">
         <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Customer</h6></div>
         <div class="card-body d-flex flex-column gap-3">
+          <div>
+            <label class="form-label small" for="customerCodeAuto">Customer code <span class="kyc-muted">(automatic)</span></label>
+            <input type="text" id="customerCodeAuto" class="form-control form-control-sm kyc-code" readonly tabindex="-1"
+                   value="{{ customer.customer_code|default:'Created automatically when you save' }}">
+          </div>
           {% for field in main_fields %}{% include 'kyc/_field.html' %}{% endfor %}
           {% for field in address_fields %}{% include 'kyc/_field.html' %}{% endfor %}
           {% include 'kyc/_team_field.html' %}

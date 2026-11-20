@@ -26,6 +26,7 @@ urlpatterns = [
     path("upload-pdf/", _enquiries(views.upload_pdf_enquiry), name="upload_pdf_enquiry"),
     path("summary/", _enquiries(views.summary), name="summary"),
     path("gmail-queue/", _enquiries(views.gmail_queue), name="gmail_queue"),
+    path("<str:enquiry_id>/work-order/", _enquiries(views.work_order_convert), name="work_order_convert"),
     path("<str:enquiry_id>/follow-up/", _enquiries(views.follow_up), name="follow_up"),
     path("<str:enquiry_id>/follow-up/start/", _enquiries(views.follow_up_start), name="follow_up_start"),
     path(

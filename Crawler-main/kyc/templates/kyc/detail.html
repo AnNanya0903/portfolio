@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{% block title %}{{ customer.code }} - KYC - MagicWand 2.0{% endblock %}
+{% block title %}{{ customer.customer_code|default:customer.code }} - KYC - MagicWand 2.0{% endblock %}
 
 {% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
 
@@ -10,7 +10,8 @@
     <a href="{% url 'kyc:list' %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> KYC</a>
     <h2 class="page-title">{{ customer.name }}</h2>
     <p class="page-subtitle">
-      Customer code <span class="kyc-code">{{ customer.code }}</span>
+      Customer code <span class="kyc-code">{{ customer.customer_code }}</span>
+      <span class="kyc-muted ms-2">Your code {{ customer.code }}</span>
       <span class="kyc-chip kyc-chip--{{ customer.kyc_status }} ms-2">{{ customer.get_kyc_status_display }}</span>
     </p>
     <p class="mb-1"><span class="kyc-muted me-1">Team:</span>{% for t in team_departments %}<span class="kyc-chip kyc-chip--draft me-1">{{ t.department.name }}</span>{% empty %}<span class="kyc-muted">Not assigned</span>{% endfor %}</p>
@@ -182,6 +183,21 @@
         {% endfor %}
       </div>
     </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Email history <span class="kyc-muted">({{ email_history|length }})</span></h6></div>
+      <div>
+        {% for mail in email_history %}
+          <div class="kyc-contact">
+            <div class="kyc-value">{{ mail.subject }}{% if mail.status == "failed" %} <span class="kyc-chip kyc-chip--warn ms-1">Not sent</span>{% endif %}</div>
+            <div class="kyc-muted">{{ mail.sent_at|date:"d M Y, H:i" }}{% if mail.sent_by %} · {{ mail.sent_by.get_full_name|default:mail.sent_by.username }}{% endif %}</div>
+            <div class="kyc-muted small">To {{ mail.to }}{% if mail.cc %} · CC {{ mail.cc }}{% endif %}{% if mail.enquiry_id %} · Enquiry {{ mail.enquiry_id }}{% endif %}</div>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No emails sent to this customer from the portals yet.</div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 
   <div class="col-lg-8 d-flex flex-column gap-4">
@@ -207,9 +223,10 @@
                 {% if contact.designation %}<div class="kyc-muted">{{ contact.designation }}</div>{% endif %}
                 <div class="small">
                   {% if contact.email %}<a href="mailto:{{ contact.email }}" class="text-decoration-none">{{ contact.email }}</a>{% endif %}
-                  {% if contact.email and contact.phone %} · {% endif %}{{ contact.phone }}
+                  {% if contact.email and contact.phone %} · {% endif %}{% if contact.phone %}Mobile {{ contact.phone }}{% endif %}
+                  {% if contact.alternate_phone %} · Alt. {{ contact.alternate_phone }}{% endif %}
                 </div>
-                {% if contact.notes %}<div class="kyc-muted">{{ contact.notes }}</div>{% endif %}
+                {% if contact.notes %}<div class="kyc-muted">Remarks: {{ contact.notes }}</div>{% endif %}
               </div>
               <div class="d-flex gap-1 flex-shrink-0">
                 <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:contact_edit' customer.pk contact.pk %}"

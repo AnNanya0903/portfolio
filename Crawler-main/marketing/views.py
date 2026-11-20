@@ -289,4 +289,16 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "wait_days": lost.wait_days(),
         "quotations": quotation_links.for_enquiry(enquiry_id),
     }
+    # Email internal / Email to customer: the shared compose box, filled in from this enquiry and its customer.
+    from django.urls import reverse
+
+    from kyc import links as kyc_links
+    from kyc import mailer as kyc_mailer
+
+    kyc_customer = kyc_links.customers_for([enquiry_id]).get(str(enquiry_id))
+    mail_enquiry = {**enquiry, "enquiry_id": enquiry_id}
+    context["kyc_customer"] = kyc_customer
+    context["compose"] = kyc_mailer.compose_config(
+        user=request.user, enquiry=mail_enquiry, customer=kyc_customer, url=reverse("kyc:email_send"))
+    context["email_history"] = kyc_mailer.history_for_enquiry(enquiry_id)
     return render(request, "marketing/detail.html", context)

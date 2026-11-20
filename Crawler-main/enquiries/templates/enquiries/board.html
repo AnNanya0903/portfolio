@@ -381,7 +381,7 @@
               <div class="small">{% if enquiry.quotation_count %}<a href="{% url 'quotations:list' %}?q={{ enquiry.enquiry_id|urlencode }}" class="text-decoration-none" title="Quotations of this enquiry"><i class="bi bi-file-earmark-text"></i> Quotations ({{ enquiry.quotation_count }})</a>{% else %}<a href="{% url 'quotations:new' %}?enquiry={{ enquiry.enquiry_id|urlencode }}{% if enquiry.kyc_customer %}&customer={{ enquiry.kyc_customer.code|urlencode }}{% endif %}&customer_name={{ enquiry.customer_name|default:''|urlencode }}" class="text-decoration-none text-muted" title="Upload a quotation for this enquiry"><i class="bi bi-plus-lg"></i> Quotation</a>{% endif %}</div>
             {% endif %}
             {% if enquiry.kyc_customer %}
-              <div class="small">{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' enquiry.kyc_customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ enquiry.kyc_customer.code }}</a>{% else %}<span class="text-muted">{{ enquiry.kyc_customer.code }}</span>{% endif %}</div>
+              <div class="small">{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' enquiry.kyc_customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ enquiry.kyc_customer.customer_code|default:enquiry.kyc_customer.code }}</a>{% else %}<span class="text-muted">{{ enquiry.kyc_customer.customer_code|default:enquiry.kyc_customer.code }}</span>{% endif %}</div>
             {% elif enquiry.kyc_suggestion %}
               <form method="post" class="small">
                 {% csrf_token %}
@@ -432,6 +432,17 @@
             >
                 {{ enquiry.status|upper }}
             </span>
+            {% if enquiry.work_order %}
+              <div class="mt-2"><span class="badge badge-copilot badge-success-soft" data-work-order-chip
+                   title="Marked by {{ enquiry.work_order.converted_by.get_full_name|default:enquiry.work_order.converted_by.username|default:'someone' }}">Converted to Work Order</span>
+                <div class="small text-muted">{{ enquiry.work_order.converted_at|date:"d M Y, H:i" }}</div></div>
+            {% elif can_convert_work_order %}
+              <form method="post" action="{% url 'enquiries:work_order_convert' enquiry.enquiry_id %}" class="mt-2"
+                    onsubmit="return confirm('Mark this enquiry as converted to Work Order?');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-success" data-work-order-button>Converted to Work Order</button>
+              </form>
+            {% endif %}
             {% if enquiry.status == 'converted' %}
               {# Orders become Converted only through “Mark as paid”; this switch only undoes a conversion. #}
               <div class="form-check form-switch mt-2 mb-1" title="Turn off to undo the conversion (payment goes back to pending).">

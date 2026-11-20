@@ -4,7 +4,8 @@ from django import forms
 from django.core.validators import validate_email
 
 from . import logistics
-from .models import Customer, CustomerContact, Department, active_departments
+from .models import (CONTACT_DESIGNATIONS, DESIGNATION_OTHER, Customer, CustomerContact, Department,
+                     active_departments)
 
 _TEXT = {"class": "form-control form-control-sm"}
 _SELECT = {"class": "form-select form-select-sm"}
@@ -194,21 +195,53 @@ class CustomerForm(forms.ModelForm):
 
 
 class CustomerContactForm(forms.ModelForm):
+    """One person at a customer. The mobile number is required and must be 10 digits. The designation is a
+    dropdown; "Other" shows a box to type it. Email addresses are checked one by one."""
+
+    designation = forms.ChoiceField(
+        label="Designation", required=True,
+        choices=[("", "Select a designation")] + [(d, d) for d in CONTACT_DESIGNATIONS],
+        widget=forms.Select(attrs=_SELECT))
+    designation_other = forms.CharField(
+        label="Other designation", required=False, max_length=200,
+        widget=forms.TextInput(attrs={**_TEXT, "placeholder": "Type the designation"}))
+    phone = forms.CharField(label="Mobile number", max_length=40, required=True,
+                            widget=forms.TextInput(attrs={**_TEXT, "inputmode": "numeric", "placeholder": "10 digits"}))
+    alternate_phone = forms.CharField(
+        label="Alternate number", max_length=40, required=False,
+        widget=forms.TextInput(attrs={**_TEXT, "inputmode": "numeric", "placeholder": "Optional, 10 digits"}))
+
     class Meta:
         model = CustomerContact
-        fields = ["category", "name", "designation", "email", "phone", "is_purchaser", "notes"]
+        fields = ["category", "name", "designation", "email", "phone", "alternate_phone", "is_purchaser", "notes"]
+        labels = {"is_purchaser": "Primary contact", "notes": "Remarks", "category": "Team"}
         widgets = {
             "category": forms.Select(attrs=_SELECT),
             "name": forms.TextInput(attrs=_TEXT),
-            "designation": forms.TextInput(attrs={**_TEXT, "placeholder": "e.g. Purchase Manager"}),
             "email": forms.EmailInput(attrs=_TEXT),
-            "phone": forms.TextInput(attrs=_TEXT),
             "is_purchaser": forms.CheckboxInput(attrs={"class": "form-check-input"}),
-            "notes": forms.TextInput(attrs=_TEXT),
+            "notes": forms.TextInput(attrs={**_TEXT, "placeholder": "Optional"}),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A saved designation that is not in the list was typed in by someone: show it as "Other" with the text.
+        if self.instance.pk and self.instance.designation and not self.is_bound:
+            if self.instance.designation in CONTACT_DESIGNATIONS:
+                self.initial["designation"] = self.instance.designation
+            else:
+                self.initial["designation"] = DESIGNATION_OTHER
+                self.initial["designation_other"] = self.instance.designation
+
     def clean_name(self):
-        return self.cleaned_data["name"].strip()
+        return " ".join((self.cleaned_data.get("name") or "").split())
+
+    def clean_phone(self):
+        return _ten_digits(self.cleaned_data.get("phone"), "The mobile number")
+
+    def clean_alternate_phone(self):
+        value = (self.cleaned_data.get("alternate_phone") or "").strip()
+        return _ten_digits(value, "The alternate number") if value else ""
 
     def clean_email(self):
         raw = (self.cleaned_data.get("email") or "").strip()
@@ -219,18 +252,32 @@ class CustomerContactForm(forms.ModelForm):
             part = part.strip().lower()
             if not part:
                 continue
-            validate_email(part)
+            try:
+                validate_email(part)
+            except forms.ValidationError:
+                raise forms.ValidationError(f"“{part}” is not a valid email address.")
             if part not in addresses:
                 addresses.append(part)
         return ", ".join(addresses)
 
     def clean(self):
         data = super().clean()
-        if not data.get("email") and not (data.get("phone") or "").strip() and "email" not in self.errors:
-            raise forms.ValidationError("Enter an email address or a phone number for this contact.")
+        if data.get("designation") == DESIGNATION_OTHER:
+            other = " ".join((data.get("designation_other") or "").split())
+            if other:
+                data["designation"] = other
+            else:
+                self.add_error("designation_other", "Type the designation.")
         if data.get("is_purchaser") and not data.get("email") and "email" not in self.errors:
-            self.add_error("email", "The purchaser needs an email address: enquiry emails go to this person.")
+            self.add_error("email", "The primary contact needs an email address: enquiry emails go to this person.")
         return data
+
+
+def _ten_digits(value: str, label: str) -> str:
+    digits = re.sub(r"[\s-]", "", value or "")
+    if not re.fullmatch(r"[0-9]{10}", digits):
+        raise forms.ValidationError(f"{label} must be 10 digits, for example 9876543210.")
+    return digits
 
 
 DOCUMENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"}
@@ -277,7 +324,38 @@ class SheetUploadForm(forms.Form):
         return sheet
 
 
-ContactFormSet = forms.formset_factory(CustomerContactForm, extra=0, can_delete=True)
+class ImportContactForm(CustomerContactForm):
+    """A contact read from a document or an Excel sheet. It keeps the rules imports always had: the designation
+    is free text, the mobile number is optional and not checked, and a contact needs an email or a phone number.
+    The strict rules of the Contact Details form apply only to people typing a contact in."""
+
+    designation = forms.CharField(label="Designation", required=False, max_length=200,
+                                  widget=forms.TextInput(attrs=_TEXT))
+    phone = forms.CharField(label="Mobile number", max_length=40, required=False,
+                            widget=forms.TextInput(attrs=_TEXT))
+    alternate_phone = forms.CharField(label="Alternate number", max_length=40, required=False,
+                                      widget=forms.TextInput(attrs=_TEXT))
+
+    def __init__(self, *args, **kwargs):
+        super(CustomerContactForm, self).__init__(*args, **kwargs)  # skip the designation list set-up
+        self.fields.pop("designation_other", None)
+
+    def clean_phone(self):
+        return (self.cleaned_data.get("phone") or "").strip()
+
+    def clean_alternate_phone(self):
+        return (self.cleaned_data.get("alternate_phone") or "").strip()
+
+    def clean(self):
+        data = forms.ModelForm.clean(self)
+        if not data.get("email") and not (data.get("phone") or "").strip() and "email" not in self.errors:
+            raise forms.ValidationError("Enter an email address or a phone number for this contact.")
+        if data.get("is_purchaser") and not data.get("email") and "email" not in self.errors:
+            self.add_error("email", "The primary contact needs an email address: enquiry emails go to this person.")
+        return data
+
+
+ContactFormSet = forms.formset_factory(ImportContactForm, extra=0, can_delete=True)
 
 
 class VerificationSendForm(forms.Form):

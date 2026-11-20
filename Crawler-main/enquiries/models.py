@@ -381,3 +381,21 @@ class AutomationRun(models.Model):
 
     def __str__(self) -> str:
         return f"{self.started_at:%Y-%m-%d %H:%M} {self.trigger} {'ok' if self.ok else 'not ok'}"
+
+
+class WorkOrder(models.Model):
+    """An enquiry marked “Converted to Work Order” on the Enquiry Board. Kept here, not in the enquiry service,
+    so it is separate from the enquiry's own status (the “Converted” status set when a paid order is closed).
+    One row per enquiry: an enquiry can be converted only once."""
+
+    enquiry_id = models.CharField(max_length=128, unique=True)
+    converted_at = models.DateTimeField(default=timezone.now)
+    converted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name="+")
+
+    class Meta:
+        db_table = "enquiries_work_order"
+        ordering = ["-converted_at"]
+
+    def __str__(self) -> str:
+        return f"WorkOrder:{self.enquiry_id}:{self.converted_at:%Y-%m-%d}"
