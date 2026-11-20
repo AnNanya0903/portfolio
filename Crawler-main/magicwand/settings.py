@@ -295,7 +295,7 @@ KYC_VERIFICATION_LINK_DAYS = config('KYC_VERIFICATION_LINK_DAYS', default=30, ca
 # customer's Top management contacts. 0 turns the escalation off.
 KYC_ESCALATE_AFTER_REMINDERS = config('KYC_ESCALATE_AFTER_REMINDERS', default=2, cast=int)
 # Marketing portal: days to wait after an enquiry is lost before contacting the customer again.
-MARKETING_WAIT_DAYS = config('MARKETING_WAIT_DAYS', default=30, cast=int)
+MARKETING_WAIT_DAYS = config('MARKETING_WAIT_DAYS', default=7, cast=int)
 # Marketing campaign emails. Test mode is on by default: nothing is sent until this is set to False.
 MARKETING_CAMPAIGN_DRY_RUN = config('MARKETING_CAMPAIGN_DRY_RUN', default=True, cast=bool)
 MARKETING_CAMPAIGN_MAX_RECIPIENTS = config('MARKETING_CAMPAIGN_MAX_RECIPIENTS', default=50, cast=int)

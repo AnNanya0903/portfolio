@@ -138,7 +138,7 @@ def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, repli
 
 
 def wait_days() -> int:
-    return max(int(getattr(settings, "MARKETING_WAIT_DAYS", 30) or 0), 0)
+    return max(int(getattr(settings, "MARKETING_WAIT_DAYS", 7) or 0), 0)
 
 
 def financial_year_label(value: date) -> str:

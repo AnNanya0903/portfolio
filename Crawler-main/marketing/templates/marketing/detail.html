@@ -159,7 +159,7 @@
         {% elif can_revive %}
           <div class="fw-semibold small mb-1">Customer wants a new quote?</div>
           {% if row.stage == 'waiting' %}
-            <div class="alert alert-warning py-2 small">The waiting period has not ended yet (until {{ row.ready_on|date:"d M Y" }}).
+            <div class="alert alert-warning py-2 small">The waiting period of {{ wait_days }} days has not ended yet (until {{ row.ready_on|date:"d M Y" }}).
               Revive only if the customer contacted you first.</div>
           {% endif %}
           <form method="post" onsubmit="return confirm('Create a new enquiry for sales from this lost enquiry?');">
