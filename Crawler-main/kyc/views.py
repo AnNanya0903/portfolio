@@ -15,7 +15,7 @@ from django.views.decorators.http import require_POST
 from . import links, verification
 from .forms import CustomerContactForm, CustomerForm
 from .departments import audit_field_name, can_see_full_pan, log_audit, pan_for
-from .models import Customer, CustomerContact, KycAuditLog
+from .models import Customer, CustomerContact, Department, KycAuditLog
 
 logger = logging.getLogger(__name__)
 
@@ -112,11 +112,31 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         {"key": key, "label": label, "contacts": [c for c in contacts if c.category == key]}
         for key, label in CustomerContact.CATEGORY_CHOICES
     ]
+    # Each department shows its own contacts. Sales and Marketing both show the Sales and marketing contacts.
+    department_category = {
+        "Sales": CustomerContact.CATEGORY_SALES,
+        "Marketing": CustomerContact.CATEGORY_SALES,
+        "Accounts": CustomerContact.CATEGORY_ACCOUNTS,
+        "Technical/Design": CustomerContact.CATEGORY_TECHNICAL,
+        "Top Management": CustomerContact.CATEGORY_MANAGEMENT,
+    }
+    assigned_ids = {d.pk for d in customer.departments.all()}
+    department_groups = []
+    for department in Department.objects.filter(is_active=True).prefetch_related("contacts").order_by("sort_order", "name"):
+        category = department_category.get(department.name, "")
+        department_groups.append({
+            "department": department,
+            "category": category,
+            "contacts": [c for c in contacts if category and c.category == category],
+            "emails": department.emails(),
+            "assigned": department.pk in assigned_ids,
+        })
     return render(request, "kyc/detail.html", {
         "customer": customer,
         "pan_display": pan_for(request.user, customer.pan),
         "team_departments": [{"department": d, "emails": d.emails()} for d in customer.departments.all()],
         "groups": groups,
+        "department_groups": department_groups,
         "documents": list(customer.documents.select_related("uploaded_by")),
         "verifications": [{"row": v, "state": verification.link_state(v)}
                           for v in customer.verifications.select_related("sent_by")[:5]],

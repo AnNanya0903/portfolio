@@ -7,7 +7,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from kyc.departments import departments_of, mask_pan
-from kyc.models import Customer, Department, DepartmentContact, KycAuditLog, UserDepartment
+from kyc.models import Customer, CustomerContact, Department, DepartmentContact, KycAuditLog, UserDepartment
 
 BASE = dict(STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage", DEBUG=True)
 User = get_user_model()
@@ -236,3 +236,30 @@ class AdminPageTests(TestCase):
         self.client.post(reverse("kyc:department_toggle", args=[self.sales.pk]))
         customer.refresh_from_db()
         self.assertEqual(list(customer.departments.all()), [self.sales])
+
+
+@override_settings(**BASE)
+class DepartmentLayoutTests(TestCase):
+    """The customer page lists the contacts under each department, with the department's emails."""
+
+    def setUp(self):
+        call_command("seed_departments")
+        self.user = make_user("sam", "rabin@avigiri.com")
+        self.client.force_login(self.user)
+        self.customer = Customer.objects.create(code="AV-0007", name="Layout Co")
+        CustomerContact.objects.create(customer=self.customer, category="sales_marketing", name="Priya", email="priya@layout.example")
+        CustomerContact.objects.create(customer=self.customer, category="accounts", name="Ravi", email="ravi@layout.example")
+        CustomerContact.objects.create(customer=self.customer, category="top_management", name="Meera", email="meera@layout.example")
+
+    def test_every_department_has_its_section_with_its_contacts(self):
+        page = self.client.get(reverse("kyc:detail", args=[self.customer.pk]))
+        html = page.content.decode()
+        for name in ("Sales", "Marketing", "Accounts", "Technical/Design", "Top Management"):
+            self.assertIn(f'data-department-section="{name}"', html)
+        sales_at = html.index('data-department-section="Sales"')
+        accounts_at = html.index('data-department-section="Accounts"')
+        self.assertLess(sales_at, html.index("Priya"))  # Priya is in Sales (before the Accounts section)
+        self.assertLess(html.index("Priya"), accounts_at)
+        self.assertLess(accounts_at, html.index("Ravi"))
+        self.assertContains(page, "No contact for this department yet.")  # Technical/Design is empty
+        self.assertContains(page, "mailto:accounts1@avigiri.com")  # the department's own email
