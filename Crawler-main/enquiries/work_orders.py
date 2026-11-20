@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Iterable, Dict, Tuple
 
+from django.conf import settings
+
 from kyc.departments import departments_of
+from magicwand.user_utils import get_user_primary_email
 
 from .models import WorkOrder
 
@@ -11,10 +14,25 @@ from .models import WorkOrder
 ALLOWED_DEPARTMENTS = frozenset({"Sales", "Top Management"})
 
 
+# People who may mark an enquiry whatever their department. Change with WORK_ORDER_EXTRA_EMAILS (comma separated).
+EXTRA_EMAILS = frozenset({"rabin@avigiri.com"})
+
+
+def _extra_emails() -> frozenset:
+    raw = getattr(settings, "WORK_ORDER_EXTRA_EMAILS", None)
+    if raw is None:
+        return EXTRA_EMAILS
+    items = raw.split(",") if isinstance(raw, str) else raw
+    return frozenset(str(e).strip().lower() for e in items if str(e).strip())
+
+
 def can_convert(user) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
     if user.is_superuser:
+        return True
+    email = (get_user_primary_email(user) or "").strip().lower()
+    if email and email in _extra_emails():
         return True
     return any(d.is_active and d.name in ALLOWED_DEPARTMENTS for d in departments_of(user))
 

@@ -36,10 +36,15 @@ class WorkOrderTests(TestCase):
         self.top = in_department("Top Management", "top-person")
         self.marketing = in_department("Marketing", "marketing-person")
 
-    def convert(self, user, enquiry_id="ENQ-1"):
+    def convert(self, user, enquiry_id="ENQ-1", fetch=None):
+        """Post the button. The enquiry service is faked: fetch gives the enquiry, update records the change."""
         self.client.force_login(user)
-        return self.client.post(reverse("enquiries:work_order_convert", args=[enquiry_id]),
-                                HTTP_REFERER=reverse("enquiries:board"))
+        found = fetch or next(dict(r) for r in ROWS if r["enquiry_id"] == enquiry_id)
+        with mock.patch("enquiries.views.services.fetch_enquiry", return_value=found),                 mock.patch("enquiries.views.services.update_enquiry") as update:
+            response = self.client.post(reverse("enquiries:work_order_convert", args=[enquiry_id]),
+                                        HTTP_REFERER=reverse("enquiries:board"))
+        self.update = update
+        return response
 
     def test_only_sales_top_management_and_superusers_may_convert(self, *_):
         self.assertTrue(work_orders.can_convert(self.sales))
@@ -47,6 +52,13 @@ class WorkOrderTests(TestCase):
         self.assertTrue(work_orders.can_convert(User.objects.create_superuser("boss", "b@example.com", "x")))
         self.assertFalse(work_orders.can_convert(self.marketing))
         self.assertFalse(work_orders.can_convert(User.objects.create_user("nobody", "n@example.com", "x")))
+
+    def test_rabin_may_convert_whatever_his_department(self, *_):
+        rabin = User.objects.create_user("rabin", "Rabin@Avigiri.com", "x")  # in no department row
+        self.assertTrue(work_orders.can_convert(rabin))
+        with override_settings(WORK_ORDER_EXTRA_EMAILS="someone@avigiri.com"):
+            self.assertFalse(work_orders.can_convert(User.objects.create_user("r2", "x@avigiri.com", "x")))
+            self.assertTrue(work_orders.can_convert(User.objects.create_user("r3", "someone@avigiri.com", "x")))
 
     def test_marking_an_enquiry_saves_when_and_who(self, *_):
         response = self.convert(self.sales)
@@ -70,9 +82,27 @@ class WorkOrderTests(TestCase):
         self.client.force_login(self.sales)
         self.assertEqual(self.client.get(reverse("enquiries:work_order_convert", args=["ENQ-1"])).status_code, 405)
 
-    def test_the_enquiry_status_itself_is_not_changed(self, *_):
-        self.convert(self.sales)
-        self.assertEqual(ROWS[0]["status"], "open")
+    def test_the_enquiry_status_becomes_converted_and_the_payment_is_left_alone(self, *_):
+        self.convert(self.sales, "ENQ-2")  # an accepted order with its payment pending
+        self.update.assert_called_once()
+        self.assertEqual(self.update.call_args.args[2], {"status": "converted"})
+        from enquiries.models import EnquiryContact
+        self.assertFalse(EnquiryContact.objects.filter(enquiry_id="ENQ-2", payment_status="paid").exists())
+        from enquiries.models import EnquiryStatusLog
+        log = EnquiryStatusLog.objects.get(enquiry_id="ENQ-2")
+        self.assertEqual((log.old_status, log.new_status), ("accepted", "converted"))
+
+    def test_when_the_status_cannot_be_saved_nothing_is_marked(self, *_):
+        from enquiries import services
+        self.client.force_login(self.sales)
+        with mock.patch("enquiries.views.services.fetch_enquiry", return_value=dict(ROWS[0])),                 mock.patch("enquiries.views.services.update_enquiry", side_effect=services.EnquiryServiceError("down")):
+            self.client.post(reverse("enquiries:work_order_convert", args=["ENQ-1"]))
+        self.assertFalse(WorkOrder.objects.exists())
+
+    def test_an_enquiry_that_is_already_converted_is_not_changed_again(self, *_):
+        self.convert(self.sales, "ENQ-1", fetch={"enquiry_id": "ENQ-1", "status": "converted"})
+        self.update.assert_not_called()
+        self.assertTrue(WorkOrder.objects.filter(enquiry_id="ENQ-1").exists())
 
     def test_the_board_shows_the_badge_after_conversion_and_the_button_before(self, *_):
         self.client.force_login(self.sales)

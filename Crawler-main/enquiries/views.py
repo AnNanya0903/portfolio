@@ -1491,19 +1491,32 @@ def _has_document_by_content(enquiry: Mapping[str, Any], key: str, api_root: str
 @login_required
 @require_POST
 def work_order_convert(request: HttpRequest, enquiry_id: str) -> HttpResponse:
-    """Mark an enquiry as converted to a Work Order. Once only; the enquiry's own status is not changed."""
+    """Mark an enquiry as converted to a Work Order, once only: the enquiry's status becomes Converted, and who and
+    when are saved. The payment status is left as it is."""
     if not work_orders.can_convert(request.user):
         return HttpResponseForbidden("Only Sales and Top Management can mark an enquiry as converted to Work Order.")
     enquiry_id = (enquiry_id or "").strip()
     if not enquiry_id:
         messages.error(request, "Missing enquiry identifier.")
     else:
-        created, order = work_orders.convert(enquiry_id, request.user)
-        if created:
-            messages.success(request, f"Enquiry {enquiry_id} is converted to Work Order.")
+        api_root = _get_api_root()
+        try:
+            enquiry = services.fetch_enquiry(api_root, enquiry_id, request=request)
+            old_status = str(enquiry.get("status") or "").strip().lower()
+            if old_status != CONVERTED_STATUS:
+                services.update_enquiry(api_root, enquiry_id, {"status": CONVERTED_STATUS}, request=request)
+        except services.EnquiryServiceError as exc:
+            messages.error(request, f"Enquiry {enquiry_id} was not converted: {exc}")
         else:
-            when = timezone.localtime(order.converted_at).strftime("%d %b %Y")
-            messages.info(request, f"Enquiry {enquiry_id} was already converted to Work Order on {when}.")
+            if old_status != CONVERTED_STATUS:
+                negotiation.log_status_change(request.user, enquiry_id, old_status, CONVERTED_STATUS,
+                                              note="Converted to Work Order")
+            created, order = work_orders.convert(enquiry_id, request.user)
+            if created:
+                messages.success(request, f"Enquiry {enquiry_id} is converted to Work Order.")
+            else:
+                when = timezone.localtime(order.converted_at).strftime("%d %b %Y")
+                messages.info(request, f"Enquiry {enquiry_id} was already converted to Work Order on {when}.")
     back = request.META.get("HTTP_REFERER") or reverse("enquiries:board")
     if not url_has_allowed_host_and_scheme(back, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
         back = reverse("enquiries:board")
