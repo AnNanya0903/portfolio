@@ -21,5 +21,10 @@ def service_access(request):
         for slug in SERVICE_DEFINITIONS.keys()
     }
     from enquiries.negotiation import pending_task_count
+    from quotations.roles import is_top_management
+
+    # Top Management always has the Quotations menu entry, to open the PDFs and decide on them.
+    if "quotations" not in hidden and is_top_management(user):
+        flags["quotations"] = True
 
     return {"mw_service_access": flags, "mw_pending_tasks": pending_task_count(user) if flags.get("enquiries") else 0}

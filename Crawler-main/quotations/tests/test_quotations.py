@@ -280,6 +280,24 @@ class VisibilityTests(Base):
         self.client.logout()
         self.assertEqual(self.client.get(reverse("quotations:list")).status_code, 302)
 
+    def test_top_management_opens_the_pdf_and_decides_even_when_the_module_is_not_ticked(self):
+        from kyc.departments import seed_departments
+        from kyc.models import Department, UserDepartment
+        seed_departments()
+        md = get_user_model().objects.create_user("md", password="x")
+        self._allow(md, ["kyc"])  # restricted, and Quotations is not among their sections
+        self.client.force_login(md)
+        self.assertEqual(self.client.get(reverse("quotations:list")).status_code, 302)
+        UserDepartment.objects.create(user=md, department=Department.objects.get(name="Top Management"))
+        self.assertEqual(self.client.get(reverse("quotations:list")).status_code, 200)
+        self.assertContains(self.client.get(reverse("kyc:list")), 'href="/quotations/"')
+        page = self.client.get(reverse("quotations:detail", args=[self.quotation.pk]))
+        self.assertContains(page, "data-decision-card")
+        self.assertContains(page, reverse("quotations:version_pdf", args=[self.first.pk]))
+        self.assertEqual(self.client.get(reverse("quotations:version_pdf", args=[self.first.pk])).status_code, 200)
+        self.client.post(reverse("quotations:decide", args=[self.quotation.pk]), {"decision": "approve"})
+        self.assertEqual(Quotation.objects.get(pk=self.quotation.pk).status, "approved")
+
     def test_mark_as_sent(self):
         self.client.force_login(self.cro)
         url = reverse("quotations:mark_sent", args=[self.quotation.pk])

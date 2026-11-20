@@ -1,14 +1,28 @@
 from django.urls import path
 
+from functools import wraps
+
 from magicwand.access import require_service_access
 
-from . import views
+from . import roles, views
 
 app_name = "quotations"
 
-# Everyone here needs the Quotations module. Uploading, approving and the Excel files are checked
-# again inside the views (quotations/roles.py).
-_q = require_service_access("quotations")
+# Everyone here needs the Quotations module, except Top Management who always get in. Uploading, approving
+# and the Excel files are checked again inside the views (quotations/roles.py).
+_module = require_service_access("quotations")
+
+
+def _q(view):
+    guarded = _module(view)
+
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        if roles.can_open_portal(request.user):
+            return view(request, *args, **kwargs)
+        return guarded(request, *args, **kwargs)  # shows the usual "no access" message
+
+    return wrapper
 
 urlpatterns = [
     path("", _q(views.quotation_list), name="list"),
