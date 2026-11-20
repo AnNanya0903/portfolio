@@ -21,7 +21,7 @@
 <form method="get" class="d-flex gap-2 mb-3" role="search">
   <input type="hidden" name="sort" value="{{ sort }}">
   <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="max-width: 360px;"
-         placeholder="Customer code (AVG-26-1001), name, GSTIN, city or contact" aria-label="Search customers">
+         placeholder="Customer code (AVG1001TA), name, GSTIN, city or contact" aria-label="Search customers">
   <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
   {% if q %}<a class="btn btn-sm btn-link" href="{% url 'kyc:list' %}">Clear</a>{% endif %}
 </form>

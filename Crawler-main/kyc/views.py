@@ -7,8 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, IntegerField, Q
-from django.db.models.functions import Cast, Substr
+from django.db.models import Count, Q
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -21,11 +20,11 @@ from .models import Customer, CustomerContact, Department, KycAuditLog
 logger = logging.getLogger(__name__)
 
 PAGE_SIZE = 50
-# Sort orders for the customer list. Customer code sorts by year, then running number (AVG-26-1002 before
-# AVG-26-10000), so it is ordered by the year and the number, not as text.
+# Sort orders for the customer list. Customer code sorts by its running number (AVG1002XX before AVG10000XX),
+# which is stored as a number in customer_number.
 LIST_SORTS = {
-    "customer_code": ("customer_code_year", "customer_code_number"),
-    "customer_code_desc": ("-customer_code_year", "-customer_code_number"),
+    "customer_code": ("customer_number",),
+    "customer_code_desc": ("-customer_number",),
     "name": ("name", "code"),
     "code": ("code",),
     "updated": ("-updated_at",),
@@ -47,11 +46,7 @@ def customer_list(request: HttpRequest) -> HttpResponse:
     sort = request.GET.get("sort") or ""
     if sort not in LIST_SORTS:
         sort = "name"  # the list has always been in name order by default
-    # AVG-26-10000 comes after AVG-26-1002: sort on the year and the running number as numbers, not as text.
-    customers = customers.annotate(
-        customer_code_year=Cast(Substr("customer_code", 5, 2), IntegerField()),
-        customer_code_number=Cast(Substr("customer_code", 8), IntegerField()),
-    ).order_by(*LIST_SORTS[sort], "pk")
+    customers = customers.order_by(*LIST_SORTS[sort], "pk")
     page = Paginator(customers, PAGE_SIZE).get_page(request.GET.get("page"))
     return render(request, "kyc/list.html", {"page": page, "q": q, "sort": sort, "total": page.paginator.count})
 

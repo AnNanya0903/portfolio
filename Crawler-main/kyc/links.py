@@ -20,7 +20,7 @@ def normalize_code(code: str) -> str:
 
 def customer_for_code(code: str) -> Optional[Customer]:
     code = normalize_code(code)
-    # Either code works: the typed one (AV-0001) or the automatic one (AVG-26-1001).
+    # Either code works: the typed one (AV-0001) or the automatic one (AVG1001TA).
     return Customer.objects.filter(Q(code=code) | Q(customer_code=code)).first() if code else None
 
 

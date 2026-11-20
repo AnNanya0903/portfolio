@@ -171,7 +171,7 @@ class TemplateTests(TestCase):
     def setUp(self):
         call_command("seed_departments")
         self.user = User.objects.create_user("asha", "asha@avigiri.example", "x", first_name="Asha", last_name="Rao")
-        self.acme = Customer.objects.create(code="AV-0300", name="Acme Seals", customer_code="AVG-26-1001")
+        self.acme = Customer.objects.create(code="AV-0300", name="Acme Seals", customer_code="AVG1001AC")
         CustomerContact.objects.create(customer=self.acme, category="technical", name="Tej", designation="Director",
                                        email="tej@acme.example", phone="9845012345", is_purchaser=True)
         CustomerContact.objects.create(customer=self.acme, category="accounts", name="Ravi",
@@ -182,8 +182,8 @@ class TemplateTests(TestCase):
     def test_internal_email_is_filled_from_the_customer_and_enquiry(self):
         UserDepartment.objects.create(user=self.user, department=Department.objects.get(name="Sales"))
         t = mailer.internal_template(user=self.user, enquiry=self.enquiry, customer=self.acme)
-        self.assertEqual(t["subject"], "Internal Update – Acme Seals (AVG-26-1001)")
-        for line in ["Customer Name : Acme Seals", "Customer Code : AVG-26-1001", "Contact Person: Tej – Director",
+        self.assertEqual(t["subject"], "Internal Update – Acme Seals (AVG1001AC)")
+        for line in ["Customer Name : Acme Seals", "Customer Code : AVG1001AC", "Contact Person: Tej – Director",
                      "Enquiry / Ref : ENQ-7", "Status        : Rejected", "Need 40 gaskets by May",
                      "Asha Rao", "Sales – AVIGIRI", "[Write action needed here]", "Hi Team,"]:
             self.assertIn(line, t["body"])
@@ -195,7 +195,7 @@ class TemplateTests(TestCase):
 
     def test_customer_email_goes_to_the_primary_contact_with_the_others_in_cc(self):
         t = mailer.customer_template(enquiry=self.enquiry, customer=self.acme)
-        self.assertEqual(t["subject"], "Regarding Your Enquiry – ENQ-7 (AVG-26-1001)")
+        self.assertEqual(t["subject"], "Regarding Your Enquiry – ENQ-7 (AVG1001AC)")
         self.assertEqual(t["to"], ["tej@acme.example"])
         self.assertEqual(t["cc"], ["ravi@acme.example"])
         self.assertIn('With reference to your comment: "Need 40 gaskets by May"', t["body"])
@@ -224,7 +224,7 @@ class MarketingAndHistoryPageTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_superuser("mkt", "mkt@avigiri.example", "x")
         self.client.force_login(self.user)
-        self.acme = Customer.objects.create(code="AV-0400", name="Page Co", customer_code="AVG-26-1002")
+        self.acme = Customer.objects.create(code="AV-0400", name="Page Co", customer_code="AVG1002PA")
         CustomerContact.objects.create(customer=self.acme, category="sales_marketing", name="Meera",
                                        designation="Owner / Proprietor", email="meera@page.example",
                                        phone="9845012347", is_purchaser=True)
@@ -241,7 +241,7 @@ class MarketingAndHistoryPageTests(TestCase):
         self.assertContains(page, 'data-email-template="internal"')
         self.assertContains(page, 'data-email-template="customer"')
         self.assertContains(page, "emailComposeData")
-        self.assertContains(page, "Page Co (AVG-26-1002)")  # the template is JSON-escaped, so match the plain part
+        self.assertContains(page, "Page Co (AVG1002PA)")  # the template is JSON-escaped, so match the plain part
         self.assertContains(page, "Internal Update")
         self.assertContains(page, "meera@page.example")
 
@@ -249,16 +249,16 @@ class MarketingAndHistoryPageTests(TestCase):
         gmail, _ = gmail_stub()
         with mock.patch("kyc.mailer.GmailService", return_value=gmail):
             self.client.post(reverse("kyc:email_send"), json.dumps({
-                "to": ["meera@page.example"], "subject": "Regarding Your Enquiry – ENQ-8 (AVG-26-1002)",
+                "to": ["meera@page.example"], "subject": "Regarding Your Enquiry – ENQ-8 (AVG1002PA)",
                 "body": "Dear Sir/Madam,\n\nThanks.", "customer_id": self.acme.pk, "enquiry_id": "ENQ-8",
             }), content_type="application/json")
         self.assertEqual(mailer.history_for_customer(self.acme)[0].subject,
-                         "Regarding Your Enquiry – ENQ-8 (AVG-26-1002)")
+                         "Regarding Your Enquiry – ENQ-8 (AVG1002PA)")
         page = self.client.get(reverse("kyc:detail", args=[self.acme.pk]))
-        self.assertContains(page, "Regarding Your Enquiry – ENQ-8 (AVG-26-1002)")
+        self.assertContains(page, "Regarding Your Enquiry – ENQ-8 (AVG1002PA)")
         self.assertContains(page, "Email history")
         with mock.patch("marketing.views._api_root", return_value="http://svc"), \
                 mock.patch("marketing.views.services.fetch_enquiry", return_value=dict(self.enquiry)):
             marketing_page = self.client.get(reverse("marketing:detail", args=["ENQ-8"]))
         self.assertContains(marketing_page, "Emails sent from here")
-        self.assertContains(marketing_page, "Regarding Your Enquiry – ENQ-8 (AVG-26-1002)")
+        self.assertContains(marketing_page, "Regarding Your Enquiry – ENQ-8 (AVG1002PA)")
