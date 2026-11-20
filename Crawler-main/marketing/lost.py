@@ -19,7 +19,7 @@ from django.db.models import prefetch_related_objects
 from django.utils import timezone
 
 from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, follow_up_count
-from enquiries.models import CustomerStatusEmail, EnquiryContact, FollowUpSent
+from enquiries.models import CustomerStatusEmail, EnquiryContact, EnquiryFollowup, FollowUpSent
 from kyc import links as kyc_links
 from kyc.models import CustomerContact
 
@@ -164,9 +164,19 @@ def _follow_up_stats(enquiry_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     rows = (FollowUpSent.objects.filter(enquiry_id__in=enquiry_ids, status=FollowUpSent.STATUS_SENT)
             .exclude(stage__in=(PAYMENT_STAGE, MARKETING_STAGE)).values_list("enquiry_id", "sent_at"))
     for enquiry_id, sent_at in rows:
-        item = stats.setdefault(enquiry_id, {"count": 0, "last": sent_at})
+        item = stats.setdefault(enquiry_id, {"count": 0, "last": sent_at, "last_type": "Email"})
         item["count"] += 1
-        item["last"] = max(item["last"], sent_at)
+        if sent_at > item["last"]:
+            item["last"], item["last_type"] = sent_at, "Email"
+    # Follow-ups logged by hand on the enquiry (call, meeting, other) count too, with their type.
+    logged = EnquiryFollowup.objects.filter(enquiry_id__in=enquiry_ids).values_list(
+        "enquiry_id", "created_at", "followup_type")
+    labels = dict(EnquiryFollowup.TYPE_CHOICES)
+    for enquiry_id, created_at, kind in logged:
+        item = stats.setdefault(enquiry_id, {"count": 0, "last": created_at, "last_type": labels.get(kind, "")})
+        item["count"] += 1
+        if created_at > item["last"]:
+            item["last"], item["last_type"] = created_at, labels.get(kind, "")
     return stats
 
 
@@ -212,7 +222,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
 
     found: Dict[str, Dict[str, Any]] = {}
     for enquiry_id, enquiry in candidates.items():
-        stats = follow_ups.get(enquiry_id, {"count": 0, "last": None})
+        stats = follow_ups.get(enquiry_id, {"count": 0, "last": None, "last_type": ""})
         kind = None
         lost_at = None
         if _status(enquiry) == "rejected":
@@ -307,6 +317,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "price": _price_text(enquiry),
             "follow_up_count": item["follow_ups"]["count"],
             "last_follow_up": item["follow_ups"]["last"],
+            "last_follow_up_type": item["follow_ups"].get("last_type", ""),
             "lost_on": lost_on,
             "ready_on": ready_on,
             "received_on": received,

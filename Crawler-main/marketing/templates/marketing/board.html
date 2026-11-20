@@ -167,7 +167,7 @@
                 </td>
                 <td class="text-nowrap">{{ row.price|default:"—" }}</td>
                 <td class="text-nowrap">{{ row.lost_on|date:"d M Y"|default:"—" }}</td>
-                <td>{{ row.follow_up_count }}</td>
+                <td>{{ row.follow_up_count }}{% if row.last_follow_up %}<div class="mk-muted small">Last: {{ row.last_follow_up|date:"d M Y" }} ({{ row.last_follow_up_type }})</div>{% endif %}</td>
                 <td>
                   <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
                   {% if row.stage == 'waiting' and row.ready_on %}<div class="mk-muted">from {{ row.ready_on|date:"d M" }}</div>{% endif %}

@@ -80,6 +80,7 @@
           <dt>Enquiry received</dt><dd>{{ row.received_on|date:"d M Y"|default:"—" }}</dd>
           <dt>Lost on</dt><dd>{{ row.lost_on|date:"d M Y"|default:"—" }}</dd>
           <dt>Follow-ups sent</dt><dd>{{ row.follow_up_count }}</dd>
+          {% if row.last_follow_up %}<dt>Last follow-up</dt><dd>{{ row.last_follow_up|date:"d M Y" }} ({{ row.last_follow_up_type }})</dd>{% endif %}
           {% if row.auto_follow_up %}<dt>Automatic follow-ups</dt><dd data-auto-follow-up="{{ row.auto_follow_up.state }}">{{ row.auto_follow_up.label }}
             <div class="mk-muted">Every 2 days from the rejection, then a closing email. They run in their own email thread with the customer, separate from the enquiry's.</div></dd>{% endif %}
           <dt>Can contact from</dt>
