@@ -432,17 +432,6 @@
             >
                 {{ enquiry.status|upper }}
             </span>
-            {% if enquiry.work_order %}
-              <div class="mt-2"><span class="badge badge-copilot badge-success-soft" data-work-order-chip
-                   title="Marked by {{ enquiry.work_order.converted_by.get_full_name|default:enquiry.work_order.converted_by.username|default:'someone' }}">Converted to Work Order</span>
-                <div class="small text-muted">{{ enquiry.work_order.converted_at|date:"d M Y, H:i" }}</div></div>
-            {% elif can_convert_work_order %}
-              <form method="post" action="{% url 'enquiries:work_order_convert' enquiry.enquiry_id %}" class="mt-2"
-                    onsubmit="return confirm('Mark this enquiry as converted to Work Order?');">
-                {% csrf_token %}
-                <button type="submit" class="btn btn-sm btn-outline-success" data-work-order-button>Converted to Work Order</button>
-              </form>
-            {% endif %}
             {% if enquiry.status == 'converted' %}
               {# Orders become Converted only through “Mark as paid”; this switch only undoes a conversion. #}
               <div class="form-check form-switch mt-2 mb-1" title="Turn off to undo the conversion (payment goes back to pending).">
@@ -588,6 +577,21 @@
             {% endwith %}
           </td>
           <td class="text-end">
+            <div class="d-inline-flex align-items-center gap-2 flex-wrap justify-content-end">
+            {# Converted to Work Order: the button, or once marked a badge with when (who on hover). #}
+            {% if enquiry.work_order %}
+              <span class="text-center lh-sm" data-work-order-chip
+                    title="Marked by {{ enquiry.work_order.converted_by.get_full_name|default:enquiry.work_order.converted_by.username|default:'someone' }} on {{ enquiry.work_order.converted_at|date:'d M Y, H:i' }}">
+                <span class="badge badge-copilot badge-success-soft">Converted to Work Order</span>
+                <span class="d-block small text-muted">{{ enquiry.work_order.converted_at|date:"d M Y, H:i" }}</span>
+              </span>
+            {% elif can_convert_work_order %}
+              <form method="post" action="{% url 'enquiries:work_order_convert' enquiry.enquiry_id %}" class="m-0"
+                    onsubmit="return confirm('Mark this enquiry as converted to Work Order?');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-success text-nowrap" data-work-order-button>Converted to Work Order</button>
+              </form>
+            {% endif %}
             <div class="btn-group enquiry-inline-actions">
                 <a
                   href="{% if enquiry.primary_pdf_url %}{{ enquiry.primary_pdf_url }}{% else %}{% url 'enquiries:detail' enquiry.enquiry_id %}{% endif %}"
@@ -615,6 +619,7 @@
                 <a href="{% url 'enquiries:negotiation' enquiry.enquiry_id %}" class="btn btn-sm btn-light border" title="Negotiation and forward to a department"><i class="bi bi-chat-dots"></i></a>
                 <a href="{% url 'enquiries:preview' enquiry.enquiry_id %}" class="btn btn-sm btn-light border" title="Generate Link"><i class="bi bi-link-45deg"></i></a>
                 <button type="button" class="btn btn-sm btn-light border text-danger" data-enquiry-delete data-enquiry-id="{{ enquiry.enquiry_id }}" data-delete-url="{% url 'enquiries:delete_enquiry' enquiry.enquiry_id %}"><i class="bi bi-trash"></i></button>
+            </div>
             </div>
           </td>
         </tr>
