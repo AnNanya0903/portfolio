@@ -1260,6 +1260,8 @@ def _attach_order_tracking(enquiry: MutableMapping[str, Any], contact: Optional[
         row = emails.get(kind)
         if row is None:
             continue
+        if kind == CustomerStatusEmail.KIND_ACKNOWLEDGEMENT and row.status != CustomerStatusEmail.STATUS_SENT:
+            continue  # acknowledgements are no longer sent, so a "not sent" line under the status is only noise
         can_retry = row.status != CustomerStatusEmail.STATUS_SENT and _status_email_allowed(kind, status) == ""
         # A failed email is only worth showing while it still applies (e.g. rejection while rejected).
         if row.status == CustomerStatusEmail.STATUS_SENT or can_retry:
