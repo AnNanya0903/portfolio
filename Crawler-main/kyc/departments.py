@@ -11,12 +11,14 @@ from magicwand.user_utils import get_user_primary_email
 
 from .models import Department, DepartmentContact, KycAuditLog, UserDepartment
 
-# (name, emails). The first email is the primary contact. One address may be in several departments.
+# (name, emails[, primary emails]). Without the third part the first email is the primary contact; with it, every
+# address listed there is primary. One address may be in several departments.
 DEPARTMENT_SEED = (
     ("Sales", ("customerservice@avigiri.com", "rabin@avigiri.com")),
     ("Marketing", ("kumar@avigiri.com", "manju@avigiri.com", "apai@avigiri.com")),
     ("Accounts", ("accounts1@avigiri.com", "accounts@avigiri.com")),
-    ("Technical/Design", ("design@avigiri.com", "sagar@avigiri.com")),
+    ("Technical/Design", ("design@avigiri.com", "sagar@avigiri.com", "yathin@avigiri.com"),
+     ("sagar@avigiri.com", "yathin@avigiri.com")),
     ("Top Management", ("apai@avigiri.com",)),
 )
 
@@ -34,14 +36,15 @@ def seed_departments() -> dict:
     """
     created_departments = created_emails = 0
     with transaction.atomic():
-        for order, (name, emails) in enumerate(DEPARTMENT_SEED, start=1):
+        for order, (name, emails, *rest) in enumerate(DEPARTMENT_SEED, start=1):
+            primaries = set(rest[0]) if rest else {emails[0]}
             department, made = Department.objects.get_or_create(name=name, defaults={"sort_order": order})
             created_departments += made
             has_primary = department.contacts.filter(is_primary=True).exists()
-            for index, email in enumerate(emails):
+            for email in emails:
                 _, made = DepartmentContact.objects.get_or_create(
                     department=department, email=email,
-                    defaults={"is_primary": index == 0 and not has_primary})
+                    defaults={"is_primary": email in primaries and not has_primary})
                 created_emails += made
     return {"departments": created_departments, "emails": created_emails}
 

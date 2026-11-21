@@ -22,7 +22,11 @@ class SeedTests(TestCase):
         call_command("seed_departments")
         call_command("seed_departments")
         self.assertEqual(Department.objects.count(), 5)
-        self.assertEqual(DepartmentContact.objects.count(), 10)
+        self.assertEqual(DepartmentContact.objects.count(), 11)
+        technical = Department.objects.get(name="Technical/Design")
+        self.assertIn("yathin@avigiri.com", technical.emails())
+        self.assertEqual(set(technical.contacts.filter(is_primary=True).values_list("email", flat=True)),
+                         {"sagar@avigiri.com", "yathin@avigiri.com"})
         marketing = Department.objects.get(name="Marketing")
         self.assertEqual(marketing.emails(), ["kumar@avigiri.com", "manju@avigiri.com", "apai@avigiri.com"])
         self.assertEqual(marketing.contacts.filter(is_primary=True).count(), 1)
