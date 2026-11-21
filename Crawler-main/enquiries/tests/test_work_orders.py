@@ -126,6 +126,15 @@ class WorkOrderTests(TestCase):
         self.assertIn('form="wo-ENQ-1"', html)
         self.assertIn('id="wo-ENQ-1"', html)
 
+    def test_the_converted_date_and_time_show_in_indian_standard_time(self, *_):
+        from datetime import datetime, timezone as dt_timezone
+        WorkOrder.objects.create(enquiry_id="ENQ-1", converted_by=self.sales,
+                                 converted_at=datetime(2026, 11, 21, 8, 46, tzinfo=dt_timezone.utc))
+        self.client.force_login(self.sales)
+        html = self.client.get(reverse("enquiries:board")).content.decode()
+        self.assertIn("Work Order: 21 Nov 2026, 02:16 PM IST", html)  # 08:46 UTC
+        self.assertIn("on 21 Nov 2026, 02:16 PM IST", html)  # the hover text too
+
     def test_the_button_is_hidden_from_people_who_cannot_convert(self, *_):
         self.client.force_login(self.marketing)
         page = self.client.get(reverse("enquiries:board"))
