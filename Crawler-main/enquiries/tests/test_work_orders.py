@@ -113,6 +113,18 @@ class WorkOrderTests(TestCase):
         self.assertContains(page, "data-work-order-chip")
         self.assertEqual(page.content.decode().count("data-work-order-button"), 1)  # only ENQ-2 still has it
 
+    def test_the_button_sits_in_the_action_buttons_right_after_the_view_icon(self, *_):
+        self.client.force_login(self.sales)
+        html = self.client.get(reverse("enquiries:board")).content.decode()
+        group = html.index('class="btn-group enquiry-inline-actions"')
+        eye = html.index('bi-eye', group)
+        button = html.index('data-work-order-button', group)
+        reply = html.index('bi-reply', group)
+        self.assertLess(eye, button)
+        self.assertLess(button, reply)
+        self.assertIn('form="wo-ENQ-1"', html)
+        self.assertIn('id="wo-ENQ-1"', html)
+
     def test_the_button_is_hidden_from_people_who_cannot_convert(self, *_):
         self.client.force_login(self.marketing)
         page = self.client.get(reverse("enquiries:board"))
