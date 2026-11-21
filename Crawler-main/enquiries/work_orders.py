@@ -10,7 +10,8 @@ from magicwand.user_utils import get_user_primary_email
 
 from .models import WorkOrder
 
-# Departments (KYC) whose people may mark an enquiry as converted to a work order. Superusers may too.
+# Departments (KYC) whose people may mark an enquiry as converted to a work order. Nobody else may, superusers
+# included: on production that is customerservice@ and rabin@ (Sales) and apai@ (Top Management).
 ALLOWED_DEPARTMENTS = frozenset({"Sales", "Top Management"})
 
 
@@ -29,8 +30,6 @@ def _extra_emails() -> frozenset:
 def can_convert(user) -> bool:
     if not getattr(user, "is_authenticated", False):
         return False
-    if user.is_superuser:
-        return True
     email = (get_user_primary_email(user) or "").strip().lower()
     if email and email in _extra_emails():
         return True

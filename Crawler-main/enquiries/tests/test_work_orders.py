@@ -46,10 +46,10 @@ class WorkOrderTests(TestCase):
         self.update = update
         return response
 
-    def test_only_sales_top_management_and_superusers_may_convert(self, *_):
+    def test_only_sales_and_top_management_may_convert_not_even_superusers(self, *_):
         self.assertTrue(work_orders.can_convert(self.sales))
         self.assertTrue(work_orders.can_convert(self.top))
-        self.assertTrue(work_orders.can_convert(User.objects.create_superuser("boss", "b@example.com", "x")))
+        self.assertFalse(work_orders.can_convert(User.objects.create_superuser("boss", "b@example.com", "x")))
         self.assertFalse(work_orders.can_convert(self.marketing))
         self.assertFalse(work_orders.can_convert(User.objects.create_user("nobody", "n@example.com", "x")))
 
