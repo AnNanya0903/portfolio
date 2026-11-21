@@ -56,6 +56,7 @@ class WorkOrderTests(TestCase):
     def test_rabin_may_convert_whatever_his_department(self, *_):
         rabin = User.objects.create_user("rabin", "Rabin@Avigiri.com", "x")  # in no department row
         self.assertTrue(work_orders.can_convert(rabin))
+        self.assertTrue(work_orders.can_convert(User.objects.create_user("magicwand", "magicwand@avigiri.com", "x")))
         with override_settings(WORK_ORDER_EXTRA_EMAILS="someone@avigiri.com"):
             self.assertFalse(work_orders.can_convert(User.objects.create_user("r2", "x@avigiri.com", "x")))
             self.assertTrue(work_orders.can_convert(User.objects.create_user("r3", "someone@avigiri.com", "x")))

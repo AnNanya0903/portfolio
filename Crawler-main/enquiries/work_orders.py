@@ -11,12 +11,12 @@ from magicwand.user_utils import get_user_primary_email
 from .models import WorkOrder
 
 # Departments (KYC) whose people may mark an enquiry as converted to a work order. Nobody else may, superusers
-# included: on production that is customerservice@ and rabin@ (Sales) and apai@ (Top Management).
+# included: on production that is customerservice@ and rabin@ (Sales), apai@ (Top Management) and magicwand@.
 ALLOWED_DEPARTMENTS = frozenset({"Sales", "Top Management"})
 
 
 # People who may mark an enquiry whatever their department. Change with WORK_ORDER_EXTRA_EMAILS (comma separated).
-EXTRA_EMAILS = frozenset({"rabin@avigiri.com"})
+EXTRA_EMAILS = frozenset({"rabin@avigiri.com", "magicwand@avigiri.com"})
 
 
 def _extra_emails() -> frozenset:
