@@ -1193,11 +1193,13 @@ class GmailService:
         subject: Optional[str] = None,
         to: Optional[str] = None,
         cc: Optional[List[str]] = None,
+        html_body: Optional[str] = None,
     ) -> Dict:
         """Send a reply email referencing an existing message.
 
         ``to`` overrides the recipient; otherwise the reply goes to the original sender.
         ``cc`` is an optional list of addresses copied on the email.
+        ``html_body`` adds an HTML version (the plain-text ``body`` stays as the alternative).
         """
         original_id = str(original_message.get('id') or '')
         if original_id.startswith('demo-') and self._local_demo_enabled():
@@ -1258,6 +1260,8 @@ class GmailService:
             email_message['References'] = reference_headers
 
         email_message.set_content(body)
+        if html_body:
+            email_message.add_alternative(html_body, subtype='html')
 
         for attachment in attachments or []:
             filename = attachment.get('filename') or 'attachment'
@@ -1293,10 +1297,12 @@ class GmailService:
         body: str,
         cc: Optional[List[str]] = None,
         attachments: Optional[List[Dict]] = None,
+        html_body: Optional[str] = None,
     ) -> Dict:
         """Send a new email (not a reply) with optional CC and attachments.
 
         Attachments are dicts with ``filename``, ``mime_type`` and ``content`` (bytes).
+        ``html_body`` adds an HTML version (the plain-text ``body`` stays as the alternative).
         In local development nothing is sent; the email is only logged.
         """
         if self._local_demo_enabled():
@@ -1314,6 +1320,8 @@ class GmailService:
             email_message['Cc'] = ", ".join(cc)
         email_message['Subject'] = subject
         email_message.set_content(body)
+        if html_body:
+            email_message.add_alternative(html_body, subtype='html')
         for attachment in attachments or []:
             mime_type = attachment.get('mime_type') or 'application/octet-stream'
             maintype, subtype = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')

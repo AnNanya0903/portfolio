@@ -11,6 +11,7 @@ from django.utils import timezone
 from dashboard.follow_up_templates import build_follow_up_body
 from enquiries import auto_follow_up, status_emails
 from enquiries.models import CustomerStatusEmail, FollowUpSent, FollowUpStart, ShareLink
+from enquiries.tests.share_helpers import make_share
 from enquiries.views import _create_share_link_from_values
 from marketing.models import MarketingActivity, MarketingLead
 
@@ -38,6 +39,7 @@ class EngineTests(TestCase):
     def setUp(self):
         self.sales = get_user_model().objects.create_user("sales", OURS, "x")
         self.enquiry = {"enquiry_id": "E1", "status": "open", "subject": "Gaskets", "customer_name": "Acme"}
+        self.share_url, self.share_password = make_share("E1")
         for name in ("list_enquiries", "fetch_enquiry"):
             p = patch.object(auto_follow_up.services, name,
                              side_effect=(lambda *a, **k: [self.enquiry]) if name == "list_enquiries"
@@ -69,7 +71,8 @@ class EngineTests(TestCase):
         gmail.get_thread_messages.assert_called_with("T-QUOTE", limit=50)
         kwargs = gmail.send_reply.call_args.kwargs
         self.assertEqual(kwargs["original_message"]["thread_id"], "T-QUOTE")
-        self.assertIn("our quotation for Gaskets", kwargs["body"])
+        self.assertIn("quotation we shared for Gaskets", kwargs["body"])
+        self.assertIn(self.share_url, kwargs["body"])
         row = FollowUpSent.objects.get()
         self.assertEqual((row.gmail_thread_id, row.stage, row.next_follow_up_on),
                          ("T-QUOTE", "waiting_po", TODAY + timedelta(days=2)))
@@ -159,27 +162,28 @@ class MarketingTests(TestCase):
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
             return auto_follow_up.run_auto_follow_up("E1"), gmail
 
-    def test_first_marketing_email_opens_its_own_new_thread(self):
+    def test_first_marketing_email_is_a_new_email_with_its_own_subject(self):
         self._marketing(sent=0)
         result, gmail = self._run()
         self.assertEqual((result["result"], result["stage"], result["attempt"]), ("sent", "marketing", 1))
         gmail.send_reply.assert_not_called()  # not a reply in the quotation's thread
-        gmail.get_thread_messages.assert_not_called()
         args, kwargs = gmail.send_email.call_args
         self.assertEqual(args[0], "buyer@acme.example")
-        self.assertEqual(args[1], "Gaskets - AVIGIRI")
-        self.assertIn("revising our offer", args[2])
+        self.assertEqual(args[1], "Thank you for considering AVIGIRI, Acme")
+        self.assertIn("it wasn't the right fit this time", args[2])
+        self.assertIn("Reply STOP if you'd prefer not to hear from us.", args[2])
+        self.assertNotIn("Password:", args[2])  # no share link in Marketing emails
         row = FollowUpSent.objects.get(stage="marketing")
-        self.assertEqual(row.gmail_thread_id, "T-MKT")  # remembered: the next ones reply here
+        self.assertEqual(row.gmail_thread_id, "T-MKT")
         self.assertTrue(MarketingActivity.objects.filter(text__startswith="Automatic follow-up 1").exists())
 
-    def test_later_marketing_emails_reply_in_the_marketing_thread(self):
+    def test_later_marketing_emails_have_their_own_subject_and_never_use_the_enquiry_thread(self):
         self._marketing(sent=1)
         result, gmail = self._run()
         self.assertEqual((result["result"], result["attempt"]), ("sent", 2))
-        gmail.send_email.assert_not_called()
-        gmail.get_thread_messages.assert_called_with("T-MKT", limit=50)
-        self.assertEqual(gmail.send_reply.call_args.kwargs["original_message"]["thread_id"], "T-MKT")
+        gmail.send_reply.assert_not_called()
+        self.assertEqual(gmail.send_email.call_args.args[1], "A different option for Gaskets?")
+        gmail.get_thread_messages.assert_called_with("T-MKT", limit=50)  # checks for a reply first
 
     def test_marketing_thread_never_becomes_the_enquiry_thread(self):
         from enquiries import share_email
@@ -198,8 +202,8 @@ class MarketingTests(TestCase):
         self._marketing(sent=4)
         result, gmail = self._run()
         self.assertEqual((result["result"], result["attempt"], result["next_follow_up_on"]), ("sent", 5, None))
-        self.assertIn("we are closing this enquiry for now", gmail.send_reply.call_args.kwargs["body"])
-        self.assertEqual(gmail.send_reply.call_args.kwargs["original_message"]["thread_id"], "T-MKT")
+        self.assertEqual(gmail.send_email.call_args.args[1], "Closing the loop, Acme")
+        self.assertIn("we won't send further follow-ups", gmail.send_email.call_args.args[2])
         result, _ = self._run()
         self.assertEqual(result["result"], "skipped")
 
@@ -235,9 +239,10 @@ class TemplateTests(TestCase):
     def test_marketing_closing_text(self):
         body = build_follow_up_body("marketing", reference="E1", subject="Gaskets", attempt=5)
         self.assertTrue(body.startswith("Dear Sir/Madam,"))
-        self.assertIn("we are closing this enquiry for now", body)
-        self.assertIn("contact the AVIGIRI team", body)
-        self.assertTrue(body.endswith("Best regards,\nAVIGIRI Team"))
+        self.assertIn("we won't send further follow-ups", body)
+        self.assertIn("our team will get back to you promptly", body)
+        self.assertTrue(body.endswith("Wishing you all the best,\nAVIGIRI team\n\n"
+                                      "Reply STOP if you'd prefer not to hear from us."))
 
 
 @override_settings(**FLOW)

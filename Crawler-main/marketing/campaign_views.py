@@ -90,7 +90,6 @@ def campaign_detail(request: HttpRequest, pk: int) -> HttpResponse:
         "dry_run": campaigns.dry_run(),
         "max_recipients": campaigns.max_recipients(),
         "gap_days": campaigns.gap_days(),
-        "wait_days": lost.wait_days(),
         "filter_labels": _filter_labels(campaign.filters),
     }
     if campaign.status == Campaign.STATUS_DRAFT:

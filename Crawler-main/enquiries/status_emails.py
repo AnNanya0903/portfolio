@@ -1,11 +1,12 @@
 """Automatic customer emails for an enquiry.
 
-- acknowledgement:  a new enquiry was received (sent by the scheduled run for enquiries received recently).
 - rejection:        the order was rejected; asks for the reason, or thanks the customer if they gave one.
 - payment_received: the payment was marked Paid (the order is now Converted).
 - closing:          all follow-ups of the quotation / proforma invoice were sent and the customer never
-                    replied; the enquiry is then closed.
-A sent rejection email starts Marketing's automatic follow-ups in the same thread (auto_follow_up.py).
+                    replied; the enquiry is then closed (no share link in it). The enquiry then becomes a
+                    Marketing lead, Ready at once (No response).
+There is no acknowledgement email any more.
+A rejection makes the enquiry a Marketing lead, Ready at once; a sent rejection email starts Marketing's automatic follow-ups in the same thread (auto_follow_up.py).
 
 Same safety rules as automatic follow-ups (enquiries/auto_follow_up.py):
 - uses the FOLLOW_UP_AUTO_ENABLED switch, FOLLOW_UP_AUTO_DRY_RUN test mode and FOLLOW_UP_AUTO_SENDER mailbox;
@@ -26,7 +27,10 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, follow_up_count, sender_signature
+from dashboard.follow_up_templates import (
+    MARKETING_STAGE, PAYMENT_STAGE, document_for_stage, enquiry_closing_body, follow_up_count, sender_signature,
+    to_html,
+)
 from dashboard.gmail_service import GmailAPIError, GmailService
 
 from . import customer_emails
@@ -36,12 +40,6 @@ logger = logging.getLogger(__name__)
 
 # (paragraph, middle line, closing line) per email; {subject}, {reference} and {payment_detail} are filled in.
 _TEMPLATES: Dict[str, tuple] = {
-    "acknowledgement": (
-        "Thank you for your enquiry about {subject}. We have registered it with our reference {reference}.",
-        "Our team is now reviewing your requirement and checking its feasibility. We will share our "
-        "quotation with you shortly.",
-        "If you have drawings or any further details, please reply to this email.",
-    ),
     "rejection_ask": (
         "Thank you for considering AVIGIRI for your requirement of {subject} (our reference: {reference}). "
         "We understand that you have decided not to proceed with this order.",
@@ -60,13 +58,6 @@ _TEMPLATES: Dict[str, tuple] = {
         "We have received it, and your order is now confirmed for production. We will keep you updated "
         "on its progress.",
         "Thank you for choosing AVIGIRI.",
-    ),
-    "closing": (
-        "We have followed up several times regarding your enquiry about {subject} (our reference: {reference}), "
-        "but we have not received a response.",
-        "We are therefore closing this enquiry for now.",
-        "For any new enquiry or requirement, please contact the AVIGIRI team. You can simply reply to this "
-        "email, and we will be glad to assist.",
     ),
 }
 
@@ -138,13 +129,6 @@ def _sender_address(message: Mapping[str, Any]) -> str:
     return parseaddr(str(message.get("sender") or ""))[1].strip().lower()
 
 
-def _no_team_reply_yet(thread: List[Mapping[str, Any]], own: set) -> str:
-    """Acknowledgement: skip when the team has already written to the customer in this conversation."""
-    if any(_sender_address(m) in own for m in thread):
-        return "the team has already replied to this enquiry"
-    return ""
-
-
 def _customer_has_not_replied(thread: List[Mapping[str, Any]], own: set) -> str:
     """Closing: skip when the customer wrote the latest message."""
     if thread and _sender_address(thread[-1]) not in own:
@@ -153,7 +137,6 @@ def _customer_has_not_replied(thread: List[Mapping[str, Any]], own: set) -> str:
 
 
 _THREAD_CHECKS: Dict[str, Callable[[List[Mapping[str, Any]], set], str]] = {
-    CustomerStatusEmail.KIND_ACKNOWLEDGEMENT: _no_team_reply_yet,
     CustomerStatusEmail.KIND_CLOSING: _customer_has_not_replied,
 }
 
@@ -164,6 +147,10 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
     from .views import _resolve_follow_up_conversation, _saved_customer_email  # views imports a lot
 
     enquiry_id = str(enquiry_id)
+    if kind == CustomerStatusEmail.KIND_REJECTION:
+        # Lost: Marketing's lead is Ready at once and its sequence starts, whatever happens to this email.
+        mark_marketing_ready(enquiry_id)
+        start_marketing(enquiry_id, enquiry)
     row = _record(enquiry_id, kind, kind)
     if row is None:
         return {"enquiry_id": enquiry_id, "event": kind, "result": "already_sent", "note": ""}
@@ -204,37 +191,52 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
             if stop:
                 return _finish(row, CustomerStatusEmail.STATUS_SKIPPED, stop)
 
-        if kind == CustomerStatusEmail.KIND_REJECTION:
-            template = "rejection_thanks" if reason.strip() else "rejection_ask"
+        html_body = None
+        if kind == CustomerStatusEmail.KIND_ACKNOWLEDGEMENT:
+            return _finish(row, CustomerStatusEmail.STATUS_SKIPPED, "the acknowledgement email is no longer sent")
+        if kind == CustomerStatusEmail.KIND_CLOSING:
+            from .auto_follow_up import customer_name_for
+
+            body = enquiry_closing_body(customer_name=customer_name_for(enquiry_id, enquiry, customer_email),
+                                        document=_closing_document(enquiry_id))
+            html_body = to_html(body)
         else:
-            template = kind
-        body = build_status_email_body(template, reference=enquiry_id, subject=str(enquiry.get("subject") or ""),
-                                       user=sender, payment_detail=payment_detail)
+            template = ("rejection_thanks" if reason.strip() else "rejection_ask") \
+                if kind == CustomerStatusEmail.KIND_REJECTION else kind
+            body = build_status_email_body(template, reference=enquiry_id,
+                                           subject=str(enquiry.get("subject") or ""), user=sender,
+                                           payment_detail=payment_detail)
         original = gmail.get_message(reply_to_id)
         subject = (original or {}).get("subject") or str(enquiry.get("subject") or "")
         fields = {"customer_email": customer_email, "subject": subject[:500], "body": body,
                   "gmail_thread_id": thread_id}
 
         if getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
+            logger.info("Status email %s dry run for enquiry %s to %s. Nothing was sent.\nSubject: %s\n%s",
+                        kind, enquiry_id, customer_email, subject, body)
             return _finish(row, CustomerStatusEmail.STATUS_DRY_RUN, "test mode: nothing was sent", **fields)
 
         cc = customer_emails.with_customer_cc(enquiry_id, [], to=customer_email, own=own)  # other customer emails
         sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email,
-                                cc=cc or None)
+                                cc=cc or None, html_body=html_body)
         fields["gmail_message_id"] = (sent or {}).get("id") or ""
         fields["gmail_thread_id"] = (sent or {}).get("threadId") or fields["gmail_thread_id"]
-        if kind == CustomerStatusEmail.KIND_REJECTION and getattr(settings, "MARKETING_AUTO_FOLLOW_UP", True):
-            # Marketing follows up from here, in its OWN new email thread (the rejection email stays in the
-            # enquiry's thread): its first email opens the thread, and the later ones reply in it.
-            from . import auto_follow_up
-            auto_follow_up.record_start(enquiry_id, MARKETING_STAGE, sent={}, customer_email=customer_email,
-                                        cc=cc, subject="", user=sender)
+        if kind == CustomerStatusEmail.KIND_REJECTION:
+            start_marketing(enquiry_id, {"customer_email": customer_email}, cc=cc, user=sender)
         return _finish(row, CustomerStatusEmail.STATUS_SENT, "", sent_at=timezone.now(), **fields)
     except GmailAPIError as exc:
         return _finish(row, CustomerStatusEmail.STATUS_FAILED, f"Gmail error: {exc}")
     except Exception as exc:  # never block the status change
         logger.exception("Status email %s failed for enquiry %s", kind, enquiry_id)
         return _finish(row, CustomerStatusEmail.STATUS_FAILED, f"send failed: {exc}")
+
+
+def _closing_document(enquiry_id: str) -> str:
+    """"quotation" or "proforma invoice": what the follow-ups being closed were about."""
+    from . import auto_follow_up
+
+    cycle = auto_follow_up.cycles([str(enquiry_id)], include_marketing=False).get(str(enquiry_id))
+    return document_for_stage(cycle.stage if cycle else "")
 
 
 def latest_status_emails(enquiry_ids) -> Dict[str, Dict[str, CustomerStatusEmail]]:
@@ -251,29 +253,6 @@ def latest_status_emails(enquiry_ids) -> Dict[str, Dict[str, CustomerStatusEmail
 
 def _status_of(enquiry: Mapping[str, Any]) -> str:
     return str(enquiry.get("status") or "").strip().lower()
-
-
-def acknowledgement_due(enquiries: List[Mapping[str, Any]], today: date) -> List[Mapping[str, Any]]:
-    """Open enquiries received in the last FOLLOW_UP_ACK_WITHIN_DAYS days with no acknowledgement yet.
-
-    The short window means old enquiries are never acknowledged when this is first turned on.
-    """
-    within = int(getattr(settings, "FOLLOW_UP_ACK_WITHIN_DAYS", 2) or 0)
-    if within <= 0:
-        return []
-    since = today - timedelta(days=within)
-    done = set(CustomerStatusEmail.objects.filter(
-        kind=CustomerStatusEmail.KIND_ACKNOWLEDGEMENT,
-        status__in=(CustomerStatusEmail.STATUS_SENT, CustomerStatusEmail.STATUS_SKIPPED),
-    ).values_list("enquiry_id", flat=True))
-    due = []
-    for enquiry in enquiries:
-        received = enquiry.get("received_at_dt")
-        received_day = received.date() if hasattr(received, "date") else received
-        if (_status_of(enquiry) == "open" and received_day and since <= received_day <= today
-                and str(enquiry.get("enquiry_id")) not in done):
-            due.append(enquiry)
-    return due
 
 
 def closing_due(enquiries: List[Mapping[str, Any]], now=None) -> List[Mapping[str, Any]]:
@@ -324,6 +303,7 @@ def send_closing_email(enquiry: Mapping[str, Any], api_root: str) -> Dict[str, A
         try:
             services.update_enquiry(api_root, enquiry_id, {"status": "closed"})
             outcome["closed"] = True
+            mark_marketing_ready(enquiry_id)  # No response: Marketing can follow up straight away
         except services.EnquiryServiceError as exc:
             outcome["closed"] = False
             outcome["note"] = f"email sent but the status could not be set to Closed: {exc}"
@@ -331,16 +311,49 @@ def send_closing_email(enquiry: Mapping[str, Any], api_root: str) -> Dict[str, A
     return outcome
 
 
+def start_marketing(enquiry_id: str, enquiry: Optional[Mapping[str, Any]], *, cc=None, user=None) -> None:
+    """Start Marketing's follow-up sequence for a rejected enquiry (once). Its first follow-up is due now.
+
+    Each Marketing email is a NEW email (never in the enquiry's thread). Never raises.
+    """
+    if not getattr(settings, "MARKETING_AUTO_FOLLOW_UP", True):
+        return
+    try:
+        from . import auto_follow_up
+        from .models import EnquiryContact, FollowUpStart
+
+        if FollowUpStart.objects.filter(enquiry_id=str(enquiry_id), stage=MARKETING_STAGE).exists():
+            return
+        contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).only("customer_email").first()
+        address = ((contact.customer_email if contact else "") or str((enquiry or {}).get("customer_email") or "")
+                   ).strip().lower()
+        if not address or "@" not in address:
+            return
+        auto_follow_up.record_start(str(enquiry_id), MARKETING_STAGE, sent={}, customer_email=address,
+                                    cc=list(cc or []), subject="", user=user)
+    except Exception:
+        logger.exception("Could not start the Marketing follow-ups of %s", enquiry_id)
+
+
+def mark_marketing_ready(enquiry_id: str) -> None:
+    """The enquiry is lost (Rejected or No response): its Marketing lead is Ready now. Never raises."""
+    try:
+        from marketing import lost
+    except Exception:  # Marketing app not installed
+        return
+    try:
+        lost.mark_ready(enquiry_id)
+    except Exception:
+        logger.exception("Could not mark the Marketing lead of %s Ready", enquiry_id)
+
+
 def run_scheduled(api_root: str, today: Optional[date] = None) -> Dict[str, Any]:
-    """Acknowledge new enquiries and close enquiries that never replied. Returns what happened."""
+    """Close enquiries that never replied (no acknowledgement email any more). Returns what happened."""
     from . import services
 
     today = today or timezone.localdate()
     enquiries = services.list_enquiries(api_root)
-    results = {"acknowledgement": [], "closing": []}
-    for enquiry in acknowledgement_due(enquiries, today):
-        results["acknowledgement"].append(
-            send_status_email(CustomerStatusEmail.KIND_ACKNOWLEDGEMENT, str(enquiry.get("enquiry_id")), enquiry))
+    results = {"closing": []}
     for enquiry in closing_due(enquiries):
         results["closing"].append(send_closing_email(enquiry, api_root))
     return results

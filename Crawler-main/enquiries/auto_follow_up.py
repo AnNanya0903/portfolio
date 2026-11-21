@@ -12,6 +12,11 @@ that one Gmail thread:
 - older enquiries continue from their last manually sent follow-up, as before.
 Follow-ups go every FOLLOW_UP_AUTO_GAP_DAYS; after the last one the closing email follows
 (enquiries/status_emails.py for quotations and PIs, the final Marketing email for Marketing).
+There is no acknowledgement email: a quotation / PI sequence is Follow-up 1-4, then the closing email.
+Every quotation / PI follow-up carries the enquiry's own share link and password for its latest revision
+(enquiries/follow_up_links.py); without one the follow-up is not sent.
+Marketing's first follow-up is due as soon as the lead is Ready (the rejection), and each Marketing email
+is a new email with its own subject, never in the enquiry's thread.
 When anything is unclear the enquiry is skipped with a reason, never guessed.
 """
 from __future__ import annotations
@@ -30,11 +35,12 @@ from django.utils import timezone
 
 from dashboard.follow_up_templates import (
     DEFAULT_STAGE, MARKETING_STAGE, PAYMENT_STAGE, STAGE_KEYS, build_follow_up_body, follow_up_count,
+    marketing_subject, to_html,
 )
 from dashboard.gmail_service import GmailAPIError, GmailService
 from kyc import routing as kyc_routing
 
-from . import customer_emails, payment_terms, services
+from . import customer_emails, follow_up_links, payment_terms, services
 from .models import EnquiryContact, FollowUpSent, FollowUpStart
 
 logger = logging.getLogger(__name__)
@@ -135,8 +141,10 @@ def cycles(enquiry_ids: Optional[List[str]] = None, *, include_marketing: bool =
                         last_sent_at=latest.sent_at, latest=latest, start=start)
                 else:
                     started_on = timezone.localdate(start.started_at)
+                    # Marketing follows up as soon as the lead is Ready; quotations / PIs wait the first gap.
+                    first_gap = 0 if start.stage == MARKETING_STAGE else _gap(0)
                     result[enquiry_id] = Cycle(
-                        stage=start.stage, count=0, next_on=started_on + timedelta(days=_gap(0)),
+                        stage=start.stage, count=0, next_on=started_on + timedelta(days=first_gap),
                         thread_id=start.gmail_thread_id, customer_email=start.customer_email, cc=start.cc,
                         last_sent_at=start.started_at, start=start)
                 continue
@@ -160,9 +168,9 @@ def cycles(enquiry_ids: Optional[List[str]] = None, *, include_marketing: bool =
     return result
 
 
-def _marketing_stop_reason(enquiry_id: str, enquiry: Dict[str, Any], cycle: Cycle) -> str:
-    """Why Marketing must not follow up (rejected enquiries only), or ''."""
-    if not getattr(settings, "MARKETING_AUTO_FOLLOW_UP", True):
+def _marketing_stop_reason(enquiry_id: str, enquiry: Dict[str, Any], cycle: Cycle, *, manual: bool = False) -> str:
+    """Why Marketing must not follow up (rejected enquiries only), or ''. `manual`: sent with a button."""
+    if not manual and not getattr(settings, "MARKETING_AUTO_FOLLOW_UP", True):
         return "automatic Marketing follow-ups are turned off"
     if str(enquiry.get("status") or "").strip().lower() != "rejected":
         return "the enquiry is no longer rejected"
@@ -208,7 +216,7 @@ def _skip_reason(enquiry_id: str, enquiry: Optional[Dict[str, Any]], cycle: Cycl
         return "no next follow-up date set"
     if cycle.next_on > today:
         return f"not due until {cycle.next_on.isoformat()}"
-    if not cycle.thread_id and not (cycle.stage == MARKETING_STAGE and cycle.count == 0):
+    if not cycle.thread_id and cycle.stage != MARKETING_STAGE:  # Marketing emails open their own threads
         return "no confirmed Gmail conversation; send the first follow-up manually"
     if not _valid_email(cycle.customer_email):
         return "no confirmed customer email"
@@ -266,57 +274,93 @@ def run_auto_follow_up(enquiry_id: str, today: Optional[date] = None) -> Dict[st
     reason = _skip_reason(enquiry_id, enquiry, cycle, today)
     if reason:
         return _result(enquiry_id, SKIPPED, reason)
-    start = cycle.start
     return _send(enquiry_id, enquiry, sender, today, thread_id=cycle.thread_id,
                  customer_email=cycle.customer_email, stage=cycle.stage, attempt=cycle.count + 1, cc=cycle.cc,
-                 share_url=(start.share_url if start else ""), share_password=(start.share_password if start else ""))
+                 start=cycle.start)
+
+
+def customer_name_for(enquiry_id: str, enquiry: Dict[str, Any], email: str = "") -> str:
+    """The name to greet the customer with: the name Marketing typed, else the enquiry's customer name unless
+    it is really an email subject; '' when unknown (the email then says "Dear Sir/Madam")."""
+    try:
+        from marketing import lost
+        from marketing.models import MarketingLead
+    except Exception:  # Marketing app not installed
+        return str(enquiry.get("customer_name") or "").strip()
+    lead = MarketingLead.objects.filter(enquiry_id=str(enquiry_id)).only("customer_name").first()
+    return lost.customer_display(enquiry.get("customer_name"), enquiry.get("subject"), email,
+                                 lead.customer_name if lead else "")["greeting"]
+
+
+def _marketing_threads(enquiry_id: str, start: Optional[FollowUpStart]) -> List[str]:
+    """The Gmail threads of the Marketing emails already sent in this sequence (each email opens its own)."""
+    rows = FollowUpSent.objects.filter(enquiry_id=enquiry_id, stage=MARKETING_STAGE,
+                                       status=FollowUpSent.STATUS_SENT).exclude(gmail_thread_id="")
+    if start is not None:
+        rows = rows.filter(sent_at__gte=start.started_at)
+    return list(dict.fromkeys(rows.order_by("sent_at").values_list("gmail_thread_id", flat=True)))
 
 
 def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thread_id: str,
-          customer_email: str, stage: str, attempt: int, cc: str = "", share_url: str = "",
-          share_password: str = "") -> Dict[str, Any]:
-    """Reply in the conversation unless the customer wrote last; record the follow-up.
+          customer_email: str, stage: str, attempt: int, cc: str = "", start: Optional[FollowUpStart] = None,
+          source: str = FollowUpSent.SOURCE_AUTO, token: str = "") -> Dict[str, Any]:
+    """Send one follow-up and record it.
 
-    Marketing has its own conversation: its first email is a NEW email (a new Gmail thread, separate from the
-    enquiry's quotation / proforma invoice thread) and every later Marketing email replies in that thread.
+    Quotation / PI follow-ups reply in the enquiry's conversation unless the customer wrote last, and always
+    carry the enquiry's share link and password. Marketing emails are NEW emails (each with its own subject,
+    never in the enquiry's thread); they stop when the customer answered any of them, and a STOP reply marks
+    the customer Do not contact.
     """
-    new_thread = stage == MARKETING_STAGE and not thread_id
-    if not thread_id and not new_thread:
+    marketing = stage == MARKETING_STAGE
+    if not thread_id and not marketing:
         return _result(enquiry_id, SKIPPED, "no confirmed Gmail conversation")
+
+    share_url = share_password = ""
+    if not marketing:
+        try:
+            share_url, share_password = follow_up_links.for_follow_up(enquiry_id, enquiry, start=start)
+        except follow_up_links.ShareLinkMissing as exc:
+            logger.error("Follow-up %s for enquiry %s not sent: no share link (%s)", attempt, enquiry_id, exc)
+            return _result(enquiry_id, FAILED, f"not sent: {exc}")
+
     gmail = GmailService(sender)
     original = None
     try:
         own = {a.lower() for a in gmail.own_addresses()}
         if customer_email.lower() in own:
             return _result(enquiry_id, SKIPPED, "customer address is one of our own addresses")
-        if new_thread:
-            if not own:
-                return _result(enquiry_id, SKIPPED, "could not confirm the sending account's address")
-            thread = None
+        if not own:
+            return _result(enquiry_id, SKIPPED, "could not confirm the sending account's address")
+        if marketing:
+            for marketing_thread in _marketing_threads(enquiry_id, start):
+                senders = [(m, parseaddr(m.get("sender") or "")[1].strip().lower())
+                           for m in (gmail.get_thread_messages(marketing_thread, limit=50) or [])]
+                replies = [m for m, address in senders if address and address not in own]
+                if replies:
+                    _note_marketing_reply(enquiry_id, sender, replies)
+                    return _result(enquiry_id, SKIPPED, "customer replied; answer them manually")
         else:
             thread = gmail.get_thread_messages(thread_id, limit=50)
-        if not new_thread:
             if not thread:
                 return _result(enquiry_id, SKIPPED, "Gmail conversation not found")
             last = thread[-1]
             last_sender = parseaddr(last.get("sender") or "")[1].strip().lower()
-            if not own:
-                return _result(enquiry_id, SKIPPED, "could not confirm the sending account's address")
             if last_sender and last_sender not in own:
-                if stage == MARKETING_STAGE and not getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
-                    _note_marketing_reply(enquiry_id, sender, last)
                 return _result(enquiry_id, SKIPPED, "customer replied; answer them manually")
             original = gmail.get_message(last.get("id"))
     except GmailAPIError as exc:
         return _result(enquiry_id, FAILED, f"Gmail error: {exc}")
 
-    due_on, credit_days = payment_terms.payment_terms_for(enquiry_id) if stage == PAYMENT_STAGE else (None, None)
+    title = str(enquiry.get("subject") or enquiry.get("project_name") or "")
+    name = customer_name_for(enquiry_id, enquiry, customer_email)
     body = build_follow_up_body(
-        stage, attempt=attempt, reference=enquiry_id,
-        subject=str(enquiry.get("subject") or ""), user=sender,
-        due_on=due_on, credit_days=credit_days, today=today,
-        share_url=share_url, share_password=share_password,
+        stage, attempt=attempt, reference=enquiry_id, subject=title, user=sender, today=today,
+        share_url=share_url, share_password=share_password, customer_name=name,
+        document_number=(start.document_no if start is not None and not marketing else ""),
+        delivery_timeline=str(enquiry.get("delivery_timeline") or ""),
+        confirm_by_date=str(enquiry.get("confirm_by_date") or ""),
     )
+    html_body = to_html(body)
     # The other customer emails, then the same CC as the last follow-up; never the customer or our own addresses.
     cc_list = customer_emails.with_customer_cc(
         enquiry_id, payment_terms.parse_cc(cc, exclude=customer_email)[0], to=customer_email, own=own,
@@ -324,11 +368,10 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
     # Linked to a KYC customer: copy the team this stage concerns, and top management once it has escalated.
     cc_list = kyc_routing.add_cc(cc_list, enquiry_id, stage, attempt, to=customer_email, own=own,
                                  limit=payment_terms.MAX_CC)
-    if original is not None:
-        subject = original.get("subject") or str(enquiry.get("subject") or "")
-    else:  # Marketing's own new conversation
-        title = str(enquiry.get("subject") or "").strip()
-        subject = f"{title} - AVIGIRI" if title else "Your enquiry - AVIGIRI"
+    if marketing:  # its own new conversation, with this email's own subject
+        subject = marketing_subject(attempt, customer_name=name, enquiry_title=title)
+    else:
+        subject = (original or {}).get("subject") or str(enquiry.get("subject") or "")
     next_on = next_follow_up_date(attempt, today, stage)
     details = {
         "customer_email": customer_email,
@@ -339,9 +382,10 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
     }
 
     if getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
-        logger.info("Auto follow-up dry run for enquiry %s (attempt %s) to %s", enquiry_id, attempt,
-                    customer_email)
-        return _result(enquiry_id, DRY_RUN, "dry run: nothing was sent", **details)
+        logger.info("Follow-up dry run for enquiry %s (attempt %s, %s) to %s, CC %s. Nothing was sent.\n"
+                    "Subject: %s\n%s", enquiry_id, attempt, stage, customer_email, ", ".join(cc_list) or "none",
+                    subject, body)
+        return _result(enquiry_id, DRY_RUN, "dry run: nothing was sent", subject=subject, body=body, **details)
 
     # The unique token means one automatic follow-up per enquiry per day, even if a run is repeated.
     try:
@@ -356,10 +400,10 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
                 gmail_thread_id=thread_id,
                 sent_by=sender,
                 status=FollowUpSent.STATUS_PENDING,
-                submission_token=f"auto:{enquiry_id}:{today.isoformat()}",
+                submission_token=token or f"auto:{enquiry_id}:{today.isoformat()}",
                 stage=stage,
                 next_follow_up_on=next_on,
-                source=FollowUpSent.SOURCE_AUTO,
+                source=source,
                 cc=", ".join(cc_list),
             )
     except IntegrityError:
@@ -367,10 +411,10 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
 
     try:
         if original is None:
-            sent = gmail.send_email(customer_email, subject, body, cc=cc_list or None)
+            sent = gmail.send_email(customer_email, subject, body, cc=cc_list or None, html_body=html_body)
         else:
             sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email,
-                                    cc=cc_list or None)
+                                    cc=cc_list or None, html_body=html_body)
     except Exception as exc:  # Gmail API or network failure
         logger.warning("Auto follow-up failed for enquiry %s: %s", enquiry_id, exc)
         record.status = FollowUpSent.STATUS_FAILED
@@ -384,34 +428,79 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, *, thre
     record.sent_at = timezone.now()
     record.save(update_fields=["status", "gmail_message_id", "gmail_thread_id", "sent_at"])
     if stage == MARKETING_STAGE:
-        _log_marketing(enquiry_id, sender, attempt, customer_email)
+        _log_marketing(enquiry_id, sender, attempt, customer_email, manual=source == FollowUpSent.SOURCE_MANUAL)
     return _result(enquiry_id, SENT, "", **details)
 
 
-def _log_marketing(enquiry_id: str, sender, attempt: int, customer_email: str) -> None:
-    """Show the automatic Marketing email on the lead's activity list."""
+def send_marketing_now(enquiry_id: str, *, customer_email: str, cc: Optional[List[str]] = None,
+                       today: Optional[date] = None) -> Dict[str, Any]:
+    """"Send first follow-up now" on a Marketing lead: sends Marketing Follow-up 1 at once.
+
+    It counts as Follow-up 1, so the scheduler continues with Follow-up 2 and never sends #1 again. Sent from
+    FOLLOW_UP_AUTO_SENDER (the mailbox the later follow-ups and the reply checks use); FOLLOW_UP_AUTO_DRY_RUN
+    still applies.
+    """
+    enquiry_id = str(enquiry_id)
+    today = today or timezone.localdate()
+    sender = _sender()
+    if sender is None:
+        return _result(enquiry_id, FAILED, "FOLLOW_UP_AUTO_SENDER is not set to an active user")
+    cycle = cycles([enquiry_id]).get(enquiry_id)
+    if cycle is None or cycle.stage != MARKETING_STAGE:
+        if not _valid_email(customer_email):
+            return _result(enquiry_id, SKIPPED, "no customer email saved for this lead")
+        record_start(enquiry_id, MARKETING_STAGE, sent={}, customer_email=customer_email, cc=cc or [], subject="",
+                     user=sender)
+        cycle = cycles([enquiry_id]).get(enquiry_id)
+    if cycle is None or cycle.stage != MARKETING_STAGE:
+        return _result(enquiry_id, FAILED, "could not start the Marketing follow-ups")
+    if cycle.count >= 1:
+        return _result(enquiry_id, SKIPPED, "Follow-up 1 was already sent")
+    try:
+        enquiry = services.fetch_enquiry(_api_root(), enquiry_id)
+    except services.EnquiryServiceError as exc:
+        return _result(enquiry_id, FAILED, f"could not load enquiry: {exc}")
+    stopped = _marketing_stop_reason(enquiry_id, enquiry, cycle, manual=True)
+    if stopped:
+        return _result(enquiry_id, SKIPPED, stopped)
+    if not _valid_email(cycle.customer_email):
+        return _result(enquiry_id, SKIPPED, "no confirmed customer email")
+    return _send(enquiry_id, enquiry, sender, today, thread_id="", customer_email=cycle.customer_email,
+                 stage=MARKETING_STAGE, attempt=1, cc=cycle.cc, start=cycle.start,
+                 source=FollowUpSent.SOURCE_MANUAL, token=f"marketing-first:{enquiry_id}:{cycle.start.pk if cycle.start else 0}")
+
+
+def _log_marketing(enquiry_id: str, sender, attempt: int, customer_email: str, manual: bool = False) -> None:
+    """Show the Marketing email on the lead's activity list."""
     try:
         from marketing.models import MarketingActivity, MarketingLead
     except Exception:
         return
     lead, _ = MarketingLead.objects.get_or_create(enquiry_id=enquiry_id)
     final = attempt > follow_up_count(MARKETING_STAGE)
-    what = "Closing email" if final else f"Automatic follow-up {attempt}"
+    what = "Closing email" if final else f"{'Follow-up' if manual else 'Automatic follow-up'} {attempt}"
+    how = " (sent now with the button)" if manual else ""
     MarketingActivity.objects.create(lead=lead, kind=MarketingActivity.KIND_EMAIL, created_by=sender,
-                                     text=f"{what} sent to {customer_email} in the enquiry's email thread.")
+                                     text=f"{what} sent to {customer_email} as a new email{how}.")
 
 
-def _note_marketing_reply(enquiry_id: str, sender, message: Dict[str, Any]) -> None:
-    """The customer answered Marketing's follow-up: note it once on the lead (the follow-ups stop). No email."""
+def _note_marketing_reply(enquiry_id: str, sender, replies: List[Dict[str, Any]]) -> None:
+    """The customer answered a Marketing email: the follow-ups stop. A reply starting with STOP marks the
+    customer Do not contact. Noted once on the lead; no email to anyone."""
     try:
+        from marketing import lost
         from marketing.models import MarketingActivity, MarketingLead
     except Exception:
         return
     lead, _ = MarketingLead.objects.get_or_create(enquiry_id=enquiry_id)
-    from marketing.lost import REPLY_NOTE as marker
+    if any(lost.is_stop_reply(m.get("snippet")) for m in replies):
+        lost.mark_do_not_contact(lead, sender, 'Marked Do not contact: the customer replied "STOP".')
+    if getattr(settings, "FOLLOW_UP_AUTO_DRY_RUN", True):
+        return
+    marker = lost.REPLY_NOTE
     if lead.activities.filter(text__startswith=marker).exists():
         return
-    snippet = str(message.get("snippet") or "").strip()[:300]
+    snippet = str(replies[0].get("snippet") or "").strip()[:300]
     MarketingActivity.objects.create(
         lead=lead, kind=MarketingActivity.KIND_SYSTEM, created_by=sender,
         text=f"{marker}: automatic follow-ups stopped." + (f' "{snippet}"' if snippet else ""))

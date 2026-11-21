@@ -1,6 +1,7 @@
 """The whole schedule day by day with a fake clock, for both portals:
 quotation / PI: follow-ups on day 2, 4, 6, 8, then the closing email on day 10 (one email thread);
-rejection (Marketing): its own new thread, follow-ups on day 2, 4, 6, 8, then Marketing's closing email on day 10."""
+rejection (Marketing): new emails (never the enquiry's thread), Follow-up 1 at once (day 0), then day 2, 4, 6 and
+Marketing's closing email on day 8. There is no acknowledgement email in either."""
 from datetime import datetime, timezone as dt_timezone
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ from django.utils import timezone
 
 from enquiries import auto_follow_up, status_emails
 from enquiries.models import FollowUpSent, FollowUpStart
+from enquiries.tests.share_helpers import make_share
 
 OURS = "sales@ourcompany.example"
 SETTINGS = dict(
@@ -34,6 +36,7 @@ class TimelineTests(TestCase):
         self.sales = get_user_model().objects.create_user("sales", OURS, "x")
         self.clock = Clock()
         patch("django.utils.timezone.now", self.clock).start()
+        make_share("E1")
         self.enquiry = {"enquiry_id": "E1", "status": "open", "subject": "Gaskets", "customer_name": "Acme"}
         patch.object(auto_follow_up.services, "fetch_enquiry", side_effect=lambda *a, **k: self.enquiry).start()
         patch.object(auto_follow_up.services, "list_enquiries", side_effect=lambda *a, **k: [self.enquiry]).start()
@@ -102,7 +105,7 @@ class TimelineTests(TestCase):
         self.assertEqual([day for day, events in timeline.items() if events[0][0] == "payment_pending"], [2, 4, 6, 8])
         self.assertEqual(timeline[10], [("closing", 0, "enquiry closed")])  # an unpaid PI is closed too
 
-    def test_rejection_marketing_gets_its_own_thread_and_its_own_closing_email(self):
+    def test_rejection_marketing_is_ready_at_once_and_has_its_own_emails(self):
         self.enquiry["status"] = "rejected"
         FollowUpStart.objects.create(enquiry_id="E1", stage="waiting_po", gmail_thread_id="T-Q",
                                      customer_email="buyer@acme.example", started_at=DAY0.replace(day=1))
@@ -110,13 +113,11 @@ class TimelineTests(TestCase):
                                      customer_email="buyer@acme.example", started_at=DAY0)
         timeline = self._run()
         self.assertEqual(timeline, {
-            2: [("marketing", 1, "new email")], 4: [("marketing", 2, "reply")],
-            6: [("marketing", 3, "reply")], 8: [("marketing", 4, "reply")],
-            10: [("marketing", 5, "reply")],  # the closing email, in Marketing's thread
+            0: [("marketing", 1, "new email")], 2: [("marketing", 2, "new email")],
+            4: [("marketing", 3, "new email")], 6: [("marketing", 4, "new email")],
+            8: [("marketing", 5, "new email")],  # Marketing's closing email
         })
-        threads = set(FollowUpSent.objects.filter(stage="marketing").values_list("gmail_thread_id", flat=True))
-        self.assertEqual(threads, {"T-MKT"})  # never the enquiry's T-Q
-        self.assertEqual(self.gmail.send_email.call_count, 1)
+        self.gmail.send_reply.assert_not_called()  # never a reply in the enquiry's thread (T-Q)
         self.assertEqual(self.enquiry["status"], "rejected")  # the enquiry stays rejected; nothing else changes
         self.closings.assert_not_called()  # the enquiry-side closing email is not used for Marketing
 

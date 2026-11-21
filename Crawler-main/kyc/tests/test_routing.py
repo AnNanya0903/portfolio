@@ -77,6 +77,8 @@ class RoutingTests(TestCase):
 @override_settings(**AUTO_ON)
 class AutoFollowUpRoutingTests(TestCase):
     def setUp(self):
+        from enquiries.tests.share_helpers import make_share
+        make_share("E1")
         self.sales = get_user_model().objects.create_user("sales", OURS, "x")
         links.set_link("E1", _customer())
 

@@ -275,7 +275,6 @@ FOLLOW_UP_AUTO_SENDER = config('FOLLOW_UP_AUTO_SENDER', default='')  # username 
 FOLLOW_UP_AUTO_GAP_DAYS = [
     int(x) for x in config('FOLLOW_UP_AUTO_GAP_DAYS', default='2').split(',') if x.strip()
 ]
-FOLLOW_UP_ACK_WITHIN_DAYS = config('FOLLOW_UP_ACK_WITHIN_DAYS', default=2, cast=int)  # acknowledge enquiries this recent (0 = off)
 FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=2, cast=int)  # close this long after the last follow-up (0 = off)
 # Sections hidden from the sidebar and the home page for everyone (comma-separated module slugs, see
 # magicwand/access.py). They are only hidden: their pages still open from a direct link or bookmark.
@@ -294,8 +293,15 @@ KYC_VERIFICATION_LINK_DAYS = config('KYC_VERIFICATION_LINK_DAYS', default=30, ca
 # reminders, Sales otherwise). After this many follow-ups with no reply, the next ones also copy the
 # customer's Top management contacts. 0 turns the escalation off.
 KYC_ESCALATE_AFTER_REMINDERS = config('KYC_ESCALATE_AFTER_REMINDERS', default=2, cast=int)
-# Marketing portal: days to wait after an enquiry is lost before contacting the customer again.
-MARKETING_WAIT_DAYS = config('MARKETING_WAIT_DAYS', default=7, cast=int)
+# Marketing portal: there is no waiting period. A lead is Ready the moment the enquiry is rejected (or gets no
+# response), and its first follow-up goes out on the next hourly run. (MARKETING_WAIT_DAYS and
+# FOLLOW_UP_ACK_WITHIN_DAYS were removed; leaving them in an .env or yaml file does nothing.)
+# Working days promised for a revised quote in Marketing Follow-up 2 ("within {x} working days"); empty leaves
+# that sentence out.
+MARKETING_REVISED_QUOTE_DAYS = config('MARKETING_REVISED_QUOTE_DAYS', default='')
+# Site address used in the share links that follow-ups generate when none exists (no trailing slash), e.g.
+# https://portal.avigiri.com. Empty: the address of the links already sent, then KYC_LINK_BASE_URL.
+ENQUIRY_SHARE_BASE_URL = config('ENQUIRY_SHARE_BASE_URL', default='').rstrip('/')
 # Marketing campaign emails. Test mode is on by default: nothing is sent until this is set to False.
 MARKETING_CAMPAIGN_DRY_RUN = config('MARKETING_CAMPAIGN_DRY_RUN', default=True, cast=bool)
 MARKETING_CAMPAIGN_MAX_RECIPIENTS = config('MARKETING_CAMPAIGN_MAX_RECIPIENTS', default=50, cast=int)

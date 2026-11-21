@@ -271,12 +271,11 @@ class FollowUpFlowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Manual follow-up")
         self.assertContains(response, "buyer@acme.example")
-        self.assertContains(response, "Dear Sir/Madam,")
-        self.assertNotContains(response, "Dear Acme")
-        self.assertContains(response, "Thank you for contacting AVIGIRI.")
-        self.assertContains(response, "AVIGIRI Team")
+        self.assertContains(response, "Dear Acme,")
+        self.assertContains(response, "Just following up on the quotation")
+        self.assertContains(response, "AVIGIRI team")
         self.assertNotContains(response, "MagicWand Team")
-        self.assertContains(response, "your recent enquiry about Gasket quote")
+        self.assertContains(response, "we shared for Gasket quote")
         self.assertContains(response, "Re: Gasket quote")
         svc.send_reply.assert_not_called()
 
@@ -621,27 +620,28 @@ class FollowUpTemplateTests(TestCase):
     def test_each_stage_is_specific_and_signed(self):
         from dashboard.follow_up_templates import STAGE_CHOICES, build_follow_up_body
         user = get_user_model().objects.create_user("ananya", "a@example.com", "x", first_name="Ananya")
-        bodies = {key: build_follow_up_body(key, reference="ENQ-7", subject="EPDM gaskets", user=user)
+        bodies = {key: build_follow_up_body(key, reference="ENQ-7", subject="EPDM gaskets", user=user,
+                                            share_url="https://x.example/s/", share_password="AG-pw")
                   for key, _ in STAGE_CHOICES}
-        self.assertEqual(len(set(bodies.values())), len(STAGE_CHOICES))
-        for body in bodies.values():
+        for key, body in bodies.items():
             self.assertTrue(body.startswith("Dear Sir/Madam,"))
-            self.assertIn("our reference: ENQ-7", body)
-            self.assertIn("EPDM gaskets", body)
-            self.assertIn("Best regards,\nAVIGIRI Team", body)
+            self.assertIn("AVIGIRI team", body)
             self.assertNotIn("Ananya", body)  # signed by the team, never a person
-            self.assertEqual(body.count("?"), 1)  # one clear question
-        self.assertEqual(set(bodies), {"general", "waiting_po", "payment_pending", "marketing"})
-        self.assertIn("our quotation", bodies["waiting_po"])
-        self.assertIn("proforma invoice", bodies["payment_pending"])
-        self.assertIn("revising our offer", bodies["marketing"])
-        self.assertIn("clarification on the specification", bodies["waiting_po"])
+        # Enquiry stages have the link; the document named follows the stage; Marketing never has a link.
+        for key in ("general", "waiting_po", "payment_pending"):
+            self.assertIn("https://x.example/s/", bodies[key])
+            self.assertIn("EPDM gaskets", bodies[key])
+        self.assertIn("quotation we shared", bodies["waiting_po"])
+        self.assertIn("proforma invoice we shared", bodies["payment_pending"])
+        self.assertNotIn("https://", bodies["marketing"])
+        self.assertIn("wasn't the right fit", bodies["marketing"])
 
     @override_settings(FOLLOW_UP_CONTACT_PHONE="+91 80 1234 5678")
     def test_phone_added_when_configured(self):
         from dashboard.follow_up_templates import build_follow_up_body
-        body = build_follow_up_body("general", reference="ENQ-1", subject="x")
-        self.assertTrue(body.endswith("AVIGIRI Team\nPhone: +91 80 1234 5678"))
+        body = build_follow_up_body("general", reference="ENQ-1", subject="x", attempt=3,
+                                    share_url="https://x/", share_password="P")
+        self.assertIn("reach us at +91 80 1234 5678", body)
 
     def test_unknown_stage_falls_back_to_general(self):
         from dashboard.follow_up_templates import build_follow_up_body
@@ -709,7 +709,6 @@ class FollowUpStepsTests(TestCase):
         self.assertContains(response, 'name="follow_up_stage"')
         self.assertContains(response, "Quotation sent")
         self.assertContains(response, "Proforma invoice sent")
-        self.assertContains(response, "our reference: ENQ-7")
         self.assertContains(response, 'name="next_follow_up_on"')
         self.assertContains(response, 'id="followUpStageBodies"')
 

@@ -1353,14 +1353,12 @@ def _save_payment(enquiry_id: str, value: str, user, *, amount=None, due=None, p
 
 
 _STATUS_EMAIL_LABELS = (
-    (CustomerStatusEmail.KIND_ACKNOWLEDGEMENT, "Acknowledgement"),
     (CustomerStatusEmail.KIND_REJECTION, "Reason email"),
     (CustomerStatusEmail.KIND_PAYMENT_RECEIVED, "Payment thank-you"),
     (CustomerStatusEmail.KIND_CLOSING, "Closing email"),
 )
 # The enquiry status each automatic email belongs to.
 _STATUS_EMAIL_STATUS = {
-    CustomerStatusEmail.KIND_ACKNOWLEDGEMENT: "open",
     CustomerStatusEmail.KIND_REJECTION: "rejected",
     CustomerStatusEmail.KIND_PAYMENT_RECEIVED: CONVERTED_STATUS,
     CustomerStatusEmail.KIND_CLOSING: "open",
@@ -3707,6 +3705,10 @@ def share_action(request: HttpRequest) -> HttpResponse:
         existing = services.fetch_enquiry(api_root, enquiry_id, request=request)
     except services.EnquiryServiceError:
         existing = None
+    if str((existing or {}).get("status") or "").strip().lower() == "closed":
+        # Closed (e.g. after the closing email): the document stays readable, but cannot be accepted or rejected.
+        return JsonResponse({"error": "This enquiry is closed, so the quotation can no longer be accepted or "
+                                      "rejected. Please contact AVIGIRI."}, status=403)
 
     status_value = "accepted" if action == "accept" else "rejected"
     update_payload: Dict[str, Any] = {"status": status_value}

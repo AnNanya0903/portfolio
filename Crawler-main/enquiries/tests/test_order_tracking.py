@@ -48,7 +48,7 @@ class StageTests(TestCase):
             self.assertEqual(len(bodies), 4, key)
             for body in bodies:
                 self.assertTrue(body.startswith("Dear Sir/Madam,"))
-                self.assertIn("AVIGIRI Team", body)
+                self.assertIn("AVIGIRI team", body)
 
     def test_old_sample_stage_falls_back_to_general(self):
         self.assertEqual(build_follow_up_body("sample_sent", reference="E1", subject="G"),
@@ -362,9 +362,9 @@ class AutoFollowUpOnConvertedTests(TestCase):
         self.assertEqual(auto_follow_up._skip_reason("E1", open_enquiry, cycle, timezone.localdate()), "")
 
 
-@override_settings(**AUTO_ON, FOLLOW_UP_ACK_WITHIN_DAYS=2, FOLLOW_UP_CLOSE_AFTER_DAYS=7)
+@override_settings(**AUTO_ON, FOLLOW_UP_CLOSE_AFTER_DAYS=7)
 class CustomerEmailTests(TestCase):
-    """Acknowledgement, payment received and closing emails."""
+    """Payment received and closing emails (there is no acknowledgement email any more)."""
 
     def setUp(self):
         self.sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
@@ -385,25 +385,11 @@ class CustomerEmailTests(TestCase):
             FollowUpSent.objects.create(enquiry_id=eid, sent_by=self.sales, status="sent", stage=stage,
                                         sent_at=timezone.now() - timedelta(days=days_ago + (n - i)))
 
-    # --- acknowledgement -------------------------------------------------------------------
-    def test_acknowledgement_only_for_new_open_enquiries(self):
-        rows = [self._enq("NEW"), self._enq("OLD", days_ago=10), self._enq("ACC", status="accepted")]
-        due = status_emails.acknowledgement_due(rows, self.today)
-        self.assertEqual([e["enquiry_id"] for e in due], ["NEW"])
-
-    def test_acknowledgement_text_and_sent_once(self):
-        outcome = status_emails.send_status_email("acknowledgement", "NEW", self._enq("NEW"))
-        self.assertEqual(outcome["result"], "sent")
-        body = self.gmail.send_reply.call_args.kwargs["body"]
-        self.assertIn("We have registered it with our reference NEW", body)
-        self.assertIn("checking its feasibility", body)
-        self.assertEqual(status_emails.acknowledgement_due([self._enq("NEW")], self.today), [])
-
-    def test_no_acknowledgement_when_the_team_already_replied(self):
-        self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})
+    # --- no acknowledgement ----------------------------------------------------------------
+    def test_there_is_no_acknowledgement_email(self):
+        self.assertFalse(hasattr(status_emails, "acknowledgement_due"))
         outcome = status_emails.send_status_email("acknowledgement", "NEW", self._enq("NEW"))
         self.assertEqual(outcome["result"], "skipped")
-        self.assertIn("already replied", outcome["note"])
         self.gmail.send_reply.assert_not_called()
 
     # --- closing ---------------------------------------------------------------------------
@@ -423,7 +409,12 @@ class CustomerEmailTests(TestCase):
         self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})
         outcome = status_emails.send_closing_email(self._enq("DONE"), "http://api")
         self.assertEqual(outcome["result"], "sent")
-        self.assertIn("We are therefore closing this enquiry for now.", self.gmail.send_reply.call_args.kwargs["body"])
+        body = self.gmail.send_reply.call_args.kwargs["body"]
+        self.assertIn("we'll close this enquiry for now", body)
+        self.assertIn("an updated quotation", body)
+        self.assertNotIn("Password", body)  # no share link in the closing email
+        self.assertNotIn("http", body)
+        self.assertTrue(body.endswith("Warm regards," + chr(10) + "AVIGIRI team"))
         self.assertEqual(self.update.call_args.args[1:], ("DONE", {"status": "closed"}))
 
     def test_customer_reply_stops_the_closing_email(self):
@@ -449,14 +440,14 @@ class CustomerEmailTests(TestCase):
         self.assertIn("confirmed for production", body)
 
     # --- scheduled step --------------------------------------------------------------------
-    def test_scheduled_run_sends_both(self):
+    def test_scheduled_run_sends_the_closing_email_only(self):
         from enquiries import scheduler
 
         self._followed_up("DONE")
         rows = [self._enq("NEW"), self._enq("DONE", days_ago=30)]
         with patch("enquiries.services.list_enquiries", return_value=rows):
             data = scheduler.customer_email_step()
-        self.assertEqual([r["enquiry_id"] for r in data["acknowledgement"]], ["NEW"])
+        self.assertNotIn("acknowledgement", data)
         self.assertEqual([r["enquiry_id"] for r in data["closing"]], ["DONE"])
 
     @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
@@ -464,7 +455,7 @@ class CustomerEmailTests(TestCase):
         from enquiries import scheduler
 
         data = scheduler.customer_email_step()
-        self.assertEqual((data["acknowledgement"], data["closing"]), ([], []))
+        self.assertEqual(data["closing"], [])
         self.gmail.send_reply.assert_not_called()
 
 
@@ -476,20 +467,35 @@ class EmailWordingTests(TestCase):
         bodies = [build_follow_up_body(k, reference="E1", subject="Gasket", user=user, attempt=n)
                   for k in STAGE_KEYS for n in (1, 2, 3, 4)]
         bodies += [status_emails.build_status_email_body(t, reference="E1", subject="Gasket", user=user)
-                   for t in ("acknowledgement", "rejection_ask", "rejection_thanks", "payment_received", "closing")]
+                   for t in ("rejection_ask", "rejection_thanks", "payment_received")]
+        bodies.append(status_emails.enquiry_closing_body())
         for body in bodies:
             self.assertNotIn("Ananya", body)
-            self.assertTrue(body.endswith("Best regards,\nAVIGIRI Team"), body[-60:])
+            self.assertRegex(body, r"AVIGIRI [Tt]eam")
 
-    def test_closing_line_matches_the_purpose(self):
-        def last_paragraph(stage, attempt=1):
-            return build_follow_up_body(stage, reference="E1", subject="G", attempt=attempt).split("\n\n")[-2]
+    def test_enquiry_follow_ups_are_signed_avigiri_team_and_have_no_unfilled_placeholder(self):
+        for n in (1, 2, 3, 4):
+            body = build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=n,
+                                        share_url="https://x.example/s/1/", share_password="AG-pw",
+                                        customer_name="Acme")
+            self.assertTrue(body.startswith("Dear Acme,"))
+            self.assertTrue(body.rstrip().endswith("AVIGIRI team"), body[-40:])
+            self.assertNotRegex(body, r"[{}]")
+            self.assertIn("https://x.example/s/1/", body)
+            self.assertIn("Password: AG-pw", body)
 
-        self.assertIn("schedule production", last_paragraph("waiting_po"))
-        self.assertIn("payment reference", last_paragraph("payment_pending"))
-        self.assertIn("payment reference", last_paragraph("payment_pending", attempt=4))
-        closings = {last_paragraph(k) for k in STAGE_KEYS} | {last_paragraph(k, 4) for k in STAGE_KEYS}
-        self.assertEqual(len(closings), 2 * len(STAGE_KEYS))  # no two stages share a closing line
+    def test_a_sentence_without_its_value_is_left_out(self):
+        body = build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=3,
+                                    share_url="https://x/", share_password="P")
+        self.assertNotIn("timeline", body)
+        self.assertNotIn("reach us at", body)
+        with override_settings(FOLLOW_UP_CONTACT_PHONE="0816 2970025"):
+            body = build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=3,
+                                        share_url="https://x/", share_password="P",
+                                        delivery_timeline="3 weeks", confirm_by_date="30 Nov 2026")
+        self.assertIn("timeline of 3 weeks", body)
+        self.assertIn("confirmation by 30 Nov 2026", body)
+        self.assertIn("reach us at 0816 2970025", body)
 
 
 class PaymentStatusMigrationTests(TestCase):

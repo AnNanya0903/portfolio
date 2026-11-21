@@ -1,7 +1,7 @@
 """Campaign emails to lost customers.
 
 Safety rules (every one is checked again at the moment of sending):
-- Only customers who are "Ready to contact": the waiting period after the loss is over, not Do not contact,
+- Only customers who are "Ready to contact" (there is no waiting period), not Do not contact,
   not already revived, and with a valid email address.
 - If any lost enquiry with the same email address is Do not contact, that address is never emailed.
 - One email per address per campaign, and no address is emailed again within MARKETING_CAMPAIGN_GAP_DAYS
@@ -25,7 +25,7 @@ from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from dashboard.follow_up_templates import sender_signature
+from dashboard.follow_up_templates import MARKETING_STOP_LINE, sender_signature
 from dashboard.gmail_service import GmailAPIError, GmailService
 
 from . import lost
@@ -42,8 +42,7 @@ PLACEHOLDERS = {
     "{reference}": "the lost enquiry number",
 }
 
-OPT_OUT_LINE = ("If you would prefer not to receive these emails, simply reply with \"unsubscribe\" "
-                "and we will not contact you again.")
+OPT_OUT_LINE = MARKETING_STOP_LINE  # on every Marketing email; a reply of STOP (or "unsubscribe") stops them
 
 STARTER_TEMPLATES: Dict[str, Dict[str, str]] = {
     "price": {
@@ -112,7 +111,7 @@ def render_email(subject: str, body: str, row: Mapping[str, Any]) -> Tuple[str, 
     for key, value in values.items():
         subject = subject.replace(key, value)
         body = body.replace(key, value)
-    full_body = "\n\n".join([body.strip(), OPT_OUT_LINE, sender_signature()])
+    full_body = "\n\n".join([body.strip(), sender_signature(), OPT_OUT_LINE])  # STOP line = footer
     return " ".join(subject.split())[:300], full_body
 
 
@@ -147,8 +146,6 @@ def build_audience(leads: List[Dict[str, Any]], filters: Mapping[str, Any]) -> D
             reason = f"already revived as {row['revived_enquiry_id']}"
         elif row["stage"] == lost.STAGE_DO_NOT_CONTACT:
             reason = "Do not contact"
-        elif row["stage"] == lost.STAGE_WAITING:
-            reason = f"waiting period until {row['ready_on']:%d %b %Y}" if row["ready_on"] else "waiting period"
         elif not address or not _valid_email(address):
             reason = "no customer email saved"
         elif address in blocked:
@@ -302,7 +299,7 @@ def _sender_address(message: Mapping[str, Any]) -> str:
 def check_replies(campaign: Campaign, user, *, notify_sender: bool = False, page_url: str = "") -> Dict[str, int]:
     """Look in Gmail for customer replies to this campaign's emails.
 
-    A reply that contains "unsubscribe" turns on Do not contact for that lost enquiry.
+    A reply that starts with STOP, or contains "unsubscribe", turns on Do not contact for that lost enquiry.
     """
     waiting = list(campaign.recipients.filter(status=CampaignRecipient.STATUS_SENT, replied_at__isnull=True)
                    .exclude(gmail_thread_id=""))
@@ -338,14 +335,9 @@ def check_replies(campaign: Campaign, user, *, notify_sender: bool = False, page
             from .notify import notify_reply
             notify_reply(campaign.sent_by, customer=recipient.customer_name or recipient.customer_email,
                          campaign_name=campaign.name, url=page_url)
-        if "unsubscribe" in text:
+        if "unsubscribe" in text or any(lost.is_stop_reply(m.get("snippet")) for m in replies):
             lead, _ = MarketingLead.objects.get_or_create(enquiry_id=recipient.enquiry_id)
-            if not lead.do_not_contact:
-                lead.do_not_contact = True
-                lead.updated_by = user
-                lead.save(update_fields=["do_not_contact", "updated_by", "updated_at"])
-                MarketingActivity.objects.create(lead=lead, kind=MarketingActivity.KIND_SYSTEM, created_by=user,
-                                                 text="Marked Do not contact: the customer replied \"unsubscribe\".")
+            lost.mark_do_not_contact(lead, user, "Marked Do not contact: the customer asked us to stop.")
             counts["unsubscribed"] += 1
     campaign.replies_checked_at = timezone.now()
     campaign.save(update_fields=["replies_checked_at", "updated_at"])

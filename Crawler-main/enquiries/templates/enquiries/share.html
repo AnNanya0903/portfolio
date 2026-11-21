@@ -42,7 +42,7 @@
         </div>
       {% else %}
         <p class="mb-3 text-muted small">
-          This quotation has already been {{ enquiry_status }}; further responses are disabled.
+          {% if enquiry_status == 'closed' %}This enquiry is closed, so it can no longer be accepted or rejected here. Please contact AVIGIRI if you would like to go ahead.{% else %}This quotation has already been {{ enquiry_status }}; further responses are disabled.{% endif %}
         </p>
       {% endif %}
       <div class="modal fade" id="shareActionModal" tabindex="-1" aria-labelledby="shareActionModalLabel" aria-hidden="true">

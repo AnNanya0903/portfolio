@@ -11,6 +11,7 @@ from django.utils import timezone
 from dashboard.follow_up_templates import build_follow_up_body
 from enquiries import auto_follow_up, scheduler
 from enquiries.models import EnquiryContact, FollowUpSent
+from enquiries.tests.share_helpers import make_share
 
 TODAY = timezone.localdate()
 
@@ -45,6 +46,7 @@ class AutoFollowUpTests(TestCase):
         self.enquiries = {
             "E1": {"enquiry_id": "E1", "status": "open", "subject": "Gasket quote", "customer_name": "Acme"},
         }
+        self.share_url, self.share_password = make_share("E1")
         p = patch.object(auto_follow_up.services, "list_enquiries", side_effect=lambda *a, **k: list(self.enquiries.values()))
         p.start()
         self.addCleanup(p.stop)
@@ -107,7 +109,11 @@ class AutoFollowUpTests(TestCase):
         self.assertEqual(outcome["result"], "sent")
         kwargs = gmail.send_reply.call_args.kwargs
         self.assertEqual(kwargs["to"], "buyer@acme.example")
-        self.assertIn("status of your evaluation of our quotation", kwargs["body"])  # follow-up #2 wording
+        self.assertIn("meets your requirements", kwargs["body"])  # follow-up #2 wording
+        self.assertIn(self.share_url, kwargs["body"])
+        self.assertIn(f"Password: {self.share_password}", kwargs["body"])
+        self.assertIn(f'href="{self.share_url}"', kwargs["html_body"])  # clickable in the HTML version
+        self.assertNotIn("<a ", kwargs["body"])  # plain text: the link as text
         record = FollowUpSent.objects.get(source=FollowUpSent.SOURCE_AUTO)
         self.assertEqual(record.status, FollowUpSent.STATUS_SENT)
         self.assertEqual(record.next_follow_up_on, TODAY + timedelta(days=7))  # gap after #2
@@ -139,7 +145,10 @@ class AutoFollowUpTests(TestCase):
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
             data = self._send_one("E1")
         self.assertEqual(data["result"], "dry_run")
+        self.assertIn(self.share_url, data["body"])  # the fully rendered email is logged / returned
+        self.assertIn(f"Password: {self.share_password}", data["body"])
         gmail.send_reply.assert_not_called()
+        gmail.send_email.assert_not_called()
         self.assertFalse(FollowUpSent.objects.filter(source=FollowUpSent.SOURCE_AUTO).exists())
 
     def test_gmail_failure_is_recorded(self):
@@ -236,7 +245,7 @@ class ManualPageAutoChoiceTests(TestCase):
         self.assertEqual([s["attempt"] for s in steps], [3, 4])
         self.assertIn("7 days after follow-up #3", steps[1]["when"])
         self.assertTrue(steps[1]["final"])
-        self.assertIn("final reminder", steps[1]["body"])
+        self.assertIn("gentle reminder", steps[1]["body"])
 
 
 class TemplateAndScheduleTests(TestCase):
@@ -246,10 +255,9 @@ class TemplateAndScheduleTests(TestCase):
             build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=1),
         )
 
-    def test_final_follow_up_offers_to_close(self):
+    def test_follow_up_4_is_the_last_template(self):
         body = build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=4)
-        self.assertIn("final reminder", body)
-        self.assertIn("Whenever you are ready", body)
+        self.assertIn("gentle reminder", body)
         self.assertEqual(body, build_follow_up_body("waiting_po", reference="E1", subject="Gasket", attempt=9))
 
     @override_settings(FOLLOW_UP_AUTO_GAP_DAYS=[2], FOLLOW_UP_MAX_COUNT=4, MARKETING_FOLLOW_UP_COUNT=4)
@@ -292,20 +300,48 @@ class ShareLinkInFollowUpTests(TestCase):
         self.assertEqual((start.share_url, start.share_password), (self.URL, self.PASSWORD))
 
     def test_the_automatic_email_has_the_link_and_password(self):
-        self._start()
+        url, password = make_share("E1", password=self.PASSWORD)
+        self._start(url=url, password=password)
         gmail = _gmail()
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
             outcome = auto_follow_up.run_auto_follow_up("E1")
         self.assertEqual(outcome["result"], "sent")
         body = gmail.send_reply.call_args.kwargs["body"]
-        self.assertIn(self.URL, body)
+        self.assertIn(url, body)
         self.assertIn(f"Password: {self.PASSWORD}", body)
         self.assertIn("view the quotation online", body)
 
-    def test_an_enquiry_without_a_saved_link_gets_the_email_without_one(self):
+    def test_a_missing_share_link_is_generated_from_the_latest_revision(self):
+        make_share("E1", password="AG-old", save_on_contact=False)
+        url, password = make_share("E1", password="AG-new", save_on_contact=False)  # latest revision
         self._start(url="", password="")
         gmail = _gmail()
-        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail),                 override_settings(ENQUIRY_SHARE_BASE_URL="https://portal.example"):
             outcome = auto_follow_up.run_auto_follow_up("E1")
         self.assertEqual(outcome["result"], "sent")
-        self.assertNotIn("Password:", gmail.send_reply.call_args.kwargs["body"])
+        body = gmail.send_reply.call_args.kwargs["body"]
+        contact = EnquiryContact.objects.get(enquiry_id="E1")
+        self.assertTrue(contact.follow_up_share_url.startswith("https://portal.example/enquiries/share/"))
+        self.assertIn(contact.follow_up_share_url, body)
+        self.assertIn(f"Password: {contact.follow_up_share_password}", body)
+        self.assertNotEqual(contact.follow_up_share_url, url)  # a new link to the same latest revision
+
+    def test_follow_up_uses_its_own_enquiry_link_never_another(self):
+        make_share("E2", password="AG-other")  # another enquiry's link, newer
+        url, password = make_share("E1", password=self.PASSWORD)
+        self._start(url=url, password=password)
+        gmail = _gmail()
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
+            auto_follow_up.run_auto_follow_up("E1")
+        body = gmail.send_reply.call_args.kwargs["body"]
+        self.assertIn(url, body)
+        self.assertNotIn("AG-other", body)
+
+    def test_no_share_link_anywhere_skips_the_send_with_an_error(self):
+        self._start(url="", password="")  # no ShareLink exists for E1
+        gmail = _gmail()
+        with patch.object(auto_follow_up, "GmailService", return_value=gmail),                 self.assertLogs("enquiries.auto_follow_up", level="ERROR"):
+            outcome = auto_follow_up.run_auto_follow_up("E1")
+        self.assertEqual(outcome["result"], "failed")
+        gmail.send_reply.assert_not_called()
+        self.assertFalse(FollowUpSent.objects.filter(source=FollowUpSent.SOURCE_AUTO).exists())

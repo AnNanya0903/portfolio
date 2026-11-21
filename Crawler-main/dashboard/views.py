@@ -1708,8 +1708,18 @@ def _follow_up_recipient(context):
 
 def _payment_terms_kwargs(context):
     """due_on / credit_days / today for payment reminder text (credit period on the enquiry)."""
-    due_on, credit_days = payment_terms.payment_terms_for((context or {}).get('enquiry_id') or '')
-    return {'due_on': due_on, 'credit_days': credit_days, 'today': timezone.localdate()}
+    enquiry_id = str((context or {}).get('enquiry_id') or '')
+    due_on, credit_days = payment_terms.payment_terms_for(enquiry_id)
+    kwargs = {'due_on': due_on, 'credit_days': credit_days, 'today': timezone.localdate(),
+              'customer_name': (context or {}).get('customer_name') or ''}
+    # Manual follow-ups use the same templates as the automatic ones, including the enquiry's own share link
+    # and password for its latest quotation / proforma invoice.
+    try:
+        from enquiries import follow_up_links
+        kwargs['share_url'], kwargs['share_password'] = follow_up_links.for_follow_up(enquiry_id, context)
+    except Exception as exc:  # no share link yet: the email is shown without the link paragraph
+        logger.warning('No share link for the follow-up of enquiry %s: %s', enquiry_id, exc)
+    return kwargs
 
 
 def _follow_up_default_body(context, user=None, stage=DEFAULT_FOLLOW_UP_STAGE):
@@ -1718,6 +1728,8 @@ def _follow_up_default_body(context, user=None, stage=DEFAULT_FOLLOW_UP_STAGE):
         reference=(context or {}).get('enquiry_id') or '',
         subject=(context or {}).get('subject') or '',
         user=user,
+        attempt=FollowUpSent.objects.filter(enquiry_id=str((context or {}).get('enquiry_id') or ''),
+                                            status=FollowUpSent.STATUS_SENT).count() + 1,
         **_payment_terms_kwargs(context),
     )
 

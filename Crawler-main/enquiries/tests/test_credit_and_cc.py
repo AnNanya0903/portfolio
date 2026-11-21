@@ -240,6 +240,8 @@ class ComposeCcTests(TestCase):
 @override_settings(**AUTO_ON)
 class AutoFollowUpCcTests(TestCase):
     def test_automatic_follow_up_reuses_the_last_cc(self):
+        from enquiries.tests.share_helpers import make_share
+        make_share("E1")
         sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
         FollowUpSent.objects.create(enquiry_id="E1", customer_email="b@acme.example", sent_by=sales, status="sent",
                                     gmail_thread_id="t1", stage="waiting_po", next_follow_up_on=timezone.localdate(),

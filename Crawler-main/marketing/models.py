@@ -29,6 +29,8 @@ class MarketingLead(models.Model):
     # What marketing wrote when the reason is "Other".
     lost_reason_note = models.CharField(max_length=300, blank=True, default="")
     do_not_contact = models.BooleanField(default=False)
+    # When the lead became Ready to contact: the moment the enquiry was rejected or got no response.
+    ready_at = models.DateTimeField(null=True, blank=True)
     revived_enquiry_id = models.CharField(max_length=128, blank=True, default="")
     revived_at = models.DateTimeField(null=True, blank=True)
     revived_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")

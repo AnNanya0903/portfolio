@@ -8,7 +8,6 @@
              padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
   .mk-chip--rejected { background: #fef2f2; color: #b91c1c; }
   .mk-chip--no_response { background: #f1f5f9; color: #475569; }
-  .mk-chip--waiting { background: #fffbeb; color: #b45309; }
   .mk-chip--ready { background: #ecfdf5; color: #047857; }
   .mk-chip--do_not_contact { background: #f1f5f9; color: #334155; text-decoration: line-through; }
   .mk-chip--revived { background: #eff6ff; color: #1d4ed8; }
@@ -88,10 +87,15 @@
           <dt>Follow-ups sent</dt><dd>{{ row.follow_up_count }}</dd>
           {% if row.last_follow_up %}<dt>Last follow-up</dt><dd>{{ row.last_follow_up|date:"d M Y" }} ({{ row.last_follow_up_type }})</dd>{% endif %}
           {% if row.auto_follow_up %}<dt>Automatic follow-ups</dt><dd data-auto-follow-up="{{ row.auto_follow_up.state }}">{{ row.auto_follow_up.label }}
-            <div class="mk-muted">Every 2 days from the rejection, then a closing email. They run in their own email thread with the customer, separate from the enquiry's.</div></dd>{% endif %}
-          <dt>Can contact from</dt>
-          <dd>{% if row.ready_on %}{{ row.ready_on|date:"d M Y" }}{% else %}—{% endif %}
-            <span class="mk-muted">({{ wait_days }} days after loss)</span></dd>
+            <div class="mk-muted">The first follow-up goes out as soon as the lead is Ready, then every 2 days, then a closing email. They are new emails to the customer, separate from the enquiry's thread.</div></dd>{% endif %}
+          {% if row.stage == 'ready' and not row.auto_follow_up or row.stage == 'ready' and row.auto_follow_up.state == 'running' and row.auto_follow_up.sent == 0 %}
+          <dt>First follow-up</dt>
+          <dd><form method="post" class="d-inline" onsubmit="return confirm('Send Follow-up 1 to the customer now? It counts as Follow-up 1.');">
+            {% csrf_token %}<input type="hidden" name="action" value="send_first_follow_up">
+            <button type="submit" class="btn btn-sm btn-primary" data-send-first-follow-up>Send first follow-up now</button>
+          </form></dd>{% endif %}
+          {% if row.stage == 'ready' %}<dt>Ready since</dt>
+          <dd>{% if row.ready_since %}{{ row.ready_since|date:"d M Y" }}{% else %}—{% endif %}</dd>{% endif %}
           {% if row.customer_reason %}
             <dt>Customer's reason</dt><dd>“{{ row.customer_reason }}”</dd>
           {% endif %}
@@ -164,10 +168,6 @@
           </p>
         {% elif can_revive %}
           <div class="fw-semibold small mb-1">Customer wants a new quote?</div>
-          {% if row.stage == 'waiting' %}
-            <div class="alert alert-warning py-2 small">The waiting period of {{ wait_days }} days has not ended yet (until {{ row.ready_on|date:"d M Y" }}).
-              Revive only if the customer contacted you first.</div>
-          {% endif %}
           <form method="post" onsubmit="return confirm('Create a new enquiry for sales from this lost enquiry?');">
             {% csrf_token %}
             <input type="hidden" name="action" value="revive">

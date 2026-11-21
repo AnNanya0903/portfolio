@@ -133,6 +133,8 @@ class AutoFollowUpCcTests(TestCase):
         from enquiries import auto_follow_up
 
         self.auto = auto_follow_up
+        from enquiries.tests.share_helpers import make_share
+        make_share("E1")
         self.sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
         enquiry = {"enquiry_id": "E1", "status": "open", "subject": "Gasket quote", "customer_name": "Acme"}
         patch.object(auto_follow_up.services, "list_enquiries", return_value=[enquiry]).start()
@@ -145,8 +147,8 @@ class AutoFollowUpCcTests(TestCase):
         from enquiries.models import FollowUpSent
         from enquiries.tests.test_auto_follow_up import _gmail as auto_gmail
 
-        EnquiryContact.objects.create(enquiry_id="E1", customer_email="buyer@acme.example",
-                                      other_customer_emails="boss@acme.example")
+        EnquiryContact.objects.update_or_create(enquiry_id="E1", defaults={
+            "customer_email": "buyer@acme.example", "other_customer_emails": "boss@acme.example"})
         FollowUpSent.objects.create(
             enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales, cc="manager@ours.example",
             status=FollowUpSent.STATUS_SENT, gmail_thread_id="t1", stage="waiting_po",

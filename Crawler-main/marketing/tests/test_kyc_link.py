@@ -13,7 +13,7 @@ from marketing import campaigns, lost
 from marketing.models import Campaign, CampaignRecipient, MarketingLead
 
 SETTINGS = dict(
-    FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7, MARKETING_WAIT_DAYS=30,
+    FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7,
     STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage",
 )
 

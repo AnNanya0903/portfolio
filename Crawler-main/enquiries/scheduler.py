@@ -2,7 +2,7 @@
 
 Once an hour (App Engine cron, see cron.yaml) or by hand (python manage.py run_automations):
   1. automatic follow-ups   - every enquiry that is due, one email each (enquiries/auto_follow_up.py)
-  2. customer emails        - acknowledgements and closing emails (enquiries/status_emails.py)
+  2. customer emails        - closing emails (enquiries/status_emails.py)
   3. reply checks           - replies to Marketing campaign emails (marketing/campaigns.py)
 
 Each step is independent: a problem in one is recorded and the others still run. Nothing here changes
@@ -62,8 +62,8 @@ def follow_up_step(today: Optional[date] = None, deadline: Optional[float] = Non
 
 
 def customer_email_step(today: Optional[date] = None) -> Dict[str, Any]:
-    """Acknowledge new enquiries and send the closing email where the customer never replied."""
-    result: Dict[str, Any] = {**_flags(), "acknowledgement": [], "closing": []}
+    """Send the closing email where the customer never replied (there is no acknowledgement email)."""
+    result: Dict[str, Any] = {**_flags(), "closing": []}
     if not result["enabled"]:
         return result
     try:

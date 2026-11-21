@@ -145,6 +145,10 @@ class EnquiryContact(models.Model):
     follow_up_cc = models.CharField(max_length=1000, blank=True, default="")  # CC used for this enquiry's follow-ups
     # More customer addresses besides customer_email (comma separated). CC'd on every email to the customer.
     other_customer_emails = models.CharField(max_length=1000, blank=True, default="")
+    # Share link + password generated for follow-ups when none was sent with the quotation / PI
+    # (enquiries/follow_up_links.py), so every follow-up repeats the same ones.
+    follow_up_share_url = models.CharField(max_length=500, blank=True, default="")
+    follow_up_share_password = models.CharField(max_length=64, blank=True, default="")
 
     # Payment for an accepted order; when it is paid the order becomes converted. The amount, due date, paid-on
     # date and reference below are confidential: they are kept but no longer shown or asked for anywhere.

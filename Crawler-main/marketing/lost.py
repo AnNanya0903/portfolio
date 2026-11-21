@@ -6,7 +6,8 @@ An enquiry is lost when it is:
   (FOLLOW_UP_MAX_COUNT) and the customer stayed silent for FOLLOW_UP_CLOSE_AFTER_DAYS after the last one.
   This is the same rule the closing email uses, so the two never disagree.
 
-Marketing waits MARKETING_WAIT_DAYS after the loss before the lead is "Ready to contact".
+There is no waiting period: a lead is "Ready to contact" the moment the enquiry is lost, and Marketing's
+first follow-up is due then (MarketingLead.ready_at records when).
 """
 from __future__ import annotations
 
@@ -32,12 +33,10 @@ REJECTED = "rejected"
 NO_RESPONSE = "no_response"
 KIND_LABELS = {REJECTED: "Rejected", NO_RESPONSE: "No response"}
 
-STAGE_WAITING = "waiting"
 STAGE_READY = "ready"
 STAGE_DO_NOT_CONTACT = "do_not_contact"
 STAGE_REVIVED = "revived"
 STAGE_LABELS = {
-    STAGE_WAITING: "Waiting period",
     STAGE_READY: "Ready to contact",
     STAGE_DO_NOT_CONTACT: "Do not contact",
     STAGE_REVIVED: "Revived",
@@ -137,8 +136,28 @@ def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, repli
             "next_on": cycle.next_on if state == "running" else None}
 
 
-def wait_days() -> int:
-    return max(int(getattr(settings, "MARKETING_WAIT_DAYS", 7) or 0), 0)
+def is_stop_reply(text: Any) -> bool:
+    """True when a customer's reply asks us to stop: it starts with the word STOP (any case)."""
+    return bool(re.match(r"^\W*stop(?![a-z])", str(text or ""), re.I))
+
+
+def mark_ready(enquiry_id: str) -> MarketingLead:
+    """The enquiry is lost: its lead is Ready now (ready_at = now, set once)."""
+    lead, _ = MarketingLead.objects.get_or_create(enquiry_id=str(enquiry_id))
+    if lead.ready_at is None:
+        lead.ready_at = timezone.now()
+        lead.save(update_fields=["ready_at", "updated_at"])
+    return lead
+
+
+def mark_do_not_contact(lead: MarketingLead, user, text: str) -> None:
+    """Turn on Do not contact (once) and note why on the lead."""
+    if lead.do_not_contact:
+        return
+    lead.do_not_contact = True
+    lead.updated_by = user
+    lead.save(update_fields=["do_not_contact", "updated_by", "updated_at"])
+    MarketingActivity.objects.create(lead=lead, kind=MarketingActivity.KIND_SYSTEM, created_by=user, text=text)
 
 
 def financial_year_label(value: date) -> str:
@@ -275,14 +294,12 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         enquiry = item["enquiry"]
         lead = marketing.get(enquiry_id)
         lost_on = _local_date(item["lost_at"]) or _local_date(enquiry.get("received_at_dt"))
-        ready_on = lost_on + timedelta(days=wait_days()) if lost_on else None
+        ready_since = _local_date(lead.ready_at) if lead and lead.ready_at else lost_on
 
         if lead and lead.revived_enquiry_id:
             stage = STAGE_REVIVED
         elif lead and lead.do_not_contact:
             stage = STAGE_DO_NOT_CONTACT
-        elif ready_on and ready_on > today:
-            stage = STAGE_WAITING
         else:
             stage = STAGE_READY
 
@@ -319,7 +336,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "last_follow_up": item["follow_ups"]["last"],
             "last_follow_up_type": item["follow_ups"].get("last_type", ""),
             "lost_on": lost_on,
-            "ready_on": ready_on,
+            "ready_since": ready_since,
             "received_on": received,
             "fin_year": financial_year_label(lost_on or received) if (lost_on or received) else "",
             "stage": stage,
@@ -388,7 +405,6 @@ def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
         "rejected": sum(1 for r in leads if r["kind"] == REJECTED),
         "no_response": sum(1 for r in leads if r["kind"] == NO_RESPONSE),
         "ready": sum(1 for r in leads if r["stage"] == STAGE_READY),
-        "waiting": sum(1 for r in leads if r["stage"] == STAGE_WAITING),
         "revived": sum(1 for r in leads if r["stage"] == STAGE_REVIVED),
         # Same rule as the "Do not contact" stage filter, so the card and the filtered list always agree.
         "do_not_contact": sum(1 for r in leads if r["stage"] == STAGE_DO_NOT_CONTACT),

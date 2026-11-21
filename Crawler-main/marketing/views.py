@@ -53,7 +53,6 @@ def board(request: HttpRequest) -> HttpResponse:
         "stage_choices": list(lost.STAGE_LABELS.items()),
         "reason_choices": list(MarketingLead.REASON_CHOICES),
         "fin_years": sorted({row["fin_year"] for row in leads if row["fin_year"]}, reverse=True),
-        "wait_days": lost.wait_days(),
         "load_error": error,
         # Same filters for a new campaign (its audience is always "Ready to contact").
         "campaign_query": urlencode({k: v for k, v in chosen.items() if v and k != "stage"}),
@@ -202,6 +201,24 @@ def _mark_accepted(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str,
     return True
 
 
+def _send_first_follow_up(request: HttpRequest, row: Dict[str, Any]) -> None:
+    """"Send first follow-up now": Follow-up 1 goes out at once and counts as #1 (the scheduler sends #2 next)."""
+    from enquiries import auto_follow_up
+
+    if row["stage"] in (lost.STAGE_REVIVED, lost.STAGE_DO_NOT_CONTACT):
+        messages.error(request, "This lead is Revived or Do not contact, so no follow-up is sent.")
+        return
+    outcome = auto_follow_up.send_marketing_now(
+        row["enquiry_id"], customer_email=row["customer_email"], cc=row["other_emails"])
+    result = outcome.get("result")
+    if result == auto_follow_up.SENT:
+        messages.success(request, "Follow-up 1 was sent. The automatic follow-ups continue from Follow-up 2.")
+    elif result == auto_follow_up.DRY_RUN:
+        messages.info(request, "Test mode: Follow-up 1 was prepared but not sent (see the server log).")
+    else:
+        messages.warning(request, f"Follow-up 1 was not sent: {outcome.get('reason')}.")
+
+
 def _handle_post(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, Any]) -> HttpResponse:
     enquiry_id = row["enquiry_id"]
     action = request.POST.get("action") or ""
@@ -250,6 +267,8 @@ def _handle_post(request: HttpRequest, enquiry: Dict[str, Any], row: Dict[str, A
         text = "Marked Do not contact." if lead.do_not_contact else "Do not contact removed."
         _log(lead, request.user, MarketingActivity.KIND_SYSTEM, text)
         messages.success(request, text)
+    elif action == "send_first_follow_up":
+        _send_first_follow_up(request, row)
     elif action == "revive":
         new_id = _revive(request, enquiry, row, lead)
         if new_id:
@@ -286,7 +305,6 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "can_revive": row["stage"] not in (lost.STAGE_REVIVED, lost.STAGE_DO_NOT_CONTACT),
         "team": notify.team_members(),
         "matched_salesperson": notify.find_user(enquiry.get("assigned_to") or ""),
-        "wait_days": lost.wait_days(),
         "quotations": quotation_links.for_enquiry(enquiry_id),
     }
     # Email internal / Email to customer: the shared compose box, filled in from this enquiry and its customer.

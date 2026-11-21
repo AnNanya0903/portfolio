@@ -72,7 +72,7 @@ class N8nIsGoneTests(TestCase):
 class RunAllTests(TestCase):
     def _steps(self, **overrides):
         steps = {"follow_up_step": {"enabled": True, "due": [], "sent": []},
-                 "customer_email_step": {"acknowledgement": [], "closing": []},
+                 "customer_email_step": {"closing": []},
                  "reply_check_step": {"campaigns": [], "replied": 0, "failed": 0}}
         steps.update(overrides)
         patches = [patch.object(scheduler, name, return_value=value) if not isinstance(value, Exception)
@@ -144,8 +144,8 @@ class StepTests(TestCase):
             customer = scheduler.customer_email_step()
         due.assert_not_called()
         emails.assert_not_called()
-        self.assertEqual((follow_ups["due"], follow_ups["sent"], customer["acknowledgement"], customer["closing"]),
-                         ([], [], [], []))
+        self.assertEqual((follow_ups["due"], follow_ups["sent"], customer["closing"]),
+                         ([], [], []))
 
     def test_one_enquiry_failing_does_not_stop_the_rest(self):
         def send(eid, today=None):

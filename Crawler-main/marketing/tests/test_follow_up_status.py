@@ -12,7 +12,7 @@ from enquiries.models import FollowUpSent, FollowUpStart
 from marketing import lost
 from marketing.models import MarketingActivity, MarketingLead
 
-SETTINGS = dict(MARKETING_FOLLOW_UP_COUNT=4, FOLLOW_UP_AUTO_GAP_DAYS=[2], MARKETING_WAIT_DAYS=30,
+SETTINGS = dict(MARKETING_FOLLOW_UP_COUNT=4, FOLLOW_UP_AUTO_GAP_DAYS=[2],
                 STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage")
 NEXT = date(2026, 11, 19)
 

@@ -15,7 +15,6 @@
              padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
   .mk-chip--rejected { background: #fef2f2; color: #b91c1c; }
   .mk-chip--no_response { background: #f1f5f9; color: #475569; }
-  .mk-chip--waiting { background: #fffbeb; color: #b45309; }
   .mk-chip--ready { background: #ecfdf5; color: #047857; }
   .mk-chip--do_not_contact { background: #f1f5f9; color: #334155; text-decoration: line-through; }
   .mk-chip--revived { background: #eff6ff; color: #1d4ed8; }
@@ -170,7 +169,7 @@
                 <td>{{ row.follow_up_count }}{% if row.last_follow_up %}<div class="mk-muted small">Last: {{ row.last_follow_up|date:"d M Y" }} ({{ row.last_follow_up_type }})</div>{% endif %}</td>
                 <td>
                   <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
-                  {% if row.stage == 'waiting' and row.ready_on %}<div class="mk-muted">{{ wait_days }} days, from {{ row.ready_on|date:"d M" }}</div>{% endif %}
+                  {% if row.stage == 'ready' and row.ready_since %}<div class="mk-muted">Ready since {{ row.ready_since|date:"d M Y" }}</div>{% endif %}
                   {% if row.auto_follow_up %}<div class="mk-muted" data-auto-follow-up="{{ row.auto_follow_up.state }}" title="Marketing's automatic follow-ups, in their own email thread">Auto: {{ row.auto_follow_up.label }}</div>{% endif %}
                 </td>
               </tr>

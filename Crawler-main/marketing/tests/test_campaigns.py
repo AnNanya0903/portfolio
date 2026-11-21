@@ -13,7 +13,7 @@ from marketing import campaigns, lost
 from marketing.models import Campaign, CampaignRecipient, MarketingActivity, MarketingLead
 
 BASE = dict(
-    FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7, MARKETING_WAIT_DAYS=30,
+    FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7,
     MARKETING_CAMPAIGN_MAX_RECIPIENTS=50, MARKETING_CAMPAIGN_GAP_DAYS=30, MARKETING_CAMPAIGN_DRY_RUN=True,
     STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage",
 )
@@ -47,7 +47,7 @@ class AudienceTests(TestCase):
                                                {"greeting_name": "Acme", "subject": "Seal", "enquiry_id": "E1"})
         self.assertEqual(subject, "Offer for Seal")
         self.assertTrue(body.startswith("Dear Acme, ref E1."))
-        self.assertIn("unsubscribe", body)
+        self.assertTrue(body.endswith("Reply STOP if you'd prefer not to hear from us."))
         self.assertIn("AVIGIRI Team", body)
 
     def test_greeting_never_uses_a_subject_or_domain(self):
@@ -62,7 +62,6 @@ class AudienceTests(TestCase):
     def test_only_ready_customers_with_email(self):
         enquiries = [
             _rejected("READY", "ready@a.example"),
-            _rejected("WAIT", "wait@a.example", lost_days_ago=5),
             _rejected("NOMAIL", ""),
             _rejected("DNC", "dnc@a.example"),
             _rejected("REV", "rev@a.example"),
@@ -72,7 +71,6 @@ class AudienceTests(TestCase):
         audience = campaigns.build_audience(lost.build_lost_leads(enquiries), {})
         self.assertEqual([r["email"] for r in audience["recipients"]], ["ready@a.example"])
         reasons = {s["row"]["enquiry_id"]: s["reason"] for s in audience["skipped"]}
-        self.assertIn("waiting period", reasons["WAIT"])
         self.assertEqual(reasons["NOMAIL"], "no customer email saved")
         self.assertEqual(reasons["DNC"], "Do not contact")
         self.assertIn("revived", reasons["REV"])

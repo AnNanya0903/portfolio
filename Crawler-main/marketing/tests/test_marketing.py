@@ -14,7 +14,7 @@ from marketing import lost
 from marketing.models import MarketingActivity, MarketingLead
 
 SETTINGS = dict(
-    FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7, MARKETING_WAIT_DAYS=30,
+    FOLLOW_UP_MAX_COUNT=4, FOLLOW_UP_CLOSE_AFTER_DAYS=7,
     STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage",
 )
 
@@ -73,7 +73,7 @@ class LostRuleTests(TestCase):
 
     def test_stages(self):
         today = timezone.localdate()
-        for eid, days in (("R1", 5), ("R2", 40), ("R3", 40), ("R4", 40)):
+        for eid, days in (("R1", 0), ("R2", 40), ("R3", 40), ("R4", 40)):
             row = CustomerStatusEmail.objects.create(enquiry_id=eid, kind=CustomerStatusEmail.KIND_REJECTION,
                                                      event_key="rejection")
             CustomerStatusEmail.objects.filter(pk=row.pk).update(created_at=timezone.now() - timedelta(days=days))
@@ -81,11 +81,12 @@ class LostRuleTests(TestCase):
         MarketingLead.objects.create(enquiry_id="R4", revived_enquiry_id="NEW1")
         rows = {r["enquiry_id"]: r for r in lost.build_lost_leads(
             [_enquiry(e, "rejected") for e in ("R1", "R2", "R3", "R4")], today=today)}
-        self.assertEqual(rows["R1"]["stage"], lost.STAGE_WAITING)
-        self.assertEqual(rows["R1"]["ready_on"], today - timedelta(days=5) + timedelta(days=30))
+        self.assertEqual(rows["R1"]["stage"], lost.STAGE_READY)  # rejected today: Ready at once, no waiting period
+        self.assertEqual(rows["R1"]["ready_since"], today)
         self.assertEqual(rows["R2"]["stage"], lost.STAGE_READY)
         self.assertEqual(rows["R3"]["stage"], lost.STAGE_DO_NOT_CONTACT)
         self.assertEqual(rows["R4"]["stage"], lost.STAGE_REVIVED)
+        self.assertNotIn("waiting", lost.STAGE_LABELS)
 
     def test_financial_year(self):
         self.assertEqual(lost.financial_year_label(date(2026, 3, 31)), "2025-26")
