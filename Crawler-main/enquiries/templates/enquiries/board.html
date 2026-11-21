@@ -624,6 +624,7 @@
             {% if enquiry.work_order %}
             <div class="small text-success mt-1 text-nowrap" data-work-order-when>
               <i class="bi bi-clipboard-check-fill me-1"></i>Work Order: {{ enquiry.work_order.converted_at|timezone:"Asia/Kolkata"|date:"d M Y, h:i A" }} IST
+              <div class="text-muted">by {{ enquiry.work_order.converted_by.get_full_name|default:enquiry.work_order.converted_by.username|default:"someone" }}</div>
             </div>
             {% endif %}
           </td>

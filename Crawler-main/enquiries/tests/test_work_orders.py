@@ -134,6 +134,10 @@ class WorkOrderTests(TestCase):
         html = self.client.get(reverse("enquiries:board")).content.decode()
         self.assertIn("Work Order: 21 Nov 2026, 02:16 PM IST", html)  # 08:46 UTC
         self.assertIn("on 21 Nov 2026, 02:16 PM IST", html)  # the hover text too
+        self.assertIn("by sales-person</div>", html)  # who, by name (username when no name is set)
+        self.sales.first_name, self.sales.last_name = "Rabin", "K"
+        self.sales.save()
+        self.assertIn("by Rabin K</div>", self.client.get(reverse("enquiries:board")).content.decode())
 
     def test_the_button_is_hidden_from_people_who_cannot_convert(self, *_):
         self.client.force_login(self.marketing)
