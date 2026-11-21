@@ -279,11 +279,11 @@ FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=2, cas
 # Sections hidden from the sidebar and the home page for everyone (comma-separated module slugs, see
 # magicwand/access.py). They are only hidden: their pages still open from a direct link or bookmark.
 # Hidden by default: the sections the live site barely used from 17 Oct to 16 Nov 2026 (under 10 page
-# views each), except Gmail AI, which stays visible. Set MAGICWAND_HIDDEN_SERVICES to an empty value to show every section again.
+# views each), except Gmail AI and Compounding (Operations), which stay visible. Set MAGICWAND_HIDDEN_SERVICES to an empty value to show every section again.
 MAGICWAND_HIDDEN_SERVICES = {
     slug.strip() for slug in config(
         'MAGICWAND_HIDDEN_SERVICES',
-        default='design,discussion,document_scanner,gasket_counter,mrp,deskera,accounts,compounding_planning,compounding_board',
+        default='design,discussion,document_scanner,gasket_counter,mrp,deskera,accounts',
     ).split(',') if slug.strip()
 }
 # KYC verification emails. Test mode is on by default: nothing is sent until this is set to False.
