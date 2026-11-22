@@ -100,8 +100,8 @@
         <form method="get" action="{% url 'marketing:board' %}" class="d-flex flex-wrap align-items-center gap-2">
           <input type="search" name="q" value="{{ chosen.q }}" class="form-control form-control-sm"
                  style="max-width: 220px;" placeholder="Search customer, enquiry, email" aria-label="Search">
-          <select name="kind" class="form-select form-select-sm" style="width:auto;" aria-label="Status">
-            <option value="">Rejected + No response</option>
+          <select name="kind" class="form-select form-select-sm" style="width:auto;" aria-label="Lead source">
+            <option value="">All lead sources</option>
             {% for key, label in kind_choices %}
               <option value="{{ key }}"{% if chosen.kind == key %} selected{% endif %}>{{ label }}</option>
             {% endfor %}
@@ -159,7 +159,7 @@
                   <a class="mk-row-link" href="{% url 'marketing:detail' row.enquiry_id %}">{{ row.enquiry_id }}</a>
                   <div class="mk-muted text-truncate" style="max-width: 220px;">{{ row.subject }}</div>
                 </td>
-                <td><span class="mk-chip mk-chip--{{ row.kind }}">{{ row.kind_label }}</span></td>
+                <td><span class="mk-chip mk-chip--{{ row.kind }}" data-lead-source="{{ row.kind }}">{{ row.source_badge }}</span></td>
                 <td>
                   {{ row.reason_label|default:"—" }}
                   {% if row.customer_reason %}<div class="mk-muted text-truncate" style="max-width: 200px;" title="{{ row.customer_reason }}">“{{ row.customer_reason }}”</div>{% endif %}
@@ -171,6 +171,9 @@
                   <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
                   {% if row.stage == 'ready' and row.ready_since %}<div class="mk-muted">Ready since {{ row.ready_since|date:"d M Y" }}</div>{% endif %}
                   {% if row.auto_follow_up %}<div class="mk-muted" data-auto-follow-up="{{ row.auto_follow_up.state }}" title="Marketing's automatic follow-ups, in their own email thread">Auto: {{ row.auto_follow_up.label }}</div>{% endif %}
+                  {% if row.auto_follow_up.next_on %}<div class="mk-muted" data-next-follow-up>Next follow-up due {{ row.auto_follow_up.next_on|date:"d M Y" }}</div>{% endif %}
+                  {% if row.flag %}<div class="text-danger small" data-lead-flag="{{ row.flag }}">{% if row.flag == 'thread_not_found' %}Gmail thread not found — check customer email / subject{% else %}{{ row.flag_label }}{% endif %}</div>{% endif %}
+                  <div class="small"><a href="{% url 'enquiries:negotiation' row.enquiry_id %}" data-enquiry-link>Original enquiry</a></div>
                 </td>
               </tr>
             {% empty %}

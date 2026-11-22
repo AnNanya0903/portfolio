@@ -80,21 +80,6 @@ class CreditPeriodRuleTests(TestCase):
         self.assertEqual(build_follow_up_body("payment_pending", reference="E1", subject="G"),
                          build_follow_up_body("payment_pending", reference="E1", subject="G", due_on=None))
 
-    def test_automatic_payment_reminder_waits_for_the_due_date(self):
-        sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
-        today = timezone.localdate()
-        latest = FollowUpSent.objects.create(enquiry_id="E1", customer_email="b@acme.example", sent_by=sales,
-                                             status="sent", gmail_thread_id="t1", stage="payment_pending",
-                                             next_follow_up_on=today)
-        EnquiryContact.objects.create(enquiry_id="E1", payment_status="credit", credit_period_days=30,
-                                      credit_starts_on=today)
-        enquiry = {"enquiry_id": "E1", "status": "open"}  # PI follow-ups are sent only while the enquiry is Open
-        cycle = auto_follow_up.cycles(["E1"])["E1"]
-        reason = auto_follow_up._skip_reason("E1", enquiry, cycle, today)
-        self.assertIn("credit period", reason)
-        self.assertEqual(auto_follow_up._skip_reason("E1", enquiry, cycle, today + timedelta(days=30)), "")
-
-
 @override_settings(**STATIC)
 class BoardCreditTests(TestCase):
     def setUp(self):
@@ -203,16 +188,18 @@ class ComposeCcTests(TestCase):
                               "follow_up_token": self.client.session["follow_up_context"]["token"],
                               "follow_up_cc": cc})
 
-    @override_settings(FOLLOW_UP_DEFAULT_CC="customerservice@avigiri.com")
+    @override_settings(ENQUIRY_FOLLOW_UP_CC="customerservice@avigiri.com,rabin@avigiri.com,apai@avigiri.com")
     def test_cc_prefilled_sent_saved_and_remembered(self):
         page = self._compose()
         self.assertContains(page, 'name="follow_up_cc"')
-        self.assertContains(page, 'value="customerservice@avigiri.com"')
+        # The same fixed CC list as the automatic follow-ups is prefilled, and always kept when sending.
+        self.assertContains(page, 'value="customerservice@avigiri.com, rabin@avigiri.com, apai@avigiri.com"')
         response = self._send("customerservice@avigiri.com, Boss@Avigiri.com")
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.svc.send_reply.call_args.kwargs["cc"], ["customerservice@avigiri.com", "boss@avigiri.com"])
+        fixed = ["customerservice@avigiri.com", "rabin@avigiri.com", "apai@avigiri.com"]
+        self.assertEqual(self.svc.send_reply.call_args.kwargs["cc"], fixed + ["boss@avigiri.com"])
         record = FollowUpSent.objects.get()
-        self.assertEqual(record.cc, "customerservice@avigiri.com, boss@avigiri.com")
+        self.assertEqual(record.cc, ", ".join(fixed + ["boss@avigiri.com"]))
         self.assertEqual(EnquiryContact.objects.get(enquiry_id="ENQ-7").follow_up_cc, record.cc)
 
     def test_invalid_cc_blocks_sending(self):
@@ -221,10 +208,6 @@ class ComposeCcTests(TestCase):
         self.assertContains(response, "not a valid CC email address")
         self.svc.send_reply.assert_not_called()
         self.assertFalse(FollowUpSent.objects.exists())
-
-    def test_empty_cc_sends_without_cc(self):
-        self._send("")
-        self.assertIsNone(self.svc.send_reply.call_args.kwargs["cc"])
 
     def test_credit_period_notice_and_due_date_default(self):
         today = timezone.localdate()
@@ -235,26 +218,3 @@ class ComposeCcTests(TestCase):
         self.assertContains(page, "data-credit-period")
         self.assertEqual(page.context["next_follow_up_default"], due.isoformat())
         self.assertNotIn("credit period", page.context["form"].initial["body"])
-
-
-@override_settings(**AUTO_ON)
-class AutoFollowUpCcTests(TestCase):
-    def test_automatic_follow_up_reuses_the_last_cc(self):
-        from enquiries.tests.share_helpers import make_share
-        make_share("E1")
-        sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
-        FollowUpSent.objects.create(enquiry_id="E1", customer_email="b@acme.example", sent_by=sales, status="sent",
-                                    gmail_thread_id="t1", stage="waiting_po", next_follow_up_on=timezone.localdate(),
-                                    cc="boss@avigiri.com, sales@ourcompany.example")
-        gmail = MagicMock()
-        gmail.own_addresses.return_value = {"sales@ourcompany.example"}
-        gmail.get_thread_messages.return_value = [{"id": "m2", "sender": "sales@ourcompany.example"}]
-        gmail.get_message.return_value = {"id": "m2", "subject": "Re: Q", "thread_id": "t1"}
-        gmail.send_reply.return_value = {"id": "s2", "threadId": "t1"}
-        with patch("enquiries.auto_follow_up.services.fetch_enquiry",
-                   return_value={"enquiry_id": "E1", "status": "open", "subject": "Q"}), \
-             patch("enquiries.auto_follow_up.GmailService", return_value=gmail):
-            result = auto_follow_up.run_auto_follow_up("E1")
-        self.assertEqual(result["result"], "sent", result)
-        self.assertEqual(gmail.send_reply.call_args.kwargs["cc"], ["boss@avigiri.com"])  # own address dropped
-        self.assertEqual(FollowUpSent.objects.filter(source="auto").get().cc, "boss@avigiri.com")

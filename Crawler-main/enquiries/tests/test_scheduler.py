@@ -46,7 +46,9 @@ class CronEndpointTests(TestCase):
 
     def test_a_problem_inside_a_run_is_still_a_200_so_cron_does_not_retry(self):
         with patch.object(scheduler, "follow_up_step", side_effect=RuntimeError("boom")), \
-                patch.object(scheduler, "customer_email_step", return_value={}), \
+                patch.object(scheduler, "start_step", return_value={}), \
+                patch.object(scheduler, "marketing_lead_step", return_value={}), \
+                patch.object(scheduler.services, "list_enquiries", return_value=[]), \
                 patch.object(scheduler, "reply_check_step", return_value={}):
             response = self.client.post(self.url, **CRON)
         self.assertEqual(response.status_code, 200)
@@ -72,9 +74,13 @@ class N8nIsGoneTests(TestCase):
 class RunAllTests(TestCase):
     def _steps(self, **overrides):
         steps = {"follow_up_step": {"enabled": True, "due": [], "sent": []},
-                 "customer_email_step": {"closing": []},
+                 "start_step": {"started": []},
+                 "marketing_lead_step": {"created": [], "started": []},
                  "reply_check_step": {"campaigns": [], "replied": 0, "failed": 0}}
         steps.update(overrides)
+        load = patch.object(scheduler.services, "list_enquiries", return_value=[])
+        load.start()
+        self.addCleanup(load.stop)
         patches = [patch.object(scheduler, name, return_value=value) if not isinstance(value, Exception)
                    else patch.object(scheduler, name, side_effect=value) for name, value in steps.items()]
         for p in patches:
@@ -85,17 +91,17 @@ class RunAllTests(TestCase):
         self._steps()
         result = scheduler.run_all(trigger="command")
         self.assertTrue(result["ok"])
-        self.assertEqual({"follow_ups", "customer_emails", "reply_checks"} - set(result), set())
+        self.assertEqual({"load", "start_sequences", "marketing_leads", "follow_ups", "reply_checks"} - set(result), set())
         run = AutomationRun.objects.get()
         self.assertTrue(run.ok)
         self.assertEqual((run.trigger, run.finished_at is not None), ("command", True))
-        self.assertEqual(set(json.loads(run.summary)), {"follow_ups", "customer_emails", "reply_checks"})
+        self.assertEqual(set(json.loads(run.summary)), {"load", "start_sequences", "marketing_leads", "follow_ups", "reply_checks"})
 
     def test_one_failing_step_does_not_stop_the_others(self):
-        self._steps(customer_email_step=RuntimeError("gmail down"))
+        self._steps(marketing_lead_step=RuntimeError("gmail down"))
         result = scheduler.run_all()
         self.assertFalse(result["ok"])
-        self.assertIn("gmail down", result["customer_emails"]["error"])
+        self.assertIn("gmail down", result["marketing_leads"]["error"])
         self.assertEqual(result["reply_checks"]["replied"], 0)  # still ran
         self.assertFalse(AutomationRun.objects.get().ok)
 
@@ -139,13 +145,14 @@ class StepTests(TestCase):
     @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
     def test_nothing_happens_when_automatic_follow_ups_are_off(self):
         with patch.object(auto_follow_up, "due_follow_ups") as due, \
-                patch("enquiries.status_emails.run_scheduled") as emails:
+                patch.object(auto_follow_up, "detect_gmail_quotes") as detect:
             follow_ups = scheduler.follow_up_step()
-            customer = scheduler.customer_email_step()
+            started = scheduler.start_step([{"enquiry_id": "E1", "status": "open"}])
+            leads = scheduler.marketing_lead_step([{"enquiry_id": "E1", "status": "rejected"}])
         due.assert_not_called()
-        emails.assert_not_called()
-        self.assertEqual((follow_ups["due"], follow_ups["sent"], customer["closing"]),
-                         ([], [], []))
+        detect.assert_not_called()
+        self.assertEqual((follow_ups["due"], follow_ups["sent"], started["started"], leads["created"]),
+                         ([], [], [], []))
 
     def test_one_enquiry_failing_does_not_stop_the_rest(self):
         def send(eid, today=None):
@@ -169,10 +176,8 @@ class StepTests(TestCase):
         self.assertEqual((calls, "stopped" in result), ([], True))
 
     def test_a_service_outage_is_reported_not_raised(self):
-        with patch.object(auto_follow_up, "due_follow_ups", side_effect=services.EnquiryServiceError("down")), \
-                patch("enquiries.status_emails.run_scheduled", side_effect=services.EnquiryServiceError("down")):
+        with patch.object(auto_follow_up, "due_follow_ups", side_effect=services.EnquiryServiceError("down")):
             self.assertIn("could not load enquiries", scheduler.follow_up_step()["error"])
-            self.assertIn("could not load enquiries", scheduler.customer_email_step()["error"])
 
     def test_reply_check_counts_replies_and_failures(self):
         campaigns = [{"name": "a", "result": "checked", "replied": 2}, {"name": "b", "result": "failed"}]

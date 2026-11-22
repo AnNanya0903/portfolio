@@ -14,7 +14,7 @@ from quotations import links as quotation_links
 
 from . import attachments as attachment_rules
 from . import negotiation, services
-from .models import EnquiryAssignment, EnquiryAttachment, EnquiryFollowup, EnquiryNegotiation
+from .models import EnquiryAssignment, EnquiryContact, EnquiryAttachment, EnquiryFollowup, EnquiryNegotiation
 
 
 def _load_enquiry(request: HttpRequest, enquiry_id: str):
@@ -51,6 +51,7 @@ def negotiation_page(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "attachment_categories": EnquiryAttachment.CATEGORY_CHOICES,
         "open_tasks": [a for a in EnquiryAssignment.objects.filter(enquiry_id=enquiry_id).exclude(status="COMPLETED")],
         "timeline": negotiation.timeline(enquiry_id),
+        "contact": EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).first(),
         "today": timezone.localdate(),
     })
 

@@ -8,6 +8,8 @@
     <a href="{% url 'enquiries:board' %}" class="text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Enquiries</a>
     <h2 class="page-title">{{ enquiry_id }}{% if enquiry.customer_name %} · {{ enquiry.customer_name }}{% endif %}</h2>
     <p class="page-subtitle">Enquiry status: <strong>{{ enquiry.status|default:"—" }}</strong></p>
+    {% if contact.follow_up_flag %}<p class="text-danger mb-1" data-follow-up-flag="{{ contact.follow_up_flag }}"><i class="bi bi-exclamation-triangle me-1"></i>{% if contact.follow_up_flag == 'thread_not_found' %}Gmail thread not found — check customer email / subject{% else %}{{ contact.get_follow_up_flag_display }}{% endif %}</p>{% endif %}
+    {% if contact.close_reason == 'no_response' and contact.moved_to_marketing_at %}<p class="mb-1" data-moved-to-marketing>Closed – No response · moved to Marketing on {{ contact.moved_to_marketing_at|date:"d M Y" }} · <a href="{% url 'marketing:detail' enquiry_id %}">Marketing lead</a></p>{% endif %}
   </div>
   {% if can_forward %}<div><button class="btn btn-primary shadow-sm" type="button" data-bs-toggle="modal" data-bs-target="#forwardModal"><i class="bi bi-send me-1"></i> Forward to Department</button></div>{% endif %}
 </div>

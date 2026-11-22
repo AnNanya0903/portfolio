@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from dashboard.follow_up_templates import build_follow_up_body
 from enquiries import auto_follow_up, status_emails
+import marketing.tests  # noqa: F401  (Python 3.14 test-client shim)
 from enquiries.models import CustomerStatusEmail, FollowUpSent, FollowUpStart, ShareLink
 from enquiries.tests.share_helpers import make_share
 from enquiries.views import _create_share_link_from_values
@@ -28,7 +29,12 @@ OURS = "sales@ourcompany.example"
 def _gmail(thread_id="T-QUOTE", last_sender=OURS):
     svc = MagicMock()
     svc.own_addresses.return_value = {OURS}
-    svc.get_thread_messages.return_value = [{"id": "m1", "sender": OURS}, {"id": "m2", "sender": last_sender}]
+    # A thread that passes the thread check: our quotation to the buyer, same subject, naming the enquiry.
+    svc.get_thread_messages.return_value = [
+        {"id": "m1", "thread_id": thread_id, "sender": OURS, "to": "buyer@acme.example", "subject": "Quotation Q-77",
+         "body_text": "Quotation for E1"},
+        {"id": "m2", "thread_id": thread_id, "sender": last_sender, "to": "buyer@acme.example",
+         "subject": "Re: Quotation Q-77"}]
     svc.get_message.return_value = {"id": "m2", "subject": "Quotation Q-77 - Gaskets", "thread_id": thread_id}
     svc.send_reply.return_value = {"id": "r1", "threadId": thread_id}
     return svc
@@ -112,9 +118,10 @@ class EngineTests(TestCase):
             FollowUpSent.objects.create(enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales,
                                         status="sent", gmail_thread_id="T-QUOTE", stage="waiting_po",
                                         sent_at=timezone.now() - timedelta(days=days, minutes=5))
-        self.assertEqual([e["enquiry_id"] for e in status_emails.closing_due([self.enquiry])], ["E1"])
+        FollowUpSent.objects.update(next_follow_up_on=TODAY)
+        self.assertEqual([(d["enquiry_id"], d["attempt"]) for d in auto_follow_up.due_follow_ups()], [("E1", 5)])
         FollowUpSent.objects.filter(sent_at__lt=timezone.now() - timedelta(days=9)).delete()
-        self.assertEqual(status_emails.closing_due([self.enquiry]), [])  # only 3 of 4 sent
+        self.assertEqual([d["attempt"] for d in auto_follow_up.due_follow_ups()], [4])  # only 3 of 4 sent
 
 
 @override_settings(**FLOW)
@@ -125,22 +132,6 @@ class MarketingTests(TestCase):
         p = patch.object(auto_follow_up.services, "fetch_enquiry", side_effect=lambda *a, **k: self.enquiry)
         p.start()
         self.addCleanup(p.stop)
-
-    def test_sent_rejection_email_stays_in_the_enquiry_thread_and_marketing_starts_its_own(self):
-        FollowUpStart.objects.create(enquiry_id="E1", stage="waiting_po", gmail_thread_id="T-QUOTE",
-                                     customer_email="buyer@acme.example",
-                                     started_at=timezone.now() - timedelta(days=3))
-        gmail = _gmail()
-        with patch.object(status_emails, "GmailService", return_value=gmail), \
-             patch("enquiries.views.GmailService", return_value=gmail):
-            gmail.describe_conversation.return_value = {"thread_id": "T-QUOTE", "latest_message_id": "m2",
-                                                        "customer_email": "buyer@acme.example"}
-            outcome = status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, "E1", self.enquiry)
-        self.assertEqual(outcome["result"], "sent")
-        gmail.describe_conversation.assert_called_with("T-QUOTE")  # the rejection email replies in the enquiry's thread
-        start = FollowUpStart.objects.get(stage="marketing")
-        # Marketing gets NO thread yet: its first email opens a separate conversation.
-        self.assertEqual((start.gmail_thread_id, start.customer_email), ("", "buyer@acme.example"))
 
     def _marketing(self, sent=0):
         # An enquiry thread exists too (the quotation); Marketing's thread is T-MKT, separate from it.
@@ -162,29 +153,6 @@ class MarketingTests(TestCase):
         with patch.object(auto_follow_up, "GmailService", return_value=gmail):
             return auto_follow_up.run_auto_follow_up("E1"), gmail
 
-    def test_first_marketing_email_is_a_new_email_with_its_own_subject(self):
-        self._marketing(sent=0)
-        result, gmail = self._run()
-        self.assertEqual((result["result"], result["stage"], result["attempt"]), ("sent", "marketing", 1))
-        gmail.send_reply.assert_not_called()  # not a reply in the quotation's thread
-        args, kwargs = gmail.send_email.call_args
-        self.assertEqual(args[0], "buyer@acme.example")
-        self.assertEqual(args[1], "Thank you for considering AVIGIRI, Acme")
-        self.assertIn("it wasn't the right fit this time", args[2])
-        self.assertIn("Reply STOP if you'd prefer not to hear from us.", args[2])
-        self.assertNotIn("Password:", args[2])  # no share link in Marketing emails
-        row = FollowUpSent.objects.get(stage="marketing")
-        self.assertEqual(row.gmail_thread_id, "T-MKT")
-        self.assertTrue(MarketingActivity.objects.filter(text__startswith="Automatic follow-up 1").exists())
-
-    def test_later_marketing_emails_have_their_own_subject_and_never_use_the_enquiry_thread(self):
-        self._marketing(sent=1)
-        result, gmail = self._run()
-        self.assertEqual((result["result"], result["attempt"]), ("sent", 2))
-        gmail.send_reply.assert_not_called()
-        self.assertEqual(gmail.send_email.call_args.args[1], "A different option for Gaskets?")
-        gmail.get_thread_messages.assert_called_with("T-MKT", limit=50)  # checks for a reply first
-
     def test_marketing_thread_never_becomes_the_enquiry_thread(self):
         from enquiries import share_email
         self._marketing(sent=2)
@@ -197,37 +165,6 @@ class MarketingTests(TestCase):
         outcome, conversation = _resolve_follow_up_conversation("E1", self.enquiry, gmail)
         self.assertEqual(outcome, "ok")
         gmail.describe_conversation.assert_called_with("T-QUOTE")
-
-    def test_fifth_marketing_email_is_the_closing_email_and_then_it_stops(self):
-        self._marketing(sent=4)
-        result, gmail = self._run()
-        self.assertEqual((result["result"], result["attempt"], result["next_follow_up_on"]), ("sent", 5, None))
-        self.assertEqual(gmail.send_email.call_args.args[1], "Closing the loop, Acme")
-        self.assertIn("we won't send further follow-ups", gmail.send_email.call_args.args[2])
-        result, _ = self._run()
-        self.assertEqual(result["result"], "skipped")
-
-    def test_customer_reply_is_noted_on_the_lead_once_and_nothing_is_emailed(self):
-        self._marketing(sent=1)
-        gmail = _gmail(thread_id="T-MKT", last_sender="Buyer <buyer@acme.example>")
-        gmail.get_thread_messages.return_value[-1]["snippet"] = "Please send a new quote"
-        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            first = auto_follow_up.run_auto_follow_up("E1")
-            auto_follow_up.run_auto_follow_up("E1")
-        self.assertEqual(first["result"], "skipped")
-        self.assertEqual(MarketingActivity.objects.filter(text__startswith="Customer replied to Marketing").count(), 1)
-        gmail.send_reply.assert_not_called()
-        gmail.send_email.assert_not_called()
-
-    def test_do_not_contact_won_back_or_accepted_stop_marketing(self):
-        self._marketing(sent=1)
-        MarketingLead.objects.create(enquiry_id="E1", do_not_contact=True)
-        self.assertIn("Do not contact", self._run()[0]["reason"])
-        MarketingLead.objects.update(do_not_contact=False, revived_enquiry_id="E2")
-        self.assertIn("won back", self._run()[0]["reason"])
-        MarketingLead.objects.update(revived_enquiry_id="")
-        self.enquiry["status"] = "accepted"
-        self.assertIn("no longer rejected", self._run()[0]["reason"])
 
     @override_settings(MARKETING_AUTO_FOLLOW_UP=False)
     def test_marketing_can_be_switched_off(self):
@@ -267,14 +204,16 @@ class SendToCustomerStartsTheFlowTests(TestCase):
         payload.update(data)
         return self.client.post(reverse("enquiries:send_share_email"), payload)
 
-    def test_first_quotation_starts_a_new_thread_and_the_follow_ups(self):
+    def test_sending_the_quotation_starts_the_follow_ups_in_its_thread(self):
         response = self._post()
-        self.assertContains(response, "every 2 days")
+        self.assertContains(response, "Automatic follow-ups will reply in this email thread every 2 days")
         self.gmail.send_email.assert_called_once()
         self.gmail.send_reply.assert_not_called()
-        start = FollowUpStart.objects.get()
-        self.assertEqual((start.stage, start.gmail_thread_id, start.customer_email),
-                         ("waiting_po", "T-NEW", "buyer@acme.example"))
+        start = FollowUpStart.objects.get()  # no button: the sequence starts now
+        self.assertEqual((start.gmail_thread_id, start.customer_email, start.subject, start.stage),
+                         ("T-NEW", "buyer@acme.example", "Quotation E1 - Gaskets", "waiting_po"))
+        self._post()  # a revised quotation does not restart it
+        self.assertEqual(FollowUpStart.objects.count(), 1)
 
     def test_proforma_replies_in_the_existing_thread(self):
         FollowUpStart.objects.create(enquiry_id="E1", stage="waiting_po", gmail_thread_id="T-QUOTE",
@@ -287,9 +226,4 @@ class SendToCustomerStartsTheFlowTests(TestCase):
         kwargs = self.gmail.send_reply.call_args.kwargs
         self.assertEqual(kwargs["subject"], "Quotation Q-77 - Gaskets")  # thread subject kept
         self.assertEqual([a["filename"] for a in kwargs["attachments"]], ["q.pdf"])
-        start = FollowUpStart.objects.order_by("-started_at").first()
-        self.assertEqual((start.stage, start.gmail_thread_id), ("payment_pending", "T-QUOTE"))
-
-    @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
-    def test_automatic_follow_ups_off_says_so(self):
-        self.assertContains(self._post(), "Automatic follow-ups are turned off on this site")
+        self.assertEqual(FollowUpStart.objects.filter(stage="payment_pending").count(), 1)  # the PI's own sequence

@@ -29,6 +29,19 @@ class MarketingLead(models.Model):
     # What marketing wrote when the reason is "Other".
     lost_reason_note = models.CharField(max_length=300, blank=True, default="")
     do_not_contact = models.BooleanField(default=False)
+    # How the enquiry was lost: "rejected" or "no_response" (no reply after the closing email).
+    SOURCE_REJECTED = "rejected"
+    SOURCE_NO_RESPONSE = "no_response"
+    SOURCE_CHOICES = ((SOURCE_REJECTED, "Rejected"), (SOURCE_NO_RESPONSE, "No response after 5 reminders"))
+    lead_source = models.CharField(max_length=16, choices=SOURCE_CHOICES, blank=True, default="")
+    # Why Marketing's automatic emails stopped or are on hold: "replied", "thread_not_found", "bounced".
+    FLAG_REPLIED = "replied"
+    FLAG_THREAD_NOT_FOUND = "thread_not_found"
+    FLAG_BOUNCED = "bounced"
+    FLAG_CHOICES = ((FLAG_REPLIED, "Replied"), (FLAG_THREAD_NOT_FOUND, "Gmail thread not found"),
+                    (FLAG_BOUNCED, "Email bounced"))
+    flag = models.CharField(max_length=20, choices=FLAG_CHOICES, blank=True, default="")
+    flag_at = models.DateTimeField(null=True, blank=True)
     # When the lead became Ready to contact: the moment the enquiry was rejected or got no response.
     ready_at = models.DateTimeField(null=True, blank=True)
     revived_enquiry_id = models.CharField(max_length=128, blank=True, default="")

@@ -276,6 +276,25 @@ FOLLOW_UP_AUTO_GAP_DAYS = [
     int(x) for x in config('FOLLOW_UP_AUTO_GAP_DAYS', default='2').split(',') if x.strip()
 ]
 FOLLOW_UP_CLOSE_AFTER_DAYS = config('FOLLOW_UP_CLOSE_AFTER_DAYS', default=2, cast=int)  # close this long after the last follow-up (0 = off)
+# CC on every follow-up and closing email (automatic and manual), comma separated. Duplicates and the
+# address in To are always dropped.
+ENQUIRY_FOLLOW_UP_CC = config('ENQUIRY_FOLLOW_UP_CC',
+                              default='customerservice@avigiri.com,rabin@avigiri.com,apai@avigiri.com')
+MARKETING_FOLLOW_UP_CC = config('MARKETING_FOLLOW_UP_CC',
+                                default='kumar@avigiri.com,manju@avigiri.com,apai@avigiri.com')
+# A No-response lead's Marketing Follow-up 1 goes this many days after the enquiry's closing email
+# (0 = the next hourly run), so the customer never gets two emails the same day. Rejected leads: next run.
+MARKETING_NO_RESPONSE_FIRST_DELAY_DAYS = config('MARKETING_NO_RESPONSE_FIRST_DELAY_DAYS', default=2, cast=int)
+# Safety: at most this many automatic emails per hourly run (the rest go on the next runs), never two emails
+# to the same customer within FOLLOW_UP_MIN_GAP_HOURS across both portals, and a failed Gmail send is retried
+# on the next runs up to FOLLOW_UP_SEND_RETRIES times before it is logged as an error.
+FOLLOW_UP_SEND_CAP_PER_RUN = config('FOLLOW_UP_SEND_CAP_PER_RUN', default=20, cast=int)
+FOLLOW_UP_MIN_GAP_HOURS = config('FOLLOW_UP_MIN_GAP_HOURS', default=24, cast=int)
+FOLLOW_UP_SEND_RETRIES = config('FOLLOW_UP_SEND_RETRIES', default=3, cast=int)
+# Deprecated and ignored (kept readable so old .env / app.yaml files still load): FOLLOW_UP_ACK_WITHIN_DAYS
+# (there is no acknowledgement email) and MARKETING_WAIT_DAYS (Marketing leads are Ready at once).
+FOLLOW_UP_ACK_WITHIN_DAYS = config('FOLLOW_UP_ACK_WITHIN_DAYS', default='')
+MARKETING_WAIT_DAYS = config('MARKETING_WAIT_DAYS', default='')
 # Sections hidden from the sidebar and the home page for everyone (comma-separated module slugs, see
 # magicwand/access.py). They are only hidden: their pages still open from a direct link or bookmark.
 # Hidden by default: the sections the live site barely used from 17 Oct to 16 Nov 2026 (under 10 page
@@ -289,13 +308,27 @@ MAGICWAND_HIDDEN_SERVICES = {
 # KYC verification emails. Test mode is on by default: nothing is sent until this is set to False.
 KYC_VERIFICATION_DRY_RUN = config('KYC_VERIFICATION_DRY_RUN', default=True, cast=bool)
 KYC_VERIFICATION_LINK_DAYS = config('KYC_VERIFICATION_LINK_DAYS', default=30, cast=int)  # how long the link works
+# KYC by shareable link (kyc/link_requests.py). Test mode is on by default: emails are recorded, not sent.
+KYC_LINK_DRY_RUN = config('KYC_LINK_DRY_RUN', default=True, cast=bool)
+KYC_LINK_EXPIRY_HOURS = config('KYC_LINK_EXPIRY_HOURS', default=72, cast=int)  # how long each link works
+KYC_LINK_REMINDER_HOURS = config('KYC_LINK_REMINDER_HOURS', default=48, cast=int)  # reminder if not submitted
+# Where customer links point, e.g. https://portal.avigiri.com (no trailing slash). Empty: the address the staff
+# member is using when they send the link.
+KYC_LINK_BASE_URL = config('KYC_LINK_BASE_URL', default='').rstrip('/')# Username whose Gmail sends the emails nobody clicked a button for (OTP, reminders, submitted notices).
+KYC_LINK_SENDER = config('KYC_LINK_SENDER', default=FOLLOW_UP_AUTO_SENDER)
+# Fernet key(s) for PAN and bank account numbers; comma-separated, the first one encrypts (rotation).
+# Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+KYC_FIELD_ENCRYPTION_KEYS = config('KYC_FIELD_ENCRYPTION_KEYS', default='')
+# Uploaded KYC documents: a private GCS bucket when set, otherwise a local folder that is not served.
+KYC_PRIVATE_BUCKET = config('KYC_PRIVATE_BUCKET', default='')
+KYC_PRIVATE_DIR = config('KYC_PRIVATE_DIR', default=str(BASE_DIR / 'private' / 'kyc'))
+KYC_UPLOAD_MAX_BYTES = config('KYC_UPLOAD_MAX_BYTES', default=5 * 1024 * 1024, cast=int)
 # Follow-ups of an enquiry linked to a KYC customer copy that customer's team (Accounts for payment
 # reminders, Sales otherwise). After this many follow-ups with no reply, the next ones also copy the
 # customer's Top management contacts. 0 turns the escalation off.
 KYC_ESCALATE_AFTER_REMINDERS = config('KYC_ESCALATE_AFTER_REMINDERS', default=2, cast=int)
 # Marketing portal: there is no waiting period. A lead is Ready the moment the enquiry is rejected (or gets no
-# response), and its first follow-up goes out on the next hourly run. (MARKETING_WAIT_DAYS and
-# FOLLOW_UP_ACK_WITHIN_DAYS were removed; leaving them in an .env or yaml file does nothing.)
+# response); its Follow-up 1 goes automatically (see MARKETING_NO_RESPONSE_FIRST_DELAY_DAYS).
 # Working days promised for a revised quote in Marketing Follow-up 2 ("within {x} working days"); empty leaves
 # that sentence out.
 MARKETING_REVISED_QUOTE_DAYS = config('MARKETING_REVISED_QUOTE_DAYS', default='')

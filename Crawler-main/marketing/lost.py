@@ -32,6 +32,8 @@ REPLY_NOTE = "Customer replied to Marketing's follow-up"
 REJECTED = "rejected"
 NO_RESPONSE = "no_response"
 KIND_LABELS = {REJECTED: "Rejected", NO_RESPONSE: "No response"}
+# The badge on the board and lead detail.
+SOURCE_BADGES = {REJECTED: "Rejected", NO_RESPONSE: "No response after 5 reminders"}
 
 STAGE_READY = "ready"
 STAGE_DO_NOT_CONTACT = "do_not_contact"
@@ -111,9 +113,9 @@ def kyc_campaign_emails(customer) -> List[str]:
 
 
 def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, replied: bool) -> Optional[Dict[str, Any]]:
-    """Where Marketing's automatic follow-ups stand for a rejected enquiry, for the lists:
-    {"state", "label", "sent", "limit", "next_on"}; None when there are none (not rejected, or not started)."""
-    if kind != REJECTED or cycle is None or cycle.stage != MARKETING_STAGE:
+    """Where Marketing's automatic follow-ups stand, for the lists:
+    {"state", "label", "sent", "limit", "next_on"}; None when the sequence has not been set up."""
+    if cycle is None or cycle.stage != MARKETING_STAGE:
         return None
     limit = follow_up_count(MARKETING_STAGE)
     sent = cycle.count
@@ -122,8 +124,10 @@ def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, repli
         state, label = "stopped", "Stopped: do not contact"
     elif lead is not None and (lead.revived_enquiry_id or lead.accepted_at):
         state, label = "stopped", "Stopped: won back"
-    elif replied:
+    elif replied or (lead is not None and lead.flag == MarketingLead.FLAG_REPLIED):
         state, label = "replied", "Customer replied: follow-ups stopped"
+    elif lead is not None and lead.flag == MarketingLead.FLAG_BOUNCED:
+        state, label = "stopped", "Stopped: email bounced"
     elif sent > limit:
         state, label = "closed", "Closing email sent"
     elif sent == 0:
@@ -147,6 +151,26 @@ def mark_ready(enquiry_id: str) -> MarketingLead:
     if lead.ready_at is None:
         lead.ready_at = timezone.now()
         lead.save(update_fields=["ready_at", "updated_at"])
+    return lead
+
+
+def create_lead(enquiry_id: str, source: str, *, customer_email: str = "", first_due=None) -> MarketingLead:
+    """The enquiry is lost (Rejected, or No response after the 5th email): one Ready lead per enquiry, with its
+    source, and Marketing's automatic sequence (Follow-up 1 due at `first_due`). Safe to call again."""
+    from enquiries import auto_follow_up
+
+    lead, _ = MarketingLead.objects.get_or_create(enquiry_id=str(enquiry_id))
+    fields = []
+    if not lead.lead_source and source in (REJECTED, NO_RESPONSE):
+        lead.lead_source = source
+        fields.append("lead_source")
+    if lead.ready_at is None:
+        lead.ready_at = timezone.now()
+        fields.append("ready_at")
+    if fields:
+        lead.save(update_fields=fields + ["updated_at"])
+    if not (lead.do_not_contact or lead.revived_enquiry_id or lead.accepted_at):
+        auto_follow_up.start_marketing(str(enquiry_id), customer_email=customer_email, first_due=first_due)
     return lead
 
 
@@ -235,6 +259,9 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
     follow_ups = _follow_up_stats(ids)
     closing_sent = _status_email_dates(ids, CustomerStatusEmail.KIND_CLOSING, sent_only=True)
     rejection_seen = _status_email_dates(ids, CustomerStatusEmail.KIND_REJECTION, sent_only=False)
+    no_response_closed = dict(EnquiryContact.objects.filter(
+        enquiry_id__in=ids, close_reason=EnquiryContact.CLOSE_NO_RESPONSE).exclude(moved_to_marketing_at=None)
+        .values_list("enquiry_id", "moved_to_marketing_at"))
     limit = int(getattr(settings, "FOLLOW_UP_MAX_COUNT", 4) or 0)
     silent_days = int(getattr(settings, "FOLLOW_UP_CLOSE_AFTER_DAYS", 7) or 0)
     now = timezone.now()
@@ -247,6 +274,9 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         if _status(enquiry) == "rejected":
             kind = REJECTED
             lost_at = rejection_seen.get(enquiry_id)
+        elif enquiry_id in no_response_closed:
+            kind = NO_RESPONSE
+            lost_at = no_response_closed[enquiry_id]
         elif enquiry_id in closing_sent:
             kind = NO_RESPONSE
             lost_at = closing_sent[enquiry_id]
@@ -327,6 +357,9 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "other_emails": [a for a in others.get(enquiry_id, []) if a != emails.get(enquiry_id, "").lower()],
             "kind": item["kind"],
             "kind_label": KIND_LABELS[item["kind"]],
+            "source_badge": SOURCE_BADGES[item["kind"]],
+            "flag": lead.flag if lead else "",
+            "flag_label": lead.get_flag_display() if lead and lead.flag else "",
             "reason_key": reason_key,
             "reason_label": REASON_LABELS.get(reason_key, "")
             + (f": {lead.lost_reason_note}" if reason_key == "other" and lead and lead.lost_reason_note else ""),

@@ -26,7 +26,7 @@
     <a href="{% url 'marketing:board' %}" class="mk-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Marketing</a>
     <h2 class="page-title mb-1">{{ row.customer_name|default:"Name not recorded" }}</h2>
     <div class="d-flex flex-wrap gap-2 align-items-center">
-      <span class="mk-chip mk-chip--{{ row.kind }}">{{ row.kind_label }}</span>
+      <span class="mk-chip mk-chip--{{ row.kind }}" data-lead-source="{{ row.kind }}">{{ row.source_badge }}</span>
       <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
       <span class="mk-muted">Enquiry {{ row.enquiry_id }}{% if row.subject %} · {{ row.subject }}{% endif %}</span>
     </div>
@@ -87,13 +87,10 @@
           <dt>Follow-ups sent</dt><dd>{{ row.follow_up_count }}</dd>
           {% if row.last_follow_up %}<dt>Last follow-up</dt><dd>{{ row.last_follow_up|date:"d M Y" }} ({{ row.last_follow_up_type }})</dd>{% endif %}
           {% if row.auto_follow_up %}<dt>Automatic follow-ups</dt><dd data-auto-follow-up="{{ row.auto_follow_up.state }}">{{ row.auto_follow_up.label }}
-            <div class="mk-muted">The first follow-up goes out as soon as the lead is Ready, then every 2 days, then a closing email. They are new emails to the customer, separate from the enquiry's thread.</div></dd>{% endif %}
-          {% if row.stage == 'ready' and not row.auto_follow_up or row.stage == 'ready' and row.auto_follow_up.state == 'running' and row.auto_follow_up.sent == 0 %}
-          <dt>First follow-up</dt>
-          <dd><form method="post" class="d-inline" onsubmit="return confirm('Send Follow-up 1 to the customer now? It counts as Follow-up 1.');">
-            {% csrf_token %}<input type="hidden" name="action" value="send_first_follow_up">
-            <button type="submit" class="btn btn-sm btn-primary" data-send-first-follow-up>Send first follow-up now</button>
-          </form></dd>{% endif %}
+            <div class="mk-muted">Fully automatic: Follow-up 1 opens a new email thread, Follow-ups 2-4 and the closing email reply in it. They stop when the customer replies.</div></dd>{% endif %}
+          {% if row.auto_follow_up.next_on %}<dt>Next follow-up due</dt><dd data-next-follow-up>{{ row.auto_follow_up.next_on|date:"d M Y" }}</dd>{% endif %}
+          {% if row.flag %}<dt>Attention</dt><dd class="text-danger" data-lead-flag="{{ row.flag }}">{% if row.flag == 'thread_not_found' %}Gmail thread not found — check customer email / subject{% else %}{{ row.flag_label }}{% endif %}</dd>{% endif %}
+          <dt>Original enquiry</dt><dd><a href="{% url 'enquiries:negotiation' row.enquiry_id %}" data-enquiry-link>{{ row.enquiry_id }}</a></dd>
           {% if row.stage == 'ready' %}<dt>Ready since</dt>
           <dd>{% if row.ready_since %}{{ row.ready_since|date:"d M Y" }}{% else %}—{% endif %}</dd>{% endif %}
           {% if row.customer_reason %}

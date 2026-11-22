@@ -28,7 +28,6 @@ urlpatterns = [
     path("gmail-queue/", _enquiries(views.gmail_queue), name="gmail_queue"),
     path("<str:enquiry_id>/work-order/", _enquiries(views.work_order_convert), name="work_order_convert"),
     path("<str:enquiry_id>/follow-up/", _enquiries(views.follow_up), name="follow_up"),
-    path("<str:enquiry_id>/follow-up/start/", _enquiries(views.follow_up_start), name="follow_up_start"),
     path(
         "<str:enquiry_id>/auto-follow-up/toggle/",
         _enquiries(views.toggle_auto_follow_up),

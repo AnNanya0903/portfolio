@@ -54,12 +54,14 @@ class MarketingUsesKycTests(TestCase):
         self.assertEqual(row["customer_name"], "Acme Seals Pvt Ltd")
         self.assertEqual(row["other_emails"], ["tech@acme.example", "meera@acme.example"])
 
+    @override_settings(MARKETING_FOLLOW_UP_CC="")  # only the customer's own contacts here
     def test_campaign_audience_ccs_the_kyc_contacts(self):
         rows = lost.build_lost_leads([_enquiry("E1")])
         audience = campaigns.build_audience(rows, {})
         item = next(r for r in audience["recipients"] if r["row"]["enquiry_id"] == "E1")
         self.assertEqual((item["email"], item["cc"]), ("tech@acme.example", ["meera@acme.example"]))
 
+    @override_settings(MARKETING_FOLLOW_UP_CC="")  # only the customer's own contacts here
     def test_do_not_contact_on_another_lead_blocks_a_kyc_contact(self):
         EnquiryCustomer.objects.create(enquiry_id="E2", customer=Customer.objects.create(code="BW-1", name="Bolt"))
         EnquiryContact.objects.create(enquiry_id="E2", customer_email="meera@acme.example")

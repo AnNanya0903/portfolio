@@ -67,13 +67,17 @@ class FollowUpSent(models.Model):
     STATUS_PENDING = "pending"
     STATUS_SENT = "sent"
     STATUS_FAILED = "failed"
+    STATUS_DRY_RUN = "dry_run"  # test mode: rendered and logged, nothing sent
     STATUS_CHOICES = (
         (STATUS_PENDING, "Pending"),
         (STATUS_SENT, "Sent"),
         (STATUS_FAILED, "Failed"),
+        (STATUS_DRY_RUN, "Dry run (not sent)"),
     )
 
     enquiry_id = models.CharField(max_length=128, db_index=True)
+    # Which email of the sequence this was (1-4 = follow-ups, 5 = closing email); 0 when not known (older rows).
+    attempt = models.PositiveSmallIntegerField(default=0)
     customer_email = models.EmailField(blank=True)
     customer_name = models.CharField(max_length=320, blank=True)
     subject = models.CharField(max_length=500, blank=True)
@@ -136,6 +140,23 @@ class FollowUpStart(models.Model):
         return f"FollowUpStart:{self.enquiry_id}:{self.stage}:{self.started_at:%Y-%m-%d}"
 
 
+class FollowUpNote(models.Model):
+    """Something the automatic follow-ups noted on an enquiry's timeline: thread not found / found again,
+    bounced, customer replied, moved to Marketing, send failed. Each change is noted once, not every run."""
+
+    enquiry_id = models.CharField(max_length=128, db_index=True)
+    kind = models.CharField(max_length=32)
+    text = models.CharField(max_length=500)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "enquiries_follow_up_note"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"FollowUpNote:{self.enquiry_id}:{self.kind}"
+
+
 class EnquiryContact(models.Model):
     """Customer email entered on the enquiries board for an enquiry (the enquiry service has no email field)."""
 
@@ -149,6 +170,20 @@ class EnquiryContact(models.Model):
     # (enquiries/follow_up_links.py), so every follow-up repeats the same ones.
     follow_up_share_url = models.CharField(max_length=500, blank=True, default="")
     follow_up_share_password = models.CharField(max_length=64, blank=True, default="")
+    # Why automatic follow-ups cannot go on: "thread_not_found" (no Gmail thread passes the check, re-checked
+    # every run) or "bounced" (the customer's address bounced; the sequence stopped). Empty when all is well.
+    FLAG_THREAD_NOT_FOUND = "thread_not_found"
+    FLAG_BOUNCED = "bounced"
+    FLAG_CHOICES = ((FLAG_THREAD_NOT_FOUND, "Gmail thread not found"), (FLAG_BOUNCED, "Email bounced"))
+    follow_up_flag = models.CharField(max_length=32, blank=True, default="", choices=FLAG_CHOICES)
+    follow_up_flag_at = models.DateTimeField(null=True, blank=True)
+    # Set when the enquiry was closed: "no_response" (the closing email went unanswered) moves it to Marketing.
+    CLOSE_NO_RESPONSE = "no_response"
+    close_reason = models.CharField(max_length=32, blank=True, default="")
+    moved_to_marketing_at = models.DateTimeField(null=True, blank=True)
+    # The customer responded (reply in the thread, share-link answer, or a logged call / meeting): the
+    # automatic quotation / PI sequence stopped for good.
+    follow_up_responded_at = models.DateTimeField(null=True, blank=True)
 
     # Payment for an accepted order; when it is paid the order becomes converted. The amount, due date, paid-on
     # date and reference below are confidential: they are kept but no longer shown or asked for anywhere.

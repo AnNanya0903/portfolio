@@ -49,7 +49,7 @@ class RejectionMakesAReadyLeadTests(TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def test_rejection_is_ready_at_once_and_the_first_follow_up_is_due_now(self):
+    def test_rejection_is_ready_at_once_and_follow_up_1_is_due_on_the_next_run(self):
         with patch("enquiries.views._resolve_follow_up_conversation", return_value=("error", "none")):
             status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, "E1", self.enquiry)
         lead = MarketingLead.objects.get(enquiry_id="E1")
@@ -58,8 +58,11 @@ class RejectionMakesAReadyLeadTests(TestCase):
         row = lost.build_lost_leads([self.enquiry])[0]
         self.assertEqual(row["stage"], lost.STAGE_READY)
         self.assertEqual(row["ready_since"], timezone.localdate())
-        due = auto_follow_up.due_follow_ups()
-        self.assertEqual([(d["enquiry_id"], d["attempt"], d["stage"]) for d in due], [("E1", 1, "marketing")])
+        self.assertEqual(lead.lead_source, "rejected")
+        # No button: Marketing's sequence starts by itself and Follow-up 1 is due on the next run.
+        start = FollowUpStart.objects.get(stage="marketing")
+        self.assertEqual(start.customer_email, "buyer@acme.example")
+        self.assertEqual([(d["enquiry_id"], d["attempt"]) for d in auto_follow_up.due_follow_ups()], [("E1", 1)])
 
     def test_ready_at_is_set_once(self):
         first = lost.mark_ready("E1").ready_at
@@ -93,53 +96,7 @@ class MarketingSequenceTests(TestCase):
             self.addCleanup(p.stop)
         self.start = FollowUpStart.objects.create(enquiry_id="E1", stage="marketing", gmail_thread_id="",
                                                   customer_email="buyer@acme.example")
-
-    def test_send_first_follow_up_now_counts_as_one_and_never_duplicates(self):
-        gmail = _gmail()
-        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            out = auto_follow_up.send_marketing_now("E1", customer_email="buyer@acme.example")
-            self.assertEqual(out["result"], "sent")
-            self.assertEqual(gmail.send_email.call_args.args[1], "Thank you for considering AVIGIRI, Acme")
-            cycle = auto_follow_up.cycles(["E1"])["E1"]
-            self.assertEqual(cycle.count, 1)
-            self.assertEqual(FollowUpSent.objects.get().source, FollowUpSent.SOURCE_MANUAL)
-            # The scheduler does not send #1 again; #2 is due two days later.
-            self.assertEqual(auto_follow_up.due_follow_ups(), [])
-            self.assertEqual(auto_follow_up.run_auto_follow_up("E1")["result"], "skipped")
-            again = auto_follow_up.send_marketing_now("E1", customer_email="buyer@acme.example")
-            self.assertEqual(again["result"], "skipped")
-        self.assertEqual(gmail.send_email.call_count, 1)
-        later = auto_follow_up.due_follow_ups(timezone.localdate() + timedelta(days=2))
-        self.assertEqual([(d["attempt"]) for d in later], [2])
-
-    def test_the_button_on_the_lead_page_sends_it(self):
-        user = get_user_model().objects.create_superuser("boss", "boss@example.com", "x")
-        self.client.force_login(user)
-        EnquiryContact.objects.create(enquiry_id="E1", customer_email="buyer@acme.example")
-        gmail = _gmail()
-        with patch("enquiries.services.fetch_enquiry", return_value=self.enquiry), \
-                patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            page = self.client.get(reverse("marketing:detail", args=["E1"]))
-            self.assertContains(page, "Send first follow-up now")
-            self.assertContains(page, "Ready since")
-            self.assertNotContains(page, "Waiting period")
-            self.client.post(reverse("marketing:detail", args=["E1"]), {"action": "send_first_follow_up"})
-        gmail.send_email.assert_called_once()
-
-    def test_a_stop_reply_marks_do_not_contact_and_stops_the_sequence(self):
-        FollowUpStart.objects.update(started_at=timezone.now() - timedelta(days=3))
-        FollowUpSent.objects.create(enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales,
-                                    status="sent", gmail_thread_id="T-MKT", stage="marketing",
-                                    sent_at=timezone.now() - timedelta(days=2, minutes=1),
-                                    next_follow_up_on=timezone.localdate())
-        gmail = _gmail(reply_snippet="STOP")
-        with patch.object(auto_follow_up, "GmailService", return_value=gmail):
-            out = auto_follow_up.run_auto_follow_up("E1")
-            self.assertEqual(out["result"], "skipped")
-            gmail.send_email.assert_not_called()
-            self.assertTrue(MarketingLead.objects.get(enquiry_id="E1").do_not_contact)
-            self.assertTrue(MarketingActivity.objects.filter(text__contains="STOP").exists())
-            self.assertIn("Do not contact", auto_follow_up.run_auto_follow_up("E1")["reason"])
+        MarketingLead.objects.create(enquiry_id="E1", lead_source="rejected", ready_at=timezone.now())
 
     def test_stop_detection(self):
         for text in ("STOP", "stop.", "  Stop emailing me", "Please STOP" if False else "STOP!"):
@@ -153,12 +110,11 @@ class MarketingSequenceTests(TestCase):
         with patch.object(auto_follow_up, "GmailService", return_value=gmail), \
                 self.assertLogs("enquiries.auto_follow_up", level="INFO") as logs:
             out = auto_follow_up.run_auto_follow_up("E1")
-            manual = auto_follow_up.send_marketing_now("E1", customer_email="buyer@acme.example")
-        self.assertEqual((out["result"], manual["result"]), ("dry_run", "dry_run"))
+        self.assertEqual(out["result"], "dry_run")
         self.assertIn("Reply STOP", "\n".join(logs.output))
         gmail.send_email.assert_not_called()
         gmail.send_reply.assert_not_called()
-        self.assertFalse(FollowUpSent.objects.exists())
+        self.assertEqual(FollowUpSent.objects.get().status, FollowUpSent.STATUS_DRY_RUN)  # "dry-run (not sent)"
 
 
 class MarketingTemplateTests(TestCase):

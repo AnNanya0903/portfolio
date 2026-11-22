@@ -1958,10 +1958,11 @@ def compose_email(request, email_id):
     follow_up_stage_cc, follow_up_routing_notes = {}, {}
     credit_hold = None
     if follow_up_context:
-        follow_up_cc = payment_terms.default_cc(follow_up_context.get('enquiry_id') or '')
-        follow_up_stage_cc, follow_up_routing_notes = _routed_cc_by_stage(
-            follow_up_context.get('enquiry_id') or '', follow_up_cc, follow_up_recipient)
-        follow_up_cc = follow_up_stage_cc.get(suggested_stage, follow_up_cc)
+        # The same fixed CC list as the automatic follow-ups (ENQUIRY_FOLLOW_UP_CC / MARKETING_FOLLOW_UP_CC).
+        from enquiries import auto_follow_up
+        follow_up_stage_cc = {key: ', '.join(auto_follow_up.cc_for(key, follow_up_recipient))
+                              for key, _label in FOLLOW_UP_STAGE_CHOICES}
+        follow_up_cc = follow_up_stage_cc.get(suggested_stage, '')
         credit_hold = payment_terms.credit_hold_until(follow_up_context.get('enquiry_id') or '')
     if request.method == 'POST' and follow_up_context:
         follow_up_cc = (request.POST.get('follow_up_cc') or '').strip()
@@ -2035,6 +2036,16 @@ def compose_email(request, email_id):
                 messages.success(request, "Reply sent successfully.")
                 return redirect('gmail_ai')
         else:
+            # Fit the automatic sequence: its next number, its stage, the fixed CC, the verified thread only.
+            from enquiries import auto_follow_up
+            plan = auto_follow_up.manual_send_plan(
+                gmail_service, follow_up_context.get('enquiry_id') or '', thread_id=message.get('thread_id') or '',
+                recipient=follow_up_recipient, stage=follow_up_stage)
+            if plan['error']:
+                messages.error(request, f"{plan['error']} The follow-up was not sent.")
+                return redirect('enquiries:board')
+            follow_up_stage = plan['stage']
+            cc_list = list(dict.fromkeys(plan['cc'] + [a for a in cc_list if a != follow_up_recipient]))
             record = _start_follow_up_record(
                 request,
                 follow_up_context,
@@ -2048,6 +2059,9 @@ def compose_email(request, email_id):
             if record is None:
                 messages.warning(request, "This follow-up was already submitted, so it was not sent again.")
                 return redirect('enquiries:board')
+            if plan['attempt']:
+                record.attempt = plan['attempt']
+                record.save(update_fields=['attempt'])
             try:
                 sent = gmail_service.send_reply(
                     original_message=message,

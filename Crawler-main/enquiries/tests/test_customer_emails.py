@@ -123,38 +123,3 @@ class StatusEmailCcTests(TestCase):
     def test_no_cc_when_there_is_only_one_email(self):
         status_emails.send_status_email("rejection", "E1", ENQUIRY)
         self.assertIsNone(self.gmail.send_reply.call_args.kwargs["cc"])
-
-
-
-@override_settings(FOLLOW_UP_AUTO_ENABLED=True, FOLLOW_UP_AUTO_DRY_RUN=False,
-                   FOLLOW_UP_AUTO_SENDER="sales", FOLLOW_UP_AUTO_GAP_DAYS=[4, 7, 7], FOLLOW_UP_MAX_COUNT=4)
-class AutoFollowUpCcTests(TestCase):
-    def setUp(self):
-        from enquiries import auto_follow_up
-
-        self.auto = auto_follow_up
-        from enquiries.tests.share_helpers import make_share
-        make_share("E1")
-        self.sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
-        enquiry = {"enquiry_id": "E1", "status": "open", "subject": "Gasket quote", "customer_name": "Acme"}
-        patch.object(auto_follow_up.services, "list_enquiries", return_value=[enquiry]).start()
-        patch.object(auto_follow_up.services, "fetch_enquiry", return_value=enquiry).start()
-        self.addCleanup(patch.stopall)
-
-    def test_automatic_follow_up_copies_other_customer_emails(self):
-        from django.utils import timezone
-        from datetime import timedelta
-        from enquiries.models import FollowUpSent
-        from enquiries.tests.test_auto_follow_up import _gmail as auto_gmail
-
-        EnquiryContact.objects.update_or_create(enquiry_id="E1", defaults={
-            "customer_email": "buyer@acme.example", "other_customer_emails": "boss@acme.example"})
-        FollowUpSent.objects.create(
-            enquiry_id="E1", customer_email="buyer@acme.example", sent_by=self.sales, cc="manager@ours.example",
-            status=FollowUpSent.STATUS_SENT, gmail_thread_id="t1", stage="waiting_po",
-            next_follow_up_on=timezone.localdate(), sent_at=timezone.now() - timedelta(days=4))
-        gmail = auto_gmail()
-        with patch.object(self.auto, "GmailService", return_value=gmail):
-            outcome = self.auto.run_auto_follow_up("E1")
-        self.assertEqual(outcome["result"], "sent")
-        self.assertEqual(gmail.send_reply.call_args.kwargs["cc"], ["boss@acme.example", "manager@ours.example"])

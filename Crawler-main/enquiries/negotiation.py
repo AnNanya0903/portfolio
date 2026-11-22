@@ -13,7 +13,10 @@ from kyc.departments import departments_of
 from kyc.models import Department, UserDepartment
 from magicwand.access import is_super_admin
 
-from .models import EnquiryAssignment, EnquiryAttachment, EnquiryFollowup, EnquiryNegotiation, EnquiryStatusLog
+from .models import (
+    EnquiryAssignment, EnquiryAttachment, EnquiryFollowup, EnquiryNegotiation, EnquiryStatusLog, FollowUpNote,
+    FollowUpSent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +138,22 @@ def timeline(enquiry_id: str) -> List[Dict[str, Any]]:
         items.append({"at": f.created_at, "kind": "followup", "icon": "bi-telephone", "by": _who(f.user),
                       "text": f"Follow-up ({f.get_followup_type_display().lower()})" + (f" by {f.department.name}" if f.department else ""),
                       "detail": f.note + nxt})
+    # Every follow-up email (automatic or manual) with its To and CC, and what the automation noted.
+    for row in FollowUpSent.objects.filter(enquiry_id=enquiry_id).select_related("sent_by"):
+        what = "Closing email" if row.attempt and row.attempt > 4 else (f"Follow-up {row.attempt}" if row.attempt
+                                                                         else "Follow-up email")
+        portal = "Marketing " if row.stage == "marketing" else ""
+        state = {FollowUpSent.STATUS_SENT: "sent", FollowUpSent.STATUS_DRY_RUN: "dry-run (not sent)",
+                 FollowUpSent.STATUS_FAILED: "failed", FollowUpSent.STATUS_PENDING: "sending"}.get(row.status, row.status)
+        how = "automatic" if row.source == FollowUpSent.SOURCE_AUTO else "manual"
+        detail = f"To: {row.customer_email or '—'}\nCC: {row.cc or '—'}"
+        if row.status == FollowUpSent.STATUS_FAILED and row.error_message:
+            detail += f"\nError: {row.error_message[:200]}"
+        items.append({"at": row.sent_at, "kind": "email", "icon": "bi-envelope", "by": _who(row.sent_by),
+                      "text": f"{portal}{what} {state} ({how})", "detail": detail})
+    for n in FollowUpNote.objects.filter(enquiry_id=enquiry_id):
+        items.append({"at": n.created_at, "kind": "automation", "icon": "bi-robot", "by": "Automatic follow-ups",
+                      "text": n.text, "detail": ""})
     for att in EnquiryAttachment.objects.filter(enquiry_id=enquiry_id).select_related("uploaded_by"):
         items.append({"at": att.created_at, "kind": "attachment", "icon": "bi-paperclip", "by": _who(att.uploaded_by),
                       "text": f"Attached {att.file_name} ({att.get_category_display().lower()})", "detail": "",

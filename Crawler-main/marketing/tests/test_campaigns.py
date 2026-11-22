@@ -285,14 +285,15 @@ class CampaignCcTests(TestCase):
         MarketingLead.objects.create(enquiry_id="E2", do_not_contact=True)  # boss@ asked not to be emailed
         leads = lost.build_lost_leads(enquiries)
         audience = campaigns.build_audience(leads, {})
+        mk = ["kumar@avigiri.com", "manju@avigiri.com", "apai@avigiri.com"]  # MARKETING_FOLLOW_UP_CC, always added
         self.assertEqual([(r["email"], r["cc"]) for r in audience["recipients"]],
-                         [("buyer@acme.example", ["cto@acme.example"])])
+                         [("buyer@acme.example", ["cto@acme.example"] + mk)])
         campaign = Campaign.objects.create(name="C", subject="S", body="Dear {greeting}, hello there friends.")
         gmail = _gmail()
         with patch("marketing.campaigns.GmailService", return_value=gmail):
             campaigns.send_campaign(campaign, user, leads, expected_count=1)
         send = gmail.service.users.return_value.messages.return_value.send
         raw = base64.urlsafe_b64decode(send.call_args.kwargs["body"]["raw"]).decode()
-        self.assertIn("Cc: cto@acme.example", raw)
+        self.assertIn("Cc: cto@acme.example, kumar@avigiri.com", raw)
         self.assertNotIn("boss@acme.example", raw)
-        self.assertEqual(campaign.recipients.get().cc, "cto@acme.example")
+        self.assertEqual(campaign.recipients.get().cc, ", ".join(["cto@acme.example"] + mk))

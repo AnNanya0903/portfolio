@@ -44,8 +44,8 @@ class StatusLabelTests(TestCase):
         replied = self.status(1, replied=True)
         self.assertEqual((replied["state"], replied["next_on"]), ("replied", None))
 
-    def test_only_rejected_enquiries_with_a_marketing_sequence(self):
-        self.assertIsNone(self.status(1, kind="no_response"))
+    def test_rejected_and_no_response_leads_with_a_marketing_sequence(self):
+        self.assertIsNotNone(self.status(1, kind="no_response"))  # No-response leads are followed up too
         self.assertIsNone(self.status(1, stage="waiting_po"))
         self.assertIsNone(lost.auto_follow_up_status("rejected", None, None, False))
 
@@ -71,7 +71,7 @@ class PortalShowsProgressTests(TestCase):
         self.assertContains(board, 'data-auto-follow-up="running"')
         self.assertContains(board, "Auto: First follow-up")
         self.assertContains(detail, "Automatic follow-ups")
-        self.assertContains(detail, "separate from the enquiry")
+        self.assertContains(detail, "Follow-up 1 opens a new email thread")
 
     def test_progress_after_two_emails_and_after_a_reply(self):
         FollowUpStart.objects.update(started_at=timezone.now() - timedelta(days=6))  # the rejection, 6 days ago

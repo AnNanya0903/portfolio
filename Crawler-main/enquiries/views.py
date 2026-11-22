@@ -1739,6 +1739,12 @@ def board(request: HttpRequest) -> HttpResponse:
             enquiry["kyc_customer"] = kyc_customers.get(str(enquiry.get("enquiry_id")))
             enquiry["quotation_count"] = quotation_counts.get(str(enquiry.get("enquiry_id")), 0)
             enquiry["work_order"] = work_order_rows.get(str(enquiry.get("enquiry_id")))
+            # Automatic follow-ups: "Gmail thread not found" / "Email bounced", and "moved to Marketing".
+            enquiry["follow_up_flag"] = contact.get_follow_up_flag_display() if contact and contact.follow_up_flag else ""
+            enquiry["follow_up_flag_key"] = contact.follow_up_flag if contact else ""
+            enquiry["moved_to_marketing_at"] = (contact.moved_to_marketing_at
+                                                if contact and contact.close_reason == EnquiryContact.CLOSE_NO_RESPONSE
+                                                else None)
             if enquiry["kyc_customer"] is None:  # same company name as exactly one KYC customer: offer the link
                 enquiry["kyc_suggestion"] = kyc_suggestions.get(
                     " ".join(str(enquiry.get("customer_name") or "").split()).lower())
@@ -1916,107 +1922,6 @@ def follow_up(request: HttpRequest, enquiry_id: str) -> HttpResponse:
     request.session.modified = True
 
     return redirect(reverse("dashboard:compose_email", args=[reply_to_id]))
-
-
-def _start_candidates(enquiry_id: str, enquiry: Mapping[str, Any], gmail_service) -> List[Dict[str, Any]]:
-    """Gmail conversations (in the signed-in mailbox) that may be this enquiry's quotation / proforma invoice."""
-    subject = str(enquiry.get("subject") or "").strip()
-    customer_name = str(enquiry.get("customer_name") or "").strip()
-    saved_email = str(enquiry.get("customer_email") or "").strip() or _saved_customer_email(enquiry_id)
-    saved_email = saved_email if _is_valid_email(saved_email) else ""
-    found: List[Dict[str, Any]] = []
-    if subject:
-        found = gmail_service.find_enquiry_conversations(subject=subject, customer_email=saved_email,
-                                                         customer_name=customer_name)
-    if not found and saved_email:  # the email may carry its own subject (e.g. "Quotation Q-77"): try the customer alone
-        found = gmail_service.find_enquiry_conversations(subject="", customer_email=saved_email)
-    seen, out = set(), []
-    for conversation in found:
-        if conversation.get("thread_id") and conversation["thread_id"] not in seen and conversation.get("customer_email"):
-            seen.add(conversation["thread_id"])
-            out.append(conversation)
-    return out
-
-
-@login_required
-def follow_up_start(request: HttpRequest, enquiry_id: str) -> HttpResponse:
-    """For a quotation or proforma invoice emailed from Gmail outside MagicWand: tell MagicWand which Gmail
-    conversation it is and when it was sent, so the automatic follow-ups run in that conversation. Sends nothing."""
-    api_root = _get_api_root()
-    try:
-        enquiry = services.fetch_enquiry(api_root, enquiry_id, request=request)
-    except services.EnquiryServiceError as exc:
-        messages.error(request, f"Unable to load enquiry: {exc}")
-        return redirect("enquiries:board")
-    stopped = _follow_up_stopped_reason({**enquiry, "enquiry_id": enquiry_id}, 0)
-    if stopped:
-        messages.warning(request, stopped)
-        return redirect("enquiries:board")
-
-    from dashboard import views as dashboard_views
-    dashboard_views._ensure_local_demo_emails(request.user)  # local development only: sample emails
-    gmail_service = GmailService(request.user)
-    try:
-        conversations = _start_candidates(enquiry_id, enquiry, gmail_service)
-    except GmailAPIError as exc:
-        messages.error(request, f"Could not check Gmail for this enquiry: {exc}")
-        return redirect("enquiries:board")
-
-    today = timezone.localdate()
-    context: Dict[str, Any] = {
-        "enquiry": enquiry, "enquiry_id": enquiry_id, "conversations": conversations,
-        "customer_email": (conversations[0].get("customer_email") if conversations else "")
-        or _saved_customer_email(enquiry_id),
-        "gmail_account": getattr(request.user, "email", "") or request.user.get_username(),
-        "document_choices": [(key, item["label"]) for key, item in share_email.DOCUMENTS.items()],
-        "document": "quotation", "today": today,
-        "sent_on": (conversations[0].get("last_date").date().isoformat()
-                    if len(conversations) == 1 and conversations[0].get("last_date") else today.isoformat()),
-    }
-    if request.method != "POST":
-        return render(request, "enquiries/follow_up_start.html", context)
-
-    thread_id = (request.POST.get("thread") or "").strip()
-    document = request.POST.get("document") or ""
-    context.update(selected_thread=thread_id, document=document if document in share_email.DOCUMENTS else "quotation",
-                   sent_on=(request.POST.get("sent_on") or "").strip())
-    conversation = next((c for c in conversations if c["thread_id"] == thread_id), None)
-    sent_on = parse_date(context["sent_on"]) if context["sent_on"] else None
-    error = ""
-    if conversation is None:
-        error = "Please pick the Gmail conversation for this enquiry."
-    elif document not in share_email.DOCUMENTS:
-        error = "Please choose whether a quotation or a proforma invoice was sent."
-    elif sent_on is None:
-        error = "Please enter the date the email was sent."
-    elif sent_on > today:
-        error = "The date the email was sent cannot be in the future."
-    if error:
-        context["error"] = error
-        return render(request, "enquiries/follow_up_start.html", context)
-
-    stage = share_email.DOCUMENTS[document]["stage"]
-    already = FollowUpStart.objects.filter(enquiry_id=str(enquiry_id), stage=stage,
-                                           gmail_thread_id=thread_id).order_by("-started_at").first()
-    if already is not None:
-        messages.info(request, f"Follow-ups for enquiry #{enquiry_id} are already running in this Gmail conversation.")
-        return redirect("enquiries:board")
-    FollowUpStart.objects.create(
-        enquiry_id=str(enquiry_id), stage=stage, gmail_thread_id=thread_id,
-        gmail_message_id=str(conversation.get("latest_message_id") or ""),
-        customer_email=str(conversation.get("customer_email") or "").lower(), cc=payment_terms.default_cc(enquiry_id),
-        subject=str(conversation.get("subject") or "")[:500], started_by=request.user,
-        started_at=timezone.make_aware(datetime.combine(sent_on, datetime.min.time()).replace(hour=12)))
-    _save_customer_email(enquiry_id, str(conversation.get("customer_email") or "").lower(), request.user)
-    first = sent_on + timedelta(days=int((list(getattr(settings, "FOLLOW_UP_AUTO_GAP_DAYS", []) or [2]))[0]))
-    label = share_email.DOCUMENTS[document]["label"].lower()
-    messages.success(
-        request,
-        f"Follow-ups started for enquiry #{enquiry_id}: the {label} sent on {sent_on:%d %b %Y} will be followed up "
-        f"from {first:%d %b %Y}, every 2 days, 4 follow-ups, then the closing email, in that Gmail conversation."
-        + ("" if getattr(settings, "FOLLOW_UP_AUTO_ENABLED", False) else
-           " Automatic follow-ups are turned off on this site, so nothing is sent yet."))
-    return redirect("enquiries:board")
 
 
 def _suggested_follow_up_stage(enquiry_id: str, enquiry: Mapping[str, Any]) -> str:
@@ -3550,17 +3455,18 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
     if result.get("local_demo"):
         context["email_sent"] = f"Test mode: the email to {to}{copy} was prepared but not sent. Attachments: {names}."
     else:
+        # The sequence starts now, in this thread (a revised quotation / PI keeps the running sequence).
         from . import auto_follow_up
-        auto_follow_up.record_start(enquiry_id, what["stage"], sent=result, customer_email=to, cc=cc,
-                                    subject=original.get("subject") if original is not None else email["subject"],
-                                    user=request.user, document_no=email.get("voucher_no") or "",
-                                    share_url=share_email.share_url(request, record), share_password=password)
+        auto_follow_up.record_start(
+            enquiry_id, what["stage"], sent=result, customer_email=to, cc=cc,
+            subject=(original.get("subject") if original is not None else email["subject"]) or email["subject"],
+            user=request.user, document_no=email.get("voucher_no") or "",
+            share_url=share_email.share_url(request, record), share_password=password)
         if getattr(settings, "FOLLOW_UP_AUTO_ENABLED", False):
             gap = (list(getattr(settings, "FOLLOW_UP_AUTO_GAP_DAYS", []) or [2]))[0]
-            then = (f" Automatic follow-ups will reply in this same email thread every {gap} days until the "
-                    "customer answers.")
+            then = f" Automatic follow-ups will reply in this email thread every {gap} days until the customer responds."
         else:
-            then = " Automatic follow-ups are turned off on this site, so please follow up from the enquiry board."
+            then = " Automatic follow-ups are turned off on this site, so nothing more is sent."
         context["email_sent"] = f"{what['label']} emailed to {to}{copy}{where}. Attachments: {names}.{then}"
     logger.info("%s share email for %s sent by %s to %s", what["label"], enquiry_id, request.user, to)
     return render(request, "enquiries/link_generated.html", context)

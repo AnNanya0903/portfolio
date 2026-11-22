@@ -2,8 +2,9 @@
 
 Enquiry follow-ups (quotation or proforma invoice sent, enquiry Open): Follow-up 1 to 4, each with the
 enquiry's online share link and password, then the closing email (enquiries/status_emails.py), which has
-no link. Marketing follow-ups (enquiry rejected): Follow-up 1 to 4 and a closing email, each with its own
-subject and the STOP line.
+no link. Marketing follow-ups (enquiry rejected, or closed with no response): Follow-up 1 (its wording depends
+on why the enquiry was lost) to 4 and a closing email, with the STOP line. Follow-up 1 opens a new thread;
+the rest reply in it.
 
 Every email is signed "AVIGIRI team". A sentence whose placeholder has no value is left out, never sent
 with an empty gap; the greeting falls back to "Sir/Madam" and the enquiry title to "your enquiry".
@@ -114,6 +115,18 @@ _MARKETING: List[Tuple[str, Template, str]] = [
     ), "Wishing you all the best,"),
 ]
 
+# Marketing Follow-up 1 for a No-response lead (the enquiry was closed after the 5th email went unanswered).
+_MARKETING_NO_RESPONSE_FIRST: Tuple[str, Template, str] = (
+    "Is {enquiry_title} still on your plans{customer_name_comma}?", (
+        ("We recently shared a quotation for {enquiry_title} and understand things may have got busy or plans "
+         "may have changed.",),
+        ("If the requirement is still open, or has changed in budget, timeline or scope, we'd be glad to put "
+         "together an option that suits you better.",
+         "Just reply to this email and let us know."),
+    ), "Warm regards,")
+
+LEAD_NO_RESPONSE = "no_response"
+
 _PLACEHOLDER = re.compile(r"\{([a-z_]+)\}")
 # Placeholders that may be empty without dropping their sentence (they carry their own punctuation).
 _OPTIONAL = {"document_number_paren", "customer_name_comma"}
@@ -178,12 +191,14 @@ def document_for_stage(stage: str) -> str:
 def build_follow_up_body(stage: str, *, reference: str = "", subject: str = "", user=None, attempt: int = 1,
                          due_on=None, credit_days=None, today=None, share_url: str = "",
                          share_password: str = "", customer_name: str = "", document_number: str = "",
-                         enquiry_title: str = "", delivery_timeline: str = "", confirm_by_date: str = "") -> str:
+                         enquiry_title: str = "", delivery_timeline: str = "", confirm_by_date: str = "",
+                         lead_source: str = "") -> str:
     """Body (plain text) for follow-up number `attempt` of a stage.
 
     Enquiry stages: Follow-up 1-4 (4 or more = Follow-up 4). Without a share link and password the link
     paragraph is left out; the automatic sender never sends such an email (enquiries/auto_follow_up.py).
-    Marketing: Follow-up 1-4, then the closing email (attempt MARKETING_FOLLOW_UP_COUNT + 1 or more).
+    Marketing: Follow-up 1-4, then the closing email (attempt MARKETING_FOLLOW_UP_COUNT + 1 or more);
+    Follow-up 1 has its own wording for a No-response lead (`lead_source` "no_response").
     `reference`, `user`, `due_on`, `credit_days` and `today` are kept for existing callers.
     """
     key = stage if stage in STAGE_KEYS else DEFAULT_STAGE
@@ -192,24 +207,28 @@ def build_follow_up_body(stage: str, *, reference: str = "", subject: str = "", 
                      share_password=share_password, delivery_timeline=delivery_timeline,
                      confirm_by_date=confirm_by_date)
     if key == MARKETING_STAGE:
-        _, paragraphs, sign_off = _marketing_template(attempt)
+        _, paragraphs, sign_off = _marketing_template(attempt, lead_source)
         return _render(paragraphs, values, sign_off, extra=[MARKETING_STOP_LINE])
     paragraphs, sign_off = _ENQUIRY_FOLLOW_UPS[min(max(attempt, 1), len(_ENQUIRY_FOLLOW_UPS)) - 1]
     return _render(paragraphs, values, sign_off)
 
 
-def _marketing_template(attempt: int) -> Tuple[str, Template, str]:
+def _marketing_template(attempt: int, lead_source: str = "") -> Tuple[str, Template, str]:
     """Follow-up 1-4 for attempts up to MARKETING_FOLLOW_UP_COUNT, the closing email after that."""
     count = follow_up_count(MARKETING_STAGE)
     if attempt > count:
         return _MARKETING[-1]
+    if attempt <= 1 and lead_source == LEAD_NO_RESPONSE:
+        return _MARKETING_NO_RESPONSE_FIRST
     return _MARKETING[min(max(attempt, 1), len(_MARKETING) - 1) - 1]
 
 
-def marketing_subject(attempt: int, *, customer_name: str = "", subject: str = "", enquiry_title: str = "") -> str:
-    """Subject of Marketing email number `attempt` (each one opens its own conversation)."""
+def marketing_subject(attempt: int, *, customer_name: str = "", subject: str = "", enquiry_title: str = "",
+                      lead_source: str = "") -> str:
+    """Subject of Marketing email number `attempt`. Follow-up 1 opens the Marketing thread with it; the later
+    emails reply in that thread and keep Follow-up 1's subject."""
     values = _values(customer_name=customer_name, subject=subject, enquiry_title=enquiry_title)
-    return _fill(_marketing_template(attempt)[0], values) or "AVIGIRI"
+    return _fill(_marketing_template(attempt, lead_source)[0], values) or "AVIGIRI"
 
 
 def enquiry_closing_body(*, customer_name: str = "", document: str = "quotation") -> str:

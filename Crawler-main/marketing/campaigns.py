@@ -161,6 +161,10 @@ def build_audience(leads: List[Dict[str, Any]], filters: Mapping[str, Any]) -> D
         chosen_emails[address] = row["enquiry_id"]
         # The customer's other emails are CC'd, except any address that is Do not contact.
         cc = [a for a in row.get("other_emails") or [] if a not in blocked and a != address][:5]
+        # Every Marketing email also copies the Marketing team (MARKETING_FOLLOW_UP_CC).
+        from enquiries.auto_follow_up import cc_for
+        from dashboard.follow_up_templates import MARKETING_STAGE
+        cc = list(dict.fromkeys(cc + cc_for(MARKETING_STAGE, address)))
         recipients.append({"row": row, "email": address, "cc": cc})
     return {"recipients": recipients, "skipped": skipped}
 

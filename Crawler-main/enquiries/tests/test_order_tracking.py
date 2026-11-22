@@ -343,7 +343,7 @@ class AfterStatusChangeTests(TestCase):
         self.assertEqual(send.call_count, 1)
 
 
-@override_settings(**AUTO_ON)
+@override_settings(**AUTO_ON, FOLLOW_UP_MIN_GAP_HOURS=0)  # the rows below were "sent" moments ago
 class AutoFollowUpOnConvertedTests(TestCase):
     def test_quote_follow_ups_stop_when_order_is_accepted(self):
         sales = get_user_model().objects.create_user("sales", "sales@ourcompany.example", "x")
@@ -393,40 +393,10 @@ class CustomerEmailTests(TestCase):
         self.gmail.send_reply.assert_not_called()
 
     # --- closing ---------------------------------------------------------------------------
-    def test_closing_due_after_all_follow_ups_and_the_wait(self):
-        self._followed_up("DONE")                      # 4 sent, last 9 days ago -> due
-        self._followed_up("RECENT", days_ago=1)        # last one too recent
-        self._followed_up("FEW", n=2)                  # not all follow-ups sent
-        self._followed_up("PAY", stage="payment_pending")  # unpaid proforma invoice: closed too
-        self._followed_up("PAID", stage="payment_pending")
-        EnquiryContact.objects.create(enquiry_id="PAID", payment_status="paid")
-        rows = [self._enq(e) for e in ("DONE", "RECENT", "FEW", "PAY")] + [
-            self._enq("ACC", status="accepted"), self._enq("PAID", status="accepted")]
-        self._followed_up("ACC")  # accepted, but its follow-ups were about the quotation: wait for the PI
-        self.assertEqual([e["enquiry_id"] for e in status_emails.closing_due(rows)], ["DONE", "PAY"])
-
-    def test_closing_email_closes_the_enquiry(self):
-        self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})
-        outcome = status_emails.send_closing_email(self._enq("DONE"), "http://api")
-        self.assertEqual(outcome["result"], "sent")
-        body = self.gmail.send_reply.call_args.kwargs["body"]
-        self.assertIn("we'll close this enquiry for now", body)
-        self.assertIn("an updated quotation", body)
-        self.assertNotIn("Password", body)  # no share link in the closing email
-        self.assertNotIn("http", body)
-        self.assertTrue(body.endswith("Warm regards," + chr(10) + "AVIGIRI team"))
-        self.assertEqual(self.update.call_args.args[1:], ("DONE", {"status": "closed"}))
-
     def test_customer_reply_stops_the_closing_email(self):
         outcome = status_emails.send_closing_email(self._enq("DONE"), "http://api")  # customer wrote last
         self.assertEqual(outcome["result"], "skipped")
         self.gmail.send_reply.assert_not_called()
-        self.update.assert_not_called()
-
-    @override_settings(FOLLOW_UP_AUTO_DRY_RUN=True)
-    def test_test_mode_neither_sends_nor_closes(self):
-        self.gmail.get_thread_messages.return_value.append({"id": "m2", "sender": "sales@ourcompany.example"})
-        self.assertEqual(status_emails.send_closing_email(self._enq("DONE"), "http://api")["result"], "dry_run")
         self.update.assert_not_called()
 
     # --- payment received ------------------------------------------------------------------
@@ -440,25 +410,6 @@ class CustomerEmailTests(TestCase):
         self.assertIn("confirmed for production", body)
 
     # --- scheduled step --------------------------------------------------------------------
-    def test_scheduled_run_sends_the_closing_email_only(self):
-        from enquiries import scheduler
-
-        self._followed_up("DONE")
-        rows = [self._enq("NEW"), self._enq("DONE", days_ago=30)]
-        with patch("enquiries.services.list_enquiries", return_value=rows):
-            data = scheduler.customer_email_step()
-        self.assertNotIn("acknowledgement", data)
-        self.assertEqual([r["enquiry_id"] for r in data["closing"]], ["DONE"])
-
-    @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
-    def test_scheduled_run_does_nothing_when_turned_off(self):
-        from enquiries import scheduler
-
-        data = scheduler.customer_email_step()
-        self.assertEqual(data["closing"], [])
-        self.gmail.send_reply.assert_not_called()
-
-
 class EmailWordingTests(TestCase):
     """Every automatic email is signed by the team and ends with a line that fits its purpose."""
 

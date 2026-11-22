@@ -27,9 +27,12 @@ AUTO_SETTINGS = dict(
 def _gmail(last_sender="sales@ourcompany.example", send_error=None):
     svc = MagicMock()
     svc.own_addresses.return_value = {"sales@ourcompany.example"}
+    # A thread that passes the thread check: our quotation email to the buyer, same subject, naming the enquiry.
     svc.get_thread_messages.return_value = [
-        {"id": "m1", "sender": "Buyer <buyer@acme.example>"},
-        {"id": "m2", "sender": last_sender},
+        {"id": "m1", "thread_id": "t1", "sender": "Sales <sales@ourcompany.example>", "to": "buyer@acme.example",
+         "subject": "Gasket quote", "body_text": "Our quotation for E1 and E2"},
+        {"id": "m2", "thread_id": "t1", "sender": last_sender, "to": "buyer@acme.example",
+         "subject": "Re: Gasket quote"},
     ]
     svc.get_message.return_value = {"id": "m2", "subject": "Re: Gasket quote", "thread_id": "t1"}
     if send_error:
@@ -56,7 +59,7 @@ class AutoFollowUpTests(TestCase):
 
     def _sent(self, enquiry_id="E1", due=TODAY, thread="t1", days_ago=4, stage="waiting_po", token=None):
         return FollowUpSent.objects.create(
-            enquiry_id=enquiry_id, customer_email="buyer@acme.example", sent_by=self.sales,
+            enquiry_id=enquiry_id, customer_email="buyer@acme.example", sent_by=self.sales, subject="Gasket quote",
             status=FollowUpSent.STATUS_SENT, gmail_thread_id=thread, stage=stage,
             next_follow_up_on=due, sent_at=timezone.now() - timedelta(days=days_ago),
             submission_token=token,
@@ -76,21 +79,24 @@ class AutoFollowUpTests(TestCase):
         self._sent("E2", due=TODAY + timedelta(days=2))         # not due yet
         self._sent("E3")                                        # closed
         self._sent("E4")                                        # paused
-        self._sent("E5", thread="")                             # no confirmed conversation
+        self._sent("E5", thread="")                             # thread checked when sending, not here
         for _ in range(4):
-            self._sent("E6")                                    # limit reached
+            self._sent("E6")                                    # 4 follow-ups: the closing email is due
+        for _ in range(5):
+            self._sent("E7")                                    # closing email sent: nothing more
         self.enquiries.update({
             "E2": {"enquiry_id": "E2", "status": "open"},
             "E3": {"enquiry_id": "E3", "status": "closed"},
             "E4": {"enquiry_id": "E4", "status": "open"},
             "E5": {"enquiry_id": "E5", "status": "open"},
             "E6": {"enquiry_id": "E6", "status": "open"},
+            "E7": {"enquiry_id": "E7", "status": "open"},
         })
         EnquiryContact.objects.create(enquiry_id="E4", auto_follow_up_paused=True)
 
         data = self._due()
-        self.assertEqual([d["enquiry_id"] for d in data["due"]], ["E1"])
-        self.assertEqual(data["due"][0]["attempt"], 2)
+        self.assertEqual([d["enquiry_id"] for d in data["due"]], ["E1", "E5", "E6"])
+        self.assertEqual([d["attempt"] for d in data["due"]], [2, 2, 5])
         self.assertEqual(data["due"][0]["stage"], "waiting_po")
 
     @override_settings(FOLLOW_UP_AUTO_ENABLED=False)
@@ -149,7 +155,9 @@ class AutoFollowUpTests(TestCase):
         self.assertIn(f"Password: {self.share_password}", data["body"])
         gmail.send_reply.assert_not_called()
         gmail.send_email.assert_not_called()
-        self.assertFalse(FollowUpSent.objects.filter(source=FollowUpSent.SOURCE_AUTO).exists())
+        # Recorded as "dry-run (not sent)" for the timeline, never as sent.
+        row = FollowUpSent.objects.get(source=FollowUpSent.SOURCE_AUTO)
+        self.assertEqual(row.status, FollowUpSent.STATUS_DRY_RUN)
 
     def test_gmail_failure_is_recorded(self):
         self._sent("E1")
@@ -265,7 +273,10 @@ class TemplateAndScheduleTests(TestCase):
         d = date(2026, 11, 6)
         self.assertEqual(auto_follow_up.next_follow_up_date(1, d), date(2026, 11, 8))  # every 2 days
         self.assertEqual(auto_follow_up.next_follow_up_date(3, d), date(2026, 11, 8))
-        self.assertIsNone(auto_follow_up.next_follow_up_date(4, d))
+        # After Follow-up 4 the closing email is due FOLLOW_UP_CLOSE_AFTER_DAYS later; nothing after it.
+        with override_settings(FOLLOW_UP_CLOSE_AFTER_DAYS=3):
+            self.assertEqual(auto_follow_up.next_follow_up_date(4, d), date(2026, 11, 9))
+        self.assertIsNone(auto_follow_up.next_follow_up_date(5, d))
         # Marketing: 4 follow-ups, then one more step for its closing email.
         self.assertEqual(auto_follow_up.next_follow_up_date(4, d, "marketing"), date(2026, 11, 8))
         self.assertIsNone(auto_follow_up.next_follow_up_date(5, d, "marketing"))

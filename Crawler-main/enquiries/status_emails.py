@@ -2,11 +2,12 @@
 
 - rejection:        the order was rejected; asks for the reason, or thanks the customer if they gave one.
 - payment_received: the payment was marked Paid (the order is now Converted).
-- closing:          all follow-ups of the quotation / proforma invoice were sent and the customer never
-                    replied; the enquiry is then closed (no share link in it). The enquiry then becomes a
-                    Marketing lead, Ready at once (No response).
+- closing:          the 5th email of the automatic sequence (enquiries/auto_follow_up.py sends it, with the
+                    same thread check and CC); it closes the enquiry ("No response") and makes it a
+                    Marketing lead. send_closing_email() below only lets the board retry it.
 There is no acknowledgement email any more.
-A rejection makes the enquiry a Marketing lead, Ready at once; a sent rejection email starts Marketing's automatic follow-ups in the same thread (auto_follow_up.py).
+A rejection makes the enquiry a Marketing lead (source "Rejected"), Ready at once; Marketing Follow-up 1
+goes on the next hourly run, by itself.
 
 Same safety rules as automatic follow-ups (enquiries/auto_follow_up.py):
 - uses the FOLLOW_UP_AUTO_ENABLED switch, FOLLOW_UP_AUTO_DRY_RUN test mode and FOLLOW_UP_AUTO_SENDER mailbox;
@@ -148,9 +149,8 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
 
     enquiry_id = str(enquiry_id)
     if kind == CustomerStatusEmail.KIND_REJECTION:
-        # Lost: Marketing's lead is Ready at once and its sequence starts, whatever happens to this email.
-        mark_marketing_ready(enquiry_id)
-        start_marketing(enquiry_id, enquiry)
+        # Lost: Marketing's lead is Ready at once and its Follow-up 1 goes on the next hourly run.
+        mark_marketing_ready(enquiry_id, enquiry)
     row = _record(enquiry_id, kind, kind)
     if row is None:
         return {"enquiry_id": enquiry_id, "event": kind, "result": "already_sent", "note": ""}
@@ -221,8 +221,6 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
                                 cc=cc or None, html_body=html_body)
         fields["gmail_message_id"] = (sent or {}).get("id") or ""
         fields["gmail_thread_id"] = (sent or {}).get("threadId") or fields["gmail_thread_id"]
-        if kind == CustomerStatusEmail.KIND_REJECTION:
-            start_marketing(enquiry_id, {"customer_email": customer_email}, cc=cc, user=sender)
         return _finish(row, CustomerStatusEmail.STATUS_SENT, "", sent_at=timezone.now(), **fields)
     except GmailAPIError as exc:
         return _finish(row, CustomerStatusEmail.STATUS_FAILED, f"Gmail error: {exc}")
@@ -255,105 +253,43 @@ def _status_of(enquiry: Mapping[str, Any]) -> str:
     return str(enquiry.get("status") or "").strip().lower()
 
 
-def closing_due(enquiries: List[Mapping[str, Any]], now=None) -> List[Mapping[str, Any]]:
-    """Enquiries whose quotation / PI follow-ups are all sent, the last one FOLLOW_UP_CLOSE_AFTER_DAYS ago or more.
-
-    Open enquiries (quotation or general follow-ups), and proforma invoices still unpaid (open or accepted,
-    not inside an agreed credit period). Marketing sends its own closing email.
-    """
-    from . import auto_follow_up, payment_terms
-    from .models import EnquiryContact
-
-    now = now or timezone.now()
-    wait = int(getattr(settings, "FOLLOW_UP_CLOSE_AFTER_DAYS", 2) or 0)
-    if wait <= 0:
-        return []
-    candidates = {str(e.get("enquiry_id")): e for e in enquiries if _status_of(e) in ("open", "accepted")}
-    if not candidates:
-        return []
-    already = set(CustomerStatusEmail.objects.filter(
-        kind=CustomerStatusEmail.KIND_CLOSING, status=CustomerStatusEmail.STATUS_SENT
-    ).values_list("enquiry_id", flat=True))
-    paid = set(EnquiryContact.objects.filter(enquiry_id__in=list(candidates),
-                                             payment_status=EnquiryContact.PAYMENT_PAID)
-               .values_list("enquiry_id", flat=True))
-    due = []
-    for enquiry_id, cycle in sorted(auto_follow_up.cycles(list(candidates)).items()):
-        limit = follow_up_count(cycle.stage)
-        if cycle.stage == MARKETING_STAGE or limit <= 0 or enquiry_id in already:
-            continue
-        if cycle.count < limit or not cycle.last_sent_at or cycle.last_sent_at > now - timedelta(days=wait):
-            continue
-        if _status_of(candidates[enquiry_id]) == "accepted":
-            # An accepted order is only closed when its proforma invoice was never paid.
-            if (cycle.stage != PAYMENT_STAGE or enquiry_id in paid
-                    or payment_terms.credit_hold_until(enquiry_id, timezone.localdate(now))):
-                continue
-        due.append(candidates[enquiry_id])
-    return due
-
-
 def send_closing_email(enquiry: Mapping[str, Any], api_root: str) -> Dict[str, Any]:
-    """Send the closing email; once it is really sent, set the enquiry status to Closed."""
-    from . import services
+    """Board retry of the closing email: runs the automatic sequence for this enquiry when its next email is
+    the closing email (same thread check, CC, and move to Marketing)."""
+    from . import auto_follow_up
 
     enquiry_id = str(enquiry.get("enquiry_id"))
-    outcome = send_status_email(CustomerStatusEmail.KIND_CLOSING, enquiry_id, enquiry)
-    if outcome.get("result") == CustomerStatusEmail.STATUS_SENT:
-        try:
-            services.update_enquiry(api_root, enquiry_id, {"status": "closed"})
-            outcome["closed"] = True
-            mark_marketing_ready(enquiry_id)  # No response: Marketing can follow up straight away
-        except services.EnquiryServiceError as exc:
-            outcome["closed"] = False
-            outcome["note"] = f"email sent but the status could not be set to Closed: {exc}"
-            logger.warning("Closing email sent for %s but status update failed: %s", enquiry_id, exc)
-    return outcome
+    cycle = auto_follow_up.cycles([enquiry_id], include_marketing=False).get(enquiry_id)
+    if cycle is None or cycle.count != follow_up_count(cycle.stage):
+        return {"enquiry_id": enquiry_id, "event": CustomerStatusEmail.KIND_CLOSING,
+                "result": CustomerStatusEmail.STATUS_SKIPPED, "note": "the closing email follows Follow-up 4"}
+    outcome = auto_follow_up.run_auto_follow_up(enquiry_id)
+    status = {auto_follow_up.SENT: CustomerStatusEmail.STATUS_SENT,
+              auto_follow_up.DRY_RUN: CustomerStatusEmail.STATUS_DRY_RUN,
+              auto_follow_up.FAILED: CustomerStatusEmail.STATUS_FAILED}.get(outcome.get("result"),
+                                                                           CustomerStatusEmail.STATUS_SKIPPED)
+    return {"enquiry_id": enquiry_id, "event": CustomerStatusEmail.KIND_CLOSING, "result": status,
+            "note": outcome.get("reason") or "", "closed": status in (CustomerStatusEmail.STATUS_SENT,
+                                                                      CustomerStatusEmail.STATUS_DRY_RUN)}
 
 
-def start_marketing(enquiry_id: str, enquiry: Optional[Mapping[str, Any]], *, cc=None, user=None) -> None:
-    """Start Marketing's follow-up sequence for a rejected enquiry (once). Its first follow-up is due now.
-
-    Each Marketing email is a NEW email (never in the enquiry's thread). Never raises.
-    """
-    if not getattr(settings, "MARKETING_AUTO_FOLLOW_UP", True):
-        return
-    try:
-        from . import auto_follow_up
-        from .models import EnquiryContact, FollowUpStart
-
-        if FollowUpStart.objects.filter(enquiry_id=str(enquiry_id), stage=MARKETING_STAGE).exists():
-            return
-        contact = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).only("customer_email").first()
-        address = ((contact.customer_email if contact else "") or str((enquiry or {}).get("customer_email") or "")
-                   ).strip().lower()
-        if not address or "@" not in address:
-            return
-        auto_follow_up.record_start(str(enquiry_id), MARKETING_STAGE, sent={}, customer_email=address,
-                                    cc=list(cc or []), subject="", user=user)
-    except Exception:
-        logger.exception("Could not start the Marketing follow-ups of %s", enquiry_id)
-
-
-def mark_marketing_ready(enquiry_id: str) -> None:
-    """The enquiry is lost (Rejected or No response): its Marketing lead is Ready now. Never raises."""
+def mark_marketing_ready(enquiry_id: str, enquiry: Optional[Mapping[str, Any]] = None) -> None:
+    """The enquiry was rejected: its Marketing lead (source Rejected) is Ready now and Follow-up 1 goes on the
+    next hourly run. Never raises."""
     try:
         from marketing import lost
     except Exception:  # Marketing app not installed
         return
     try:
-        lost.mark_ready(enquiry_id)
+        from . import auto_follow_up
+
+        lost.create_lead(enquiry_id, lost.REJECTED,
+                         customer_email=auto_follow_up.customer_email(str(enquiry_id), enquiry),
+                         first_due=timezone.now())
     except Exception:
-        logger.exception("Could not mark the Marketing lead of %s Ready", enquiry_id)
+        logger.exception("Could not create the Marketing lead of %s", enquiry_id)
 
 
 def run_scheduled(api_root: str, today: Optional[date] = None) -> Dict[str, Any]:
-    """Close enquiries that never replied (no acknowledgement email any more). Returns what happened."""
-    from . import services
-
-    today = today or timezone.localdate()
-    enquiries = services.list_enquiries(api_root)
-    results = {"closing": []}
-    for enquiry in closing_due(enquiries):
-        results["closing"].append(send_closing_email(enquiry, api_root))
-    return results
+    """Nothing to do any more: the closing email is the 5th email of the automatic sequence."""
+    return {"closing": []}
