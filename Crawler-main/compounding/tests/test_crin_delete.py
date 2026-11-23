@@ -67,11 +67,35 @@ class DeleteCRINTests(TestCase):
         for name in ("planning", "fb_planning"):
             self.assertContains(self.client.get(reverse(f"compounding:{name}"), {"date": PLAN_DATE}), url)
 
-    def test_crin_on_board_cannot_be_deleted(self):
-        crin = self._crin()
+    def _send(self, crin):
         self.client.post(
             reverse("compounding:send_to_board", args=[crin.id]),
             data={"plan_date": PLAN_DATE, "shift": "1"},
+        )
+
+    def test_unstarted_crin_on_board_is_deleted_and_leaves_the_board(self):
+        crin = self._crin()
+        self._send(crin)
+        line_id = crin.planned_lines.get().id
+        url = reverse("compounding:delete_crin", args=[crin.id])
+        page = self.client.get(reverse("compounding:planning"), {"date": PLAN_DATE})
+        self.assertContains(page, url)
+        self.assertContains(page, "removed from the Compounding Board")
+
+        response = self._delete(crin)
+
+        self.assertFalse(CompoundingCRIN.objects.filter(id=crin.id).exists())
+        self.assertFalse(CompoundingLine.objects.filter(id=line_id).exists())
+        self.assertEqual(_mb_availability(self.plan, "7020")["reserved"], Decimal("0"))
+        self.assertIn("removed it from the board", self._messages(response))
+
+    def test_crin_with_saved_actuals_cannot_be_deleted(self):
+        crin = self._crin()
+        self._send(crin)
+        line = crin.planned_lines.get()
+        self.client.post(
+            reverse("compounding:set_actuals"),
+            data={"plan_date": PLAN_DATE, "line_id": str(line.id), "actual_mb": "0", "actual_fb": "10"},
         )
         url = reverse("compounding:delete_crin", args=[crin.id])
 
@@ -79,7 +103,44 @@ class DeleteCRINTests(TestCase):
         response = self._delete(crin)
 
         self.assertTrue(CompoundingCRIN.objects.filter(id=crin.id).exists())
+        self.assertTrue(CompoundingLine.objects.filter(id=line.id).exists())
         self.assertIn("cannot be deleted", self._messages(response))
+
+    def test_saved_zero_actuals_still_block_delete(self):
+        crin = self._crin()
+        self._send(crin)
+        line = crin.planned_lines.get()
+        CompoundingLine.objects.filter(id=line.id).update(actuals_saved=True)
+
+        self._delete(crin)
+
+        self.assertTrue(CompoundingCRIN.objects.filter(id=crin.id).exists())
+
+    def test_separately_sent_mb_stays_on_the_board(self):
+        crin = self._crin()
+        self._send(crin)
+        line = crin.planned_lines.get()
+        CompoundingLine.objects.filter(id=line.id).update(shift2_mb=4)
+
+        response = self._delete(crin)
+
+        line.refresh_from_db()
+        self.assertIsNone(line.crin_request)
+        self.assertIsNone(line.shift1_fb)
+        self.assertEqual(line.shift2_mb, 4)
+        self.assertIn("still on the board", self._messages(response))
+
+    def test_crin_own_mb_is_removed_with_it(self):
+        crin = self._crin(mb_planning=3)
+        self._send(crin)
+        line = crin.planned_lines.get()
+        CompoundingLine.objects.filter(id=line.id).update(shift2_mb=4)
+
+        self._delete(crin)
+
+        line.refresh_from_db()
+        self.assertIsNone(line.shift1_mb)
+        self.assertEqual(line.shift2_mb, 4)
 
     def test_crin_with_stock_movement_cannot_be_deleted(self):
         crin = self._crin()

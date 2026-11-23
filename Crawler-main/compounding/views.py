@@ -2635,13 +2635,36 @@ def create_crin(request):
 
 
 def _crin_can_be_deleted(crin: CompoundingCRIN) -> bool:
-    """Only an untouched CRIN can be deleted, so no production or stock history is lost."""
-    return (
-        crin.status == CompoundingCRIN.STATUS_OPEN
-        and crin.quantity == crin.order_quantity
-        and not crin.planned_lines.exists()
-        and not crin.stock_entries.exists()
+    """A CRIN can be deleted until production is recorded, so no stock history is lost."""
+    if (
+        crin.status != CompoundingCRIN.STATUS_OPEN
+        or crin.quantity != crin.order_quantity
+        or crin.stock_entries.exists()
+    ):
+        return False
+    return not any(
+        line.actuals_saved
+        or int(line.actual_mb or 0)
+        or int(line.actual_fb or 0)
+        or int(line.returned_to_planning_mb or 0)
+        or int(line.returned_to_planning_fb or 0)
+        for line in crin.planned_lines.all()
     )
+
+
+def _remove_crin_from_line(line: CompoundingLine, crin: CompoundingCRIN) -> None:
+    """Take a CRIN's batches off a board line, keeping any MB that was sent separately."""
+    line.shift1_fb = line.shift2_fb = line.shift3_fb = None
+    if crin.mb_planning is not None:
+        for field in ("shift1_mb", "shift2_mb", "shift3_mb"):
+            if getattr(line, field) == crin.mb_planning:
+                setattr(line, field, None)
+                break
+    if not any(value for value in (line.shift1_mb, line.shift2_mb, line.shift3_mb)):
+        line.delete()
+        return
+    line.crin_request = None
+    line.save(update_fields=["shift1_fb", "shift2_fb", "shift3_fb", "shift1_mb", "shift2_mb", "shift3_mb", "crin_request", "updated_at"])
 
 
 @login_required
@@ -2653,23 +2676,28 @@ def delete_crin(request, crin_id: int):
     plan = crin.plan
     page = "planning/fb/" if request.POST.get("return_to") == "fb" else "planning/"
     redirect_url = f"/compounding/{page}?date={plan.plan_date.isoformat()}"
+    # Lock board lines so actuals cannot be saved while the CRIN is being removed.
+    board_lines = list(crin.planned_lines.select_for_update())
 
     if not _crin_can_be_deleted(crin):
         messages.error(
             request,
-            f"{crin.crin_number} cannot be deleted because work has started on it.",
+            f"{crin.crin_number} cannot be deleted because production has been recorded on it.",
         )
         return redirect(redirect_url)
 
     crin_number = crin.crin_number
     compound_code = crin.compound_code
     header_id = crin.request_id
+    for line in board_lines:
+        _remove_crin_from_line(line, crin)
     crin.delete()
     if header_id and not CompoundingCRIN.objects.filter(request_id=header_id).exists():
         CompoundingCRINRequest.objects.filter(id=header_id).delete()
     logger.info("Compounding CRIN %s deleted by user id %s", crin_number, request.user.pk)
 
-    messages.success(request, f"Deleted {crin_number} ({compound_code}).")
+    board_text = " and removed it from the board" if board_lines else ""
+    messages.success(request, f"Deleted {crin_number} ({compound_code}){board_text}.")
     compound_key = _normalize_compound_code(compound_code)
     mb_on_board = any(
         _normalize_compound_code(line.compound_code) == compound_key
