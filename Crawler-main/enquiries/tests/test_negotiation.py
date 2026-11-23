@@ -59,22 +59,29 @@ class NegotiationTests(TestCase):
         self.client.post(reverse("enquiries:negotiation_stage", args=["ENQ-1"]), {"stage": "won"})
         self.assertFalse(EnquiryNegotiation.objects.exists())
 
-    def test_only_a_manager_or_top_management_can_forward(self, *_):
-        for who in (self.rep, self.mkt, self.acct):
+    def test_only_the_cro_rabin_and_apai_can_forward(self, *_):
+        cro = user("cro", "CustomerService@avigiri.com")
+        for who in (self.mkt, self.acct, self.admin):
             self.client.force_login(who)
             self.assertEqual(self.client.post(self.forward_url, self.good).status_code, 403)
         self.assertFalse(EnquiryAssignment.objects.exists())
-        for who in (self.manager, self.admin):
+        for who in (self.rep, cro, self.manager):
             self.client.force_login(who)
             self.assertEqual(self.client.post(self.forward_url, self.good).status_code, 302)
-        self.assertEqual(EnquiryAssignment.objects.count(), 2)
+        self.assertEqual(EnquiryAssignment.objects.count(), 3)
 
     def test_the_forward_button_shows_only_for_those_who_can_forward(self, *_):
         url = reverse("enquiries:negotiation", args=["ENQ-1"])
-        self.client.force_login(self.rep)
+        self.client.force_login(self.mkt)
         self.assertNotContains(self.client.get(url), "Forward to Department")
-        self.client.force_login(self.manager)
-        self.assertContains(self.client.get(url), "Forward to Department")
+        for who in (self.rep, user("cro", "customerservice@avigiri.com"), self.manager):
+            self.client.force_login(who)
+            self.assertContains(self.client.get(url), "Forward to Department")
+
+    def test_forwarding_rights_do_not_widen_the_task_queue(self, *_):
+        EnquiryAssignment.objects.create(enquiry_id="ENQ-2", to_department=self.marketing, comment="m", assigned_by=self.manager)
+        self.assertTrue(negotiation.can_forward(self.rep))
+        self.assertFalse(negotiation.tasks_for(self.rep).exists())
 
     def test_forwarding_needs_a_comment_and_a_real_department(self, *_):
         self.client.force_login(self.manager)

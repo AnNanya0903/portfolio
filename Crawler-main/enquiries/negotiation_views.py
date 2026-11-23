@@ -69,7 +69,7 @@ def set_stage(request: HttpRequest, enquiry_id: str) -> HttpResponse:
 @require_POST
 def forward(request: HttpRequest, enquiry_id: str) -> HttpResponse:
     if not negotiation.can_forward(request.user):
-        return HttpResponseForbidden("Only a manager or Top Management can forward an enquiry.")
+        return HttpResponseForbidden("Only the CRO, Rabin or APai can forward an enquiry.")
     back = redirect("enquiries:negotiation", enquiry_id=enquiry_id)
     department = Department.objects.filter(pk=request.POST.get("department") or 0, is_active=True).first()
     comment = (request.POST.get("comment") or "").strip()
@@ -219,7 +219,7 @@ def tasks(request: HttpRequest) -> HttpResponse:
         "departments": Department.objects.filter(is_active=True),
         "statuses": EnquiryAssignment.STATUS_CHOICES,
         "my_departments": [d.name for d in departments_of(request.user)],
-        "sees_all": negotiation.can_forward(request.user),
+        "sees_all": negotiation.sees_every_task(request.user),
     })
 
 

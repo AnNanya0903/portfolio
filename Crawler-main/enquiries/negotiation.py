@@ -12,6 +12,7 @@ from django.utils import timezone
 from kyc.departments import departments_of
 from kyc.models import Department, UserDepartment
 from magicwand.access import is_super_admin
+from magicwand.user_utils import get_user_primary_email
 
 from .models import (
     EnquiryAssignment, EnquiryAttachment, EnquiryFollowup, EnquiryNegotiation, EnquiryStatusLog, FollowUpNote,
@@ -21,20 +22,25 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 MANAGER_DEPARTMENT = "Top Management"
+# The only people who may forward an enquiry: the CRO (customerservice@), Rabin and APai (the owner).
+FORWARD_EMAILS = frozenset({"rabin@avigiri.com", "customerservice@avigiri.com", "apai@avigiri.com"})
 LOST_REASONS = ("Price too high", "Went with competitor", "No response", "Other")
 OPEN_TASK_STATUSES = (EnquiryAssignment.STATUS_PENDING, EnquiryAssignment.STATUS_IN_PROGRESS)
 STAGE_LABELS = dict(EnquiryNegotiation.STAGE_CHOICES)
 
 
-def can_forward(user) -> bool:
-    """Administrators and Top Management may forward an enquiry to a department."""
+def sees_every_task(user) -> bool:
+    """Administrators and Top Management see every department's tasks."""
     if not getattr(user, "is_authenticated", False):
         return False
     return is_super_admin(user) or any(d.name == MANAGER_DEPARTMENT for d in departments_of(user))
 
 
-def _sees_every_task(user) -> bool:
-    return can_forward(user)
+def can_forward(user) -> bool:
+    """Only the CRO, Rabin and APai (the owner) may forward an enquiry to a department, administrators included."""
+    if not getattr(user, "is_authenticated", False):
+        return False
+    return (get_user_primary_email(user) or "").strip().lower() in FORWARD_EMAILS
 
 
 def department_members(department: Department) -> List[Any]:
@@ -51,7 +57,7 @@ def department_members(department: Department) -> List[Any]:
 def tasks_for(user) -> QuerySet:
     """The task queue this user may see: their department's tasks (everything for admins and Top Management)."""
     qs = EnquiryAssignment.objects.select_related("to_department", "from_department", "assigned_by", "assigned_to")
-    if _sees_every_task(user):
+    if sees_every_task(user):
         return qs
     ids = [d.pk for d in departments_of(user)]
     return qs.filter(Q(to_department_id__in=ids) | Q(assigned_to=user))
@@ -68,7 +74,7 @@ def pending_task_count(user) -> int:
 
 
 def can_update_assignment(user, assignment: EnquiryAssignment) -> bool:
-    if can_forward(user) or assignment.assigned_by_id == getattr(user, "pk", None):
+    if sees_every_task(user) or assignment.assigned_by_id == getattr(user, "pk", None):
         return True
     if assignment.assigned_to_id and assignment.assigned_to_id == user.pk:
         return True
@@ -166,7 +172,7 @@ def due_followups(user) -> List[EnquiryFollowup]:
     """Follow-ups whose next date is today or earlier and not done, for the user's department (all for managers)."""
     qs = EnquiryFollowup.objects.filter(next_followup_date__lte=timezone.localdate(), next_done=False)\
         .select_related("department", "user")
-    if not _sees_every_task(user):
+    if not sees_every_task(user):
         ids = [d.pk for d in departments_of(user)]
         qs = qs.filter(Q(department_id__in=ids) | Q(user=user))
     return list(qs.order_by("next_followup_date"))
