@@ -1,0 +1,178 @@
+{% extends 'base.html' %}
+
+{% block title %}Compounding Board{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Production</p>
+      <h1 class="mb-1">Compounding Board</h1>
+      <div class="text-muted small">
+        <span class="me-3">Date: <strong>{{ plan.plan_date }}</strong></span>
+        <span>CJC#: <strong>{{ plan.cjc_number }}</strong></span>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      {% if can_planning %}
+        <a href="{% url 'compounding:planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+          <i class="bi bi-grid-1x2 me-1"></i>Planning
+        </a>
+      {% else %}
+        <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary">
+          <i class="bi bi-grid-1x2 me-1"></i>Compounding
+        </a>
+      {% endif %}
+      {% if show_iot_dashboard %}
+        <a href="{% url 'compounding:iot_dashboard' %}" class="btn btn-outline-secondary">
+          <i class="bi bi-cpu me-1"></i>IOT dashboard
+        </a>
+      {% endif %}
+      <a href="{% url 'compounding:production_report' %}?period=daily&date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-bar-chart-line me-1"></i>Reports
+      </a>
+      <div class="input-group">
+        <span class="input-group-text">Date</span>
+        <input id="cp-date" type="date" class="form-control" value="{{ plan.plan_date|date:'Y-m-d' }}">
+        <button id="cp-load-date" class="btn btn-outline-primary" type="button">Load</button>
+      </div>
+      <button id="cp-refresh" class="btn btn-outline-secondary" type="button">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="h5 mb-3">Plan vs Actuals</h2>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th style="min-width: 160px;">Compound code</th>
+                  <th colspan="3" class="text-center">Shift plan (MB/FB)</th>
+                  <th colspan="2" class="text-center">Plan (batches)</th>
+                  <th colspan="2" class="text-center">Actuals (batches)</th>
+                  <th colspan="2" class="text-center">Remaining</th>
+                  <th class="text-end" style="width: 220px;">Actions</th>
+                </tr>
+                <tr class="text-muted small">
+                  <th></th>
+                  <th class="text-center">1st</th>
+                  <th class="text-center">2nd</th>
+                  <th class="text-center">3rd</th>
+                  <th class="text-center">MB</th>
+                  <th class="text-center">FB</th>
+                  <th class="text-center">MB</th>
+                  <th class="text-center">FB</th>
+                  <th class="text-center">MB</th>
+                  <th class="text-center">FB</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in lines %}
+                  <tr>
+                    <td class="fw-semibold">{{ row.compound_code|default:"—" }}</td>
+                    <td class="text-center small">
+                      <span class="fw-semibold">{{ row.shift1_mb|default:"—" }}</span>/<span class="fw-semibold">{{ row.shift1_fb|default:"—" }}</span>
+                    </td>
+                    <td class="text-center small">
+                      <span class="fw-semibold">{{ row.shift2_mb|default:"—" }}</span>/<span class="fw-semibold">{{ row.shift2_fb|default:"—" }}</span>
+                    </td>
+                    <td class="text-center small">
+                      <span class="fw-semibold">{{ row.shift3_mb|default:"—" }}</span>/<span class="fw-semibold">{{ row.shift3_fb|default:"—" }}</span>
+                    </td>
+                    <td class="text-center">{{ row.planned_mb|default:"" }}</td>
+                    <td class="text-center">{{ row.planned_fb|default:"" }}</td>
+                    <td class="text-center">
+                      <input
+                        type="number"
+                        inputmode="numeric"
+                        pattern="[0-9]*"
+                        class="form-control form-control-sm text-center mx-auto"
+                        style="width: 90px; min-width: 90px;"
+                        name="actual_mb"
+                        min="0"
+                        step="1"
+                        value="{{ row.actual_mb|default:0 }}"
+                        form="actuals-{{ row.id }}"
+                        {% if row.actuals_saved %}disabled{% endif %}
+                      >
+                    </td>
+                    <td class="text-center">
+                      <input
+                        type="number"
+                        inputmode="numeric"
+                        pattern="[0-9]*"
+                        class="form-control form-control-sm text-center mx-auto"
+                        style="width: 90px; min-width: 90px;"
+                        name="actual_fb"
+                        min="0"
+                        step="1"
+                        value="{{ row.actual_fb|default:0 }}"
+                        form="actuals-{{ row.id }}"
+                        {% if row.actuals_saved %}disabled{% endif %}
+                      >
+                    </td>
+                    <td class="text-center">{{ row.remaining_mb|default:"" }}</td>
+                    <td class="text-center">{{ row.remaining_fb|default:"" }}</td>
+                    <td class="text-end">
+                      <form id="actuals-{{ row.id }}" method="post" action="{% url 'compounding:set_actuals' %}" class="d-inline me-1">
+                        {% csrf_token %}
+                        <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+                        <input type="hidden" name="line_id" value="{{ row.id }}">
+                        <button class="btn btn-sm btn-outline-primary" type="submit" {% if row.actuals_saved %}disabled{% endif %}>Save</button>
+                      </form>
+                      {% if row.actuals_saved %}
+                        <span class="badge text-bg-success">Done</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% empty %}
+                  <tr>
+                    <td colspan="11" class="text-center text-muted py-4">No plan lines yet.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <p class="text-muted small mt-3 mb-0">Tip: Plan comes from MB/FB planning “Send to board”. Save can be done only once per line; remaining is sent back to planning on save.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const dateInput = document.getElementById('cp-date');
+    const loadBtn = document.getElementById('cp-load-date');
+    const refreshBtn = document.getElementById('cp-refresh');
+
+    const go = () => {
+      const value = (dateInput && dateInput.value) ? dateInput.value : '';
+      const url = new URL(window.location.href);
+      if (value) {
+        url.searchParams.set('date', value);
+      } else {
+        url.searchParams.delete('date');
+      }
+      window.location.href = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+    };
+
+    if (loadBtn) loadBtn.addEventListener('click', go);
+    if (refreshBtn) refreshBtn.addEventListener('click', () => window.location.reload());
+  })();
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

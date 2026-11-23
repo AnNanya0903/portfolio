@@ -1,0 +1,313 @@
+{% extends 'base.html' %}
+
+{% block title %}Compounding Production Report{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Production report</p>
+      <h1 class="mb-1">Compounding Production Report</h1>
+      <div class="text-muted small">
+        <span class="me-3">{{ report.period_label }} report</span>
+        <span>{{ start_date|date:"Y-m-d" }} to {{ end_date|date:"Y-m-d" }}</span>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      {% if can_board %}
+        <a href="{% url 'compounding:display' %}?date={{ anchor_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+          <i class="bi bi-grid-1x2 me-1"></i>Board
+        </a>
+      {% endif %}
+      {% if can_planning %}
+        <a href="{% url 'compounding:planning' %}?date={{ anchor_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+          <i class="bi bi-calendar2-week me-1"></i>Planning
+        </a>
+      {% endif %}
+      {% if show_iot_dashboard %}
+        <a href="{% url 'compounding:iot_dashboard' %}" class="btn btn-outline-secondary">
+          <i class="bi bi-cpu me-1"></i>IOT dashboard
+        </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <form method="get" action="{% url 'compounding:production_report' %}" class="row g-2 align-items-end">
+        <div class="col-12 col-md-4 col-xl-3">
+          <label for="reportPeriod" class="form-label mb-1">Report period</label>
+          <select id="reportPeriod" name="period" class="form-select">
+            {% for option in period_options %}
+              <option value="{{ option.value }}" {% if period == option.value %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+          <label for="reportDate" class="form-label mb-1">Date inside period</label>
+          <input id="reportDate" type="date" name="date" class="form-control" value="{{ anchor_date|date:'Y-m-d' }}">
+        </div>
+        <div class="col-12 col-md-4 col-xl-3 d-grid">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-bar-chart-line me-1"></i>Generate Report
+          </button>
+        </div>
+        <div class="col-12 col-xl-3 d-grid">
+          <a class="btn btn-outline-secondary" href="{% url 'compounding:production_report_csv' %}?period={{ period }}&date={{ anchor_date|date:'Y-m-d' }}">
+            <i class="bi bi-download me-1"></i>Download CSV
+          </a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+      <div class="report-kpi">
+        <div class="text-muted small">Board lines</div>
+        <div class="fs-3 fw-bold">{{ report.overall.line_count }}</div>
+        <div class="small text-muted">{{ report.overall.saved_line_count }} saved</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="report-kpi">
+        <div class="text-muted small">Planned batches</div>
+        <div class="fs-3 fw-bold">{{ report.overall.planned_total }}</div>
+        <div class="small text-muted">MB {{ report.overall.planned_mb }} / FB {{ report.overall.planned_fb }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="report-kpi">
+        <div class="text-muted small">Actual production</div>
+        <div class="fs-3 fw-bold">{{ report.overall.actual_total }}</div>
+        <div class="small text-muted">MB {{ report.overall.actual_mb }} / FB {{ report.overall.actual_fb }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="report-kpi">
+        <div class="text-muted small">Completion</div>
+        <div class="fs-3 fw-bold">{{ report.overall.completion_display }}</div>
+        <div class="small text-muted">Remaining {{ report.overall.remaining_mb }} MB / {{ report.overall.remaining_fb }} FB</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-4">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-3">Material movement</h2>
+          <div class="d-flex justify-content-between py-1 border-bottom">
+            <span class="text-muted">MB consumed</span>
+            <strong>{{ report.overall.mb_consumed }}</strong>
+          </div>
+          <div class="d-flex justify-content-between py-1 border-bottom">
+            <span class="text-muted">Returned MB</span>
+            <strong>{{ report.overall.returned_mb }}</strong>
+          </div>
+          <div class="d-flex justify-content-between py-1 border-bottom">
+            <span class="text-muted">Returned FB</span>
+            <strong>{{ report.overall.returned_fb }}</strong>
+          </div>
+          <div class="d-flex justify-content-between py-1">
+            <span class="text-muted">Open lines</span>
+            <strong>{{ report.overall.open_line_count }}</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-8">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-3">Shift plan split</h2>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Shift</th>
+                  <th class="text-center">Planned MB</th>
+                  <th class="text-center">Planned FB</th>
+                  <th class="text-center">Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for shift in report.shift_totals %}
+                  <tr>
+                    <td class="fw-semibold">{{ shift.label }}</td>
+                    <td class="text-center">{{ shift.planned_mb }}</td>
+                    <td class="text-center">{{ shift.planned_fb }}</td>
+                    <td class="text-center">{{ shift.planned_total }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h2 class="h5 mb-3">Daily totals</h2>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>CJC</th>
+              <th class="text-center">Lines</th>
+              <th class="text-center">Saved</th>
+              <th class="text-center">Plan MB</th>
+              <th class="text-center">Plan FB</th>
+              <th class="text-center">Actual MB</th>
+              <th class="text-center">Actual FB</th>
+              <th class="text-center">Remaining MB</th>
+              <th class="text-center">Remaining FB</th>
+              <th class="text-center">Completion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in report.daily_rows %}
+              <tr>
+                <td class="fw-semibold">{{ item.plan_date|date:"Y-m-d" }}</td>
+                <td>{{ item.cjc_numbers|default:"—" }}</td>
+                <td class="text-center">{{ item.line_count }}</td>
+                <td class="text-center">{{ item.saved_line_count }}</td>
+                <td class="text-center">{{ item.planned_mb }}</td>
+                <td class="text-center">{{ item.planned_fb }}</td>
+                <td class="text-center">{{ item.actual_mb }}</td>
+                <td class="text-center">{{ item.actual_fb }}</td>
+                <td class="text-center">{{ item.remaining_mb }}</td>
+                <td class="text-center">{{ item.remaining_fb }}</td>
+                <td class="text-center">{{ item.completion_display }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="11" class="text-center text-muted py-3">No compounding plans in this period.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h2 class="h5 mb-3">Compound totals</h2>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Compound</th>
+              <th class="text-center">Days</th>
+              <th class="text-center">Lines</th>
+              <th class="text-center">Plan MB</th>
+              <th class="text-center">Plan FB</th>
+              <th class="text-center">Actual MB</th>
+              <th class="text-center">Actual FB</th>
+              <th class="text-center">MB consumed</th>
+              <th class="text-center">Returned MB</th>
+              <th class="text-center">Returned FB</th>
+              <th class="text-center">Completion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in report.compound_rows %}
+              <tr>
+                <td class="fw-semibold">{{ item.compound_code }}</td>
+                <td class="text-center">{{ item.active_day_count }}</td>
+                <td class="text-center">{{ item.line_count }}</td>
+                <td class="text-center">{{ item.planned_mb }}</td>
+                <td class="text-center">{{ item.planned_fb }}</td>
+                <td class="text-center">{{ item.actual_mb }}</td>
+                <td class="text-center">{{ item.actual_fb }}</td>
+                <td class="text-center">{{ item.mb_consumed }}</td>
+                <td class="text-center">{{ item.returned_mb }}</td>
+                <td class="text-center">{{ item.returned_fb }}</td>
+                <td class="text-center">{{ item.completion_display }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="11" class="text-center text-muted py-3">No board production rows in this period.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h2 class="h5 mb-3">Board line detail</h2>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Compound</th>
+              <th class="text-center">Status</th>
+              <th colspan="3" class="text-center">Shift plan MB/FB</th>
+              <th class="text-center">Plan MB</th>
+              <th class="text-center">Plan FB</th>
+              <th class="text-center">Actual MB</th>
+              <th class="text-center">Actual FB</th>
+              <th class="text-center">Remaining MB</th>
+              <th class="text-center">Remaining FB</th>
+              <th class="text-center">Completion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in report.line_rows %}
+              <tr>
+                <td class="fw-semibold">{{ row.plan_date|date:"Y-m-d" }}</td>
+                <td class="fw-semibold">{{ row.compound_code }}</td>
+                <td class="text-center">
+                  {% if row.actuals_saved %}
+                    <span class="badge text-bg-success">Saved</span>
+                  {% else %}
+                    <span class="badge text-bg-warning">Open</span>
+                  {% endif %}
+                </td>
+                <td class="text-center small">{{ row.shift1_mb }}/{{ row.shift1_fb }}</td>
+                <td class="text-center small">{{ row.shift2_mb }}/{{ row.shift2_fb }}</td>
+                <td class="text-center small">{{ row.shift3_mb }}/{{ row.shift3_fb }}</td>
+                <td class="text-center">{{ row.planned_mb }}</td>
+                <td class="text-center">{{ row.planned_fb }}</td>
+                <td class="text-center">{{ row.actual_mb }}</td>
+                <td class="text-center">{{ row.actual_fb }}</td>
+                <td class="text-center">{{ row.remaining_mb }}</td>
+                <td class="text-center">{{ row.remaining_fb }}</td>
+                <td class="text-center">{{ row.completion_display }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="13" class="text-center text-muted py-4">No board production rows in this period.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+
+.report-kpi {
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 1rem;
+  min-height: 112px;
+  box-shadow: 0 0.125rem 0.35rem rgba(15, 23, 42, 0.04);
+}
+</style>
+{% endblock %}

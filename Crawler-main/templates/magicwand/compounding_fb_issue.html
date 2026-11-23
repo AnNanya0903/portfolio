@@ -1,0 +1,127 @@
+{% extends 'base.html' %}
+
+{% block title %}FB Issue to Production{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">FB issue to Production</h1>
+      <p class="text-muted mb-0">Issue full or part quantities against a CRIN. Stock reduces at once, and the CRIN closes when the full order is issued.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{% url 'compounding:stock_ledger' %}" class="btn btn-outline-secondary"><i class="bi bi-box-seam me-1"></i>Stock ledger</a>
+      <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back to Compounding</a>
+    </div>
+  </div>
+
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><a class="nav-link {% if not show_closed %}active{% endif %}" href="{% url 'compounding:fb_issue' %}">Open CRINs</a></li>
+    <li class="nav-item"><a class="nav-link {% if show_closed %}active{% endif %}" href="{% url 'compounding:fb_issue' %}?show=closed">Closed CRINs</a></li>
+  </ul>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="min-width: 140px;">CRIN</th>
+              <th>Compound</th>
+              <th>Status</th>
+              <th class="text-end">Ordered</th>
+              <th class="text-end">FB made</th>
+              <th class="text-end">Issued</th>
+              <th class="text-end">Balance to issue</th>
+              <th class="text-end">FB stock</th>
+              {% if not show_closed %}<th style="min-width: 340px;">Issue</th>{% endif %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td><span class="fw-semibold">{{ row.crin_number }}</span><div class="text-muted small">{{ row.plan_date|date:"Y-m-d" }}</div></td>
+                <td>{{ row.compound_code|default:"—" }}</td>
+                <td><span class="badge text-bg-{{ row.stage_color }}{% if row.stage_color == 'light' %} border{% endif %}">{{ row.stage_label }}</span></td>
+                <td class="text-end">{{ row.ordered }}</td>
+                <td class="text-end">{{ row.made }}</td>
+                <td class="text-end">{{ row.issued }}</td>
+                <td class="text-end fw-semibold">{{ row.to_issue }}</td>
+                <td class="text-end">{{ row.fb_stock }}</td>
+                {% if not show_closed %}
+                  <td>
+                    {% if row.can_issue %}
+                      <form method="post" action="{% url 'compounding:issue_fb' row.id %}" class="d-flex gap-1 js-issue-form" data-crin="{{ row.crin_number }}">
+                        {% csrf_token %}
+                        <input type="hidden" name="expected_issued" value="{{ row.issued_raw }}">
+                        <input class="form-control form-control-sm text-end" style="width: 105px;" type="number" name="quantity" min="0.001" max="{{ row.max_issue }}" step="0.001" value="{{ row.max_issue }}" aria-label="Issue quantity for {{ row.crin_number }}" required>
+                        <input class="form-control form-control-sm" style="width: 130px;" type="text" name="note" maxlength="255" placeholder="Note (optional)" aria-label="Note for {{ row.crin_number }}">
+                        <button class="btn btn-sm btn-primary" type="submit">Issue</button>
+                      </form>
+                    {% else %}
+                      <span class="text-muted small">No FB stock to issue</span>
+                    {% endif %}
+                  </td>
+                {% endif %}
+              </tr>
+            {% empty %}
+              <tr><td colspan="9" class="text-center text-muted py-3">{% if show_closed %}No closed CRINs yet.{% else %}No open CRINs.{% endif %}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h2 class="h5 mb-3">Recent issues</h2>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr><th>Date (IST)</th><th>CRIN</th><th>Compound</th><th class="text-end">Quantity</th><th>By</th><th>Note</th></tr>
+          </thead>
+          <tbody>
+            {% for issue in recent_issues %}
+              <tr>
+                <td class="text-nowrap">{{ issue.created_at }}</td>
+                <td>{{ issue.crin_number }}</td>
+                <td>{{ issue.compound_code }}</td>
+                <td class="text-end">{{ issue.quantity }}</td>
+                <td>{{ issue.user }}</td>
+                <td class="small text-muted">{{ issue.note }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="6" class="text-center text-muted py-3">No FB issued yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  document.querySelectorAll(".js-issue-form").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      var quantity = form.querySelector("input[name='quantity']").value;
+      if (!window.confirm("Issue " + quantity + " FB to Production on " + form.dataset.crin + "?")) {
+        event.preventDefault();
+        return;
+      }
+      form.querySelector("button[type='submit']").disabled = true;
+    });
+  });
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

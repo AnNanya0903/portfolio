@@ -1,0 +1,150 @@
+{% extends 'base.html' %}
+
+{% block title %}Production CRINs{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="mb-3">
+    <p class="text-uppercase text-muted small mb-1">Production</p>
+    <h1 class="mb-1">Raise CRIN</h1>
+    <p class="text-muted mb-0">Request one or more compounds from Compounding, then follow each one until it is issued.</p>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      {% if compound_options %}
+        <form method="post" action="{% url 'compounding:raise_crin_request' %}" id="crinForm">
+          {% csrf_token %}
+          <input type="hidden" name="submission_id" value="{{ submission_id }}">
+          <div id="crinRows" class="d-grid gap-2 mb-3">
+            {% for row in draft_rows %}
+              <div class="row g-2 align-items-center js-crin-row">
+                <div class="col-12 col-md-7">
+                  <select class="form-select" name="compound_code" aria-label="Compound">
+                    <option value="">Select compound...</option>
+                    {% for code in compound_options %}
+                      <option value="{{ code }}" {% if row.compound_code == code %}selected{% endif %}>{{ code }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-9 col-md-4">
+                  <input class="form-control text-end" type="number" name="quantity" min="1" step="1" placeholder="Quantity" aria-label="Quantity" value="{{ row.quantity }}">
+                </div>
+                <div class="col-3 col-md-1">
+                  <button type="button" class="btn btn-outline-secondary w-100 js-remove-row" aria-label="Remove row"><i class="bi bi-x-lg"></i></button>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+          <div class="row g-2 align-items-center">
+            <div class="col-12 col-md-auto">
+              <button type="button" class="btn btn-outline-secondary w-100" id="addCrinRow"><i class="bi bi-plus-lg me-1"></i>Add compound</button>
+            </div>
+            <div class="col-12 col-md">
+              <input class="form-control" type="text" name="note" maxlength="255" placeholder="Note for Compounding (optional)" aria-label="Note for Compounding" value="{{ note }}">
+            </div>
+            <div class="col-12 col-md-auto">
+              <button type="submit" class="btn btn-primary w-100"><i class="bi bi-send me-1"></i>Raise CRIN</button>
+            </div>
+          </div>
+        </form>
+      {% else %}
+        <div class="alert alert-warning mb-0">No compounds are available yet. Ask Compounding to upload the master sheet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h2 class="h5 mb-3">CRIN status</h2>
+      {% for group in groups %}
+        <div class="border rounded mb-3">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 p-2 border-bottom">
+            <div>
+              <span class="fw-semibold">{{ group.number }}</span>
+              <span class="text-muted small ms-2">{{ group.raised_at }} IST · {{ group.raised_by }}</span>
+              {% if group.note %}<div class="text-muted small">{{ group.note }}</div>{% endif %}
+            </div>
+            <span class="badge {% if group.is_complete %}text-bg-secondary{% else %}text-bg-light border{% endif %}">{{ group.closed_count }} of {{ group.item_count }} closed</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>CRIN</th>
+                  <th>Compound</th>
+                  <th>Status</th>
+                  <th class="text-end">Ordered</th>
+                  <th class="text-end">Issued</th>
+                  <th class="text-end">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in group.items %}
+                  <tr>
+                    <td class="text-nowrap">{{ item.crin_number }}</td>
+                    <td>{{ item.compound_code }}</td>
+                    <td><span class="badge text-bg-{{ item.stage_color }}{% if item.stage_color == 'light' %} border{% endif %}">{{ item.stage_label }}</span></td>
+                    <td class="text-end">{{ item.ordered }}</td>
+                    <td class="text-end">{{ item.issued }}</td>
+                    <td class="text-end fw-semibold">{{ item.to_issue }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% empty %}
+        <div class="text-muted text-center py-3">No CRINs raised yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var form = document.getElementById("crinForm");
+  if (!form) {
+    return;
+  }
+  var rows = document.getElementById("crinRows");
+
+  function clearRow(row) {
+    row.querySelector("select").value = "";
+    row.querySelector("input").value = "";
+  }
+
+  document.getElementById("addCrinRow").addEventListener("click", function () {
+    var row = rows.querySelector(".js-crin-row").cloneNode(true);
+    clearRow(row);
+    rows.appendChild(row);
+    row.querySelector("select").focus();
+  });
+
+  rows.addEventListener("click", function (event) {
+    var button = event.target.closest(".js-remove-row");
+    if (!button) {
+      return;
+    }
+    var row = button.closest(".js-crin-row");
+    if (rows.querySelectorAll(".js-crin-row").length > 1) {
+      row.remove();
+    } else {
+      clearRow(row);
+    }
+  });
+
+  form.addEventListener("submit", function () {
+    form.querySelector("button[type='submit']").disabled = true;
+  });
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

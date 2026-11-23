@@ -1,0 +1,158 @@
+{% extends 'base.html' %}
+
+{% block title %}Compounding - MagicWand 2.0{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+<div class="page-header">
+    <div>
+        <h2 class="page-title">Production: Compounding</h2>
+        <p class="page-subtitle">Manage masterbatch (MB) and finish-batch (FB) planning or monitor the shop-floor board.</p>
+    </div>
+    <a href="{% url 'mrp:setup_wizard' %}?module=compounding" class="btn btn-primary">
+        <i class="bi bi-file-earmark-spreadsheet me-1"></i>Import Excel with AI
+    </a>
+</div>
+
+<div class="row g-4">
+    <!-- Planning Card -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-blue mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-calendar2-week"></i></div>
+                <h5 class="fw-bold mb-0">Compound planning</h5>
+            </div>
+            <p class="text-muted small">Create and update shift-wise production plans, manage mixing queues, and track material availability.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                {% if can_planning %}
+                    <a href="{% url 'compounding:planning' %}" class="btn btn-primary w-100 shadow-sm">Enter Planning</a>
+                {% else %}
+                    <button class="btn btn-light border w-100" disabled>Access Restricted</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Shop Floor Board Card -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-amber mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-display"></i></div>
+                <h5 class="fw-bold mb-0">Compound board</h5>
+            </div>
+            <p class="text-muted small">High-visibility, view-only board designed for large factory floor monitors to keep teams aligned.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                {% if can_board %}
+                    <a href="{% url 'compounding:display' %}" class="btn btn-light border w-100 shadow-sm">Launch Board View</a>
+                {% else %}
+                    <button class="btn btn-light border w-100" disabled>Access Restricted</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Reports Card -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-green mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-bar-chart-line"></i></div>
+                <h5 class="fw-bold mb-0">Production reports</h5>
+            </div>
+            <p class="text-muted small">Generate daily, weekly, and monthly compounding production reports from board plan and actual data.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                {% if can_planning or can_board %}
+                    <a href="{% url 'compounding:production_report' %}" class="btn btn-light border w-100 shadow-sm">Open Reports</a>
+                {% else %}
+                    <button class="btn btn-light border w-100" disabled>Access Restricted</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if can_raise_crin %}
+    <!-- Production CRIN Card -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-red mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-clipboard-plus"></i></div>
+                <h5 class="fw-bold mb-0">Production CRINs</h5>
+            </div>
+            <p class="text-muted small">Raise one CRIN for several compounds and follow each one until it is issued.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                <a href="{% url 'compounding:production' %}" class="btn btn-light border w-100 shadow-sm">Open Production CRINs</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- FB Issue Card -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-amber mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-box-arrow-right"></i></div>
+                <h5 class="fw-bold mb-0">FB issue to Production</h5>
+            </div>
+            <p class="text-muted small">Track every CRIN, issue full or part FB quantities, and close CRINs when the order is fully issued.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                {% if can_planning or can_board %}
+                    <a href="{% url 'compounding:fb_issue' %}" class="btn btn-light border w-100 shadow-sm">Open FB Issue</a>
+                {% else %}
+                    <button class="btn btn-light border w-100" disabled>Access Restricted</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Stock Ledger Card -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-blue mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-box-seam"></i></div>
+                <h5 class="fw-bold mb-0">Stock ledger</h5>
+            </div>
+            <p class="text-muted small">See live MB and FB stock for every compound, with the full history of each movement.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                {% if can_planning or can_board %}
+                    <a href="{% url 'compounding:stock_ledger' %}" class="btn btn-light border w-100 shadow-sm">Open Stock Ledger</a>
+                {% else %}
+                    <button class="btn btn-light border w-100" disabled>Access Restricted</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% if show_iot_dashboard %}
+    <!-- IoT Intelligence -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile border-primary-subtle" style="background: linear-gradient(135deg, rgba(37,99,235,0.03) 0%, #fff 100%);">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-green mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-cpu"></i></div>
+                <h5 class="fw-bold mb-0">IoT Telemetry</h5>
+            </div>
+            <p class="text-muted small">Live machine telemetry. Monitor real-time status and efficiency directly from the IoT bridge.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                <a href="{% url 'compounding:iot_dashboard' %}" class="btn btn-outline-primary w-100">Open IOT dashboard</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+    width: 100%;
+}
+
+.compounding-tile {
+    min-height: 260px;
+    padding: 1.75rem;
+}
+
+.compounding-tile .btn {
+    min-height: 3rem;
+}
+</style>
+{% endblock %}

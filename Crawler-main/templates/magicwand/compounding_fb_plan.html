@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+
+{% block title %}FB Planning{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">FB planning</h1>
+      <p class="text-muted mb-0">FB batch size is automatic from master sheet (MB+chemical weight). Send to board also saves FB planning.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <a href="{% url 'compounding:planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to planning
+      </a>
+      <a href="{% url 'compounding:display' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-grid-1x2 me-1"></i>Compounding
+      </a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="min-width: 150px;">CRIN</th>
+              <th>Compound</th>
+              <th class="text-center" style="width: 110px;">Quantity</th>
+              <th class="text-center" style="width: 150px;">FB batch size</th>
+              <th class="text-center" style="width: 90px;">FB</th>
+              <th class="text-center" style="width: 120px;">MB needed</th>
+              <th class="text-center" style="width: 120px;">MB free</th>
+              <th class="text-end" style="width: 220px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for crin in crins %}
+              <tr>
+                <td class="fw-semibold">{{ crin.crin_number }}</td>
+                <td>{{ crin.compound_code|default:"—" }}</td>
+                <td class="text-center">{{ crin.quantity }}</td>
+                <td class="text-center">
+                  {% if crin.fb_batch_size_auto %}
+                    <span class="fw-semibold">{{ crin.fb_batch_size_auto|floatformat:3 }}</span>
+                  {% else %}
+                    <span class="text-danger small">Missing in master sheet</span>
+                  {% endif %}
+                </td>
+                <td class="text-center">{{ crin.fb_planning|default:"" }}</td>
+                <td class="text-center">{{ crin.mb_needed }}</td>
+                <td class="text-center">
+                  {% if crin.has_line or crin.has_done_line %}
+                    <span class="text-muted">—</span>
+                  {% else %}
+                    <span class="fw-semibold {% if crin.mb_ready %}text-success{% else %}text-danger{% endif %}">{{ crin.mb_free }}</span>
+                    {% if not crin.mb_ready %}
+                      <a class="d-block small" href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}&amp;compound={{ crin.compound_code|urlencode }}">Plan MB</a>
+                    {% endif %}
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  {% if crin.has_line %}
+                    <span class="badge text-bg-success">On board</span>
+                  {% elif crin.has_done_line %}
+                    <span class="badge text-bg-secondary">Done</span>
+                  {% else %}
+                    <form method="post" action="{% url 'compounding:send_to_board' crin.id %}" class="d-inline">
+                      {% csrf_token %}
+                      <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <div class="btn-group btn-group-sm" role="group" aria-label="Send to board">
+                        <select class="form-select form-select-sm" name="shift" aria-label="Shift" style="width: 132px;">
+                          <option value="1" selected>1st shift</option>
+                          <option value="2">2nd shift</option>
+                          <option value="3">3rd shift</option>
+                        </select>
+                        <button class="btn btn-outline-secondary" type="submit">
+                          <i class="bi bi-send me-1"></i>Send
+                        </button>
+                      </div>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="8" class="text-center text-muted py-3">No CRIN requests yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="text-muted small mt-3 mb-0">Formula: FB batches = ceil(quantity / (MB weight + chemical weight)). MB needed = FB batches × MB weight. MB free = MB stock − MB reserved by FB on the board.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

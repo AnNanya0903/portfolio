@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+
+{% block title %}MB Planning{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">MB planning</h1>
+      <p class="text-muted mb-0">MB needed comes from open FB batches. Available stock and MB already on the board are subtracted, so planning quantity covers only the shortage.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <a href="{% url 'compounding:planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1"></i>Back to planning
+      </a>
+      <a href="{% url 'compounding:display' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-grid-1x2 me-1"></i>Compounding
+      </a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <form method="get" action="{% url 'compounding:mb_planning' %}" class="row g-2 align-items-end mb-3">
+        <input type="hidden" name="date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+        <div class="col-12 col-lg-8">
+          <label for="mbCompoundSelect" class="form-label mb-1">Choose compound</label>
+          <select id="mbCompoundSelect" class="form-select" name="compound" required>
+            <option value="">Select compound...</option>
+            {% for option in compound_options %}
+              <option value="{{ option.value }}" {% if selected_compound == option.value %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-lg-4">
+          <button type="submit" class="btn btn-outline-primary w-100">
+            <i class="bi bi-search me-1"></i>Load MB plan
+          </button>
+        </div>
+      </form>
+
+      {% if rows %}
+        {% for row in rows %}
+          {% with a=row.availability %}
+            <div class="mb-3" data-mb-availability="1">
+              <div class="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-2 mb-2">
+                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">Open FB batches</div><div class="fw-semibold">{{ a.open_fb }}</div></div></div>
+                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">MB required</div><div class="fw-semibold">{{ a.required }}</div></div></div>
+                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">MB stock</div><div class="fw-semibold">{{ a.stock }}</div></div></div>
+                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">Reserved on board</div><div class="fw-semibold">{{ a.reserved }}</div></div></div>
+                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">MB coming from board</div><div class="fw-semibold">{{ a.incoming }}</div></div></div>
+                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">Shortage</div><div class="fw-semibold {% if a.has_shortage %}text-danger{% endif %}">{{ a.shortage }}</div></div></div>
+              </div>
+              {% if not a.known %}
+                <div class="alert alert-warning py-2 mb-0">MB weight or stock is missing in the master sheet, so availability cannot be checked.</div>
+              {% elif a.has_shortage %}
+                <div class="alert alert-danger d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 mb-0">
+                  <span>MB is short by {{ a.shortage }}. Plan {{ a.suggested_batches }} MB batch{{ a.suggested_batches|pluralize:"es" }}.</span>
+                  {% if row.planning_quantity != a.suggested_quantity %}
+                    <button type="button" class="btn btn-sm btn-outline-danger js-use-suggested" data-suggested="{{ a.suggested_quantity }}">Use suggested quantity ({{ a.suggested_quantity }})</button>
+                  {% endif %}
+                </div>
+              {% elif a.open_fb %}
+                <div class="alert alert-success py-2 mb-0">MB is enough for all open FB batches. No new MB is needed.</div>
+              {% else %}
+                <div class="alert alert-secondary py-2 mb-0">No open FB batches for this compound.</div>
+              {% endif %}
+            </div>
+          {% endwith %}
+        {% endfor %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="min-width: 130px;">MB plan #</th>
+                <th style="min-width: 170px;">Compound</th>
+                <th class="text-center" style="width: 170px;">MB correct stock</th>
+                <th class="text-center" style="width: 170px;">Planning quantity</th>
+                <th class="text-center" style="width: 160px;">MB batch size</th>
+                <th class="text-center" style="width: 110px;">MB batches</th>
+                <th class="text-end" style="width: 220px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+                <tr data-mb-row="1" data-mb-stock="{{ row.mb_stock|default_if_none:'' }}" data-batch-size="{{ row.batch_size_auto|default_if_none:'' }}">
+                  <td class="fw-semibold">{{ row.mb_plan_number }}</td>
+                  <td class="fw-semibold">{{ row.compound_code|default:"—" }}</td>
+                  <td class="text-center">
+                    {% if row.mb_stock is not None %}
+                      <span class="fw-semibold">{{ row.mb_stock }}</span>
+                    {% else %}
+                      <span class="text-danger small">Missing in master sheet</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-center">
+                    <input
+                      class="form-control form-control-sm text-end d-inline-block"
+                      style="width: 120px;"
+                      type="number"
+                      min="0"
+                      step="1"
+                      name="planning_quantity"
+                      value="{{ row.planning_quantity }}"
+                      form="mb-send-selected"
+                      {% if not row.can_plan %}disabled{% endif %}
+                    />
+                  </td>
+                  <td class="text-center">
+                    {% if row.batch_size_auto %}
+                      <span class="fw-semibold">{{ row.batch_size_auto|floatformat:3 }}</span>
+                    {% else %}
+                      <span class="text-danger small">Missing in master sheet</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-center js-mb-batches">{{ row.mb_batches }}</td>
+                  <td class="text-end">
+                    <form id="mb-send-selected" method="post" action="{% url 'compounding:mb_send_to_board' %}" class="d-inline">
+                      {% csrf_token %}
+                      <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+                      <input type="hidden" name="compound_code" value="{{ row.compound_code }}">
+                      <div class="btn-group btn-group-sm" role="group" aria-label="Send MB to board">
+                        <select class="form-select form-select-sm" name="shift" aria-label="Shift" style="width: 132px;">
+                          <option value="1" selected>1st shift</option>
+                          <option value="2">2nd shift</option>
+                          <option value="3">3rd shift</option>
+                        </select>
+                        <button class="btn btn-outline-secondary" type="submit" {% if not row.can_plan %}disabled{% endif %}>
+                          <i class="bi bi-send me-1"></i>Send
+                        </button>
+                      </div>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="text-muted small mt-3 mb-0">Formula: MB required = FB batches × MB weight. Shortage = MB required − MB stock − MB coming from board. MB batches = ceil(planning quantity / MB weight).</p>
+      {% elif compound_options %}
+        <div class="text-muted small">Select a compound to generate and view its MB plan details.</div>
+      {% else %}
+        <div class="text-muted small">No compounds found. Upload master sheet data first.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  function parseNumber(value) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    var normalized = String(value).replace(/,/g, "").trim();
+    if (!normalized) {
+      return null;
+    }
+    var parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function parseWholeNumber(value) {
+    var parsed = parseInt(String(value || "").trim(), 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0;
+    }
+    return parsed;
+  }
+
+  var rows = document.querySelectorAll("tr[data-mb-row='1']");
+  rows.forEach(function (row) {
+    var input = row.querySelector("input[name='planning_quantity']");
+    var output = row.querySelector(".js-mb-batches");
+    if (!input || !output) {
+      return;
+    }
+
+    var batchSize = parseNumber(row.getAttribute("data-batch-size"));
+
+    var recalc = function () {
+      if (!Number.isFinite(batchSize) || batchSize <= 0) {
+        output.textContent = "";
+        return;
+      }
+      var planningQty = parseWholeNumber(input.value);
+      var mbQty = Math.max(planningQty, 0);
+      var mbBatches = Math.ceil(mbQty / batchSize);
+      output.textContent = String(mbBatches);
+    };
+
+    input.addEventListener("input", recalc);
+    input.addEventListener("change", recalc);
+    recalc();
+
+    document.querySelectorAll(".js-use-suggested").forEach(function (button) {
+      button.addEventListener("click", function () {
+        input.value = button.getAttribute("data-suggested");
+        recalc();
+      });
+    });
+  });
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

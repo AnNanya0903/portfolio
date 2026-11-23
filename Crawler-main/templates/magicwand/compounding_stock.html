@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+
+{% block title %}Compounding Stock Ledger{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">Stock ledger</h1>
+      <p class="text-muted mb-0">Live MB and FB stock. Every upload and saved actual is recorded as a movement.</p>
+    </div>
+    <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary">
+      <i class="bi bi-arrow-left me-1"></i>Back to Compounding
+    </a>
+  </div>
+
+  {% if selected_row %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+          <h2 class="h5 mb-0">{{ selected_row.compound_code }} history</h2>
+          <a href="{% url 'compounding:stock_ledger' %}" class="btn btn-sm btn-outline-secondary">Show all compounds</a>
+        </div>
+        <div class="row row-cols-2 g-2 mb-3" style="max-width: 420px;">
+          <div class="col"><div class="border rounded p-2"><div class="text-muted small">MB stock</div><div class="fw-semibold {% if selected_row.mb_negative %}text-danger{% endif %}">{{ selected_row.mb_stock }}</div></div></div>
+          <div class="col"><div class="border rounded p-2"><div class="text-muted small">FB stock</div><div class="fw-semibold {% if selected_row.fb_negative %}text-danger{% endif %}">{{ selected_row.fb_stock }}</div></div></div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Date (IST)</th>
+                <th>Stock</th>
+                <th>Movement</th>
+                <th class="text-end">Batches</th>
+                <th class="text-end">Quantity</th>
+                <th class="text-end">Balance</th>
+                <th>Plan</th>
+                <th>By</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for entry in entries %}
+                <tr>
+                  <td class="text-nowrap">{{ entry.created_at }}</td>
+                  <td>{{ entry.stock_type }}</td>
+                  <td class="text-nowrap">{{ entry.entry_type }}</td>
+                  <td class="text-end">{{ entry.batches|default_if_none:"—" }}</td>
+                  <td class="text-end {% if entry.is_increase %}text-success{% else %}text-danger{% endif %}">{% if entry.is_increase %}+{% endif %}{{ entry.quantity }}</td>
+                  <td class="text-end fw-semibold">{{ entry.balance }}</td>
+                  <td class="text-nowrap">{% if entry.plan_date %}{{ entry.plan_date|date:"Y-m-d" }} · CJC {{ entry.cjc_number }}{% else %}—{% endif %}</td>
+                  <td>{{ entry.user|default:"—" }}</td>
+                  <td class="small text-muted">{{ entry.note }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="9" class="text-center text-muted py-3">No movements yet. Stock shown is from the master sheet.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if entries_total > 200 %}
+          <p class="text-muted small mt-2 mb-0">Showing the latest 200 of {{ entries_total }} movements.</p>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Compound</th>
+              <th class="text-end">MB stock</th>
+              <th class="text-end">FB stock</th>
+              <th>Source</th>
+              <th class="text-end">History</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td class="fw-semibold">{{ row.compound_code }}</td>
+                <td class="text-end {% if row.mb_negative %}text-danger fw-semibold{% endif %}">{{ row.mb_stock }}</td>
+                <td class="text-end {% if row.fb_negative %}text-danger fw-semibold{% endif %}">{{ row.fb_stock }}</td>
+                <td class="small text-muted">{% if row.from_ledger %}Ledger{% else %}Master sheet{% endif %}</td>
+                <td class="text-end"><a href="{% url 'compounding:stock_ledger' %}?compound={{ row.compound_code|urlencode }}">View</a></td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5" class="text-center text-muted py-3">No stock yet. Upload the master sheet in planning.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

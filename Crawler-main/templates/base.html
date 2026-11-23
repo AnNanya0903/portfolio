@@ -97,7 +97,7 @@
                     </div>
                     </details>
 
-                    {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board %}
+                    {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board or mw_service_access.compounding_production %}
                     <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Operations</summary>
                     <div class="sidebar-section-links">
@@ -130,6 +130,10 @@
                     {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
                     <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
                         <i class="bi bi-droplet-half"></i> Compounding
+                    </a>
+                    {% elif mw_service_access.compounding_production|default:False %}
+                    <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                        <i class="bi bi-clipboard-plus"></i> Raise CRIN
                     </a>
                     {% endif %}
                     </div>
@@ -262,7 +266,7 @@
                 </div>
                 </details>
 
-                {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board %}
+                {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board or mw_service_access.compounding_production %}
                 <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Operations</summary>
                 <div class="sidebar-section-links">
@@ -295,6 +299,10 @@
                 {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
                 <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}" data-ai-context="compounding">
                     <i class="bi bi-droplet-half"></i> Compounding
+                </a>
+                {% elif mw_service_access.compounding_production|default:False %}
+                <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                    <i class="bi bi-clipboard-plus"></i> Raise CRIN
                 </a>
                 {% endif %}
                 </div>

@@ -1073,6 +1073,20 @@
             </div>
         </a>
     </div>
+    {% elif mw_service_access.compounding_production|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'compounding:production' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-red"><i class="bi bi-clipboard-plus"></i></div>
+                <h5 class="text-dark">Raise CRIN</h5>
+                <p class="text-muted small">Request compounds from Compounding and track each one until it is issued.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Production</span>
+                    <i class="bi bi-arrow-right text-muted"></i>
+                </div>
+            </div>
+        </a>
+    </div>
     {% endif %}
 
     {% if mw_service_access.discussion|default:False %}

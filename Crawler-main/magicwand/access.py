@@ -28,6 +28,7 @@ SERVICE_DEFINITIONS: Dict[str, str] = {
     "accounts": "Accounts",
     "compounding_planning": "Compounding planning",
     "compounding_board": "Compounding board",
+    "compounding_production": "Compounding: Production CRINs",
     "discussion": "Discussion forum",
     "document_scanner": "Document scanner",
     "gasket_counter": "Gasket counter",
