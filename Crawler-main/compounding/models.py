@@ -414,6 +414,9 @@ class CompoundingStockEntry(models.Model):
         related_name="stock_entries",
     )
     note = models.CharField(max_length=255, blank=True, default="")
+    # Set for movements typed in the production record, which have no board line or plan.
+    movement_date = models.DateField(null=True, blank=True)
+    record_source = models.CharField(max_length=20, blank=True, default="", db_index=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -517,6 +520,55 @@ class CompoundingRecordRow(models.Model):
 
     def __str__(self) -> str:
         return f"{self.record.month:%b %Y}: {self.compound_code}"
+
+
+class CompoundingRecordValue(models.Model):
+    """Values typed in the production record for a live month, on top of saved board actuals."""
+
+    month = models.DateField()
+    compound_key = models.CharField(max_length=64)
+    compound_code = models.CharField(max_length=64)
+    mb_weight = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    chemical_weight = models.DecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    previous_balance = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    opening_batches = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    production_batches = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    daily_batches = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["month", "compound_code"]
+        constraints = [
+            models.UniqueConstraint(fields=["month", "compound_key"], name="uniq_record_value_per_month_compound"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.month:%b %Y}: {self.compound_code}"
+
+
+class CompoundingRecordChange(models.Model):
+    """Who changed which production record value."""
+
+    month = models.DateField(db_index=True)
+    compound_code = models.CharField(max_length=64, blank=True, default="")
+    field = models.CharField(max_length=32)
+    day = models.PositiveSmallIntegerField(null=True, blank=True)
+    old_value = models.CharField(max_length=32, blank=True, default="")
+    new_value = models.CharField(max_length=32, blank=True, default="")
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="compounding_record_changes",
+    )
+    changed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-changed_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.month:%b %Y} {self.compound_code} {self.field}"
 
 
 class CompoundingDailyScrap(models.Model):

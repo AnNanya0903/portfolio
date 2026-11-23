@@ -37,6 +37,7 @@ from .models import (
     CompoundingLine,
     CompoundingMasterSheet,
     CompoundingPlan,
+    CompoundingRecordValue,
     PendingMixingLine,
     CompoundingMBPlan,
     CompoundingIoTRun,
@@ -47,11 +48,14 @@ from .models import (
 )
 from .records import (
     RecordImportError,
+    RecordSaveError,
+    apply_record_changes,
     available_months,
     build_compound_summary,
     build_month_report,
     import_workbook,
     month_bounds,
+    month_workbook,
     parse_month,
 )
 from .stock import (
@@ -1610,7 +1614,8 @@ def _record_url(month: date) -> str:
 @require_http_methods(["GET"])
 def production_record(request):
     month = parse_month(request.GET.get("month") or "") or compounding_business_date().replace(day=1)
-    show_all = request.GET.get("show") == "all"
+    # Same as the Excel sheet: every compound is listed unless the user narrows it.
+    show_all = request.GET.get("show") != "active"
     return render(
         request,
         "magicwand/compounding_record.html",
@@ -1620,8 +1625,45 @@ def production_record(request):
             "month_options": [{"value": f"{item:%Y-%m}", "label": f"{item:%B %Y}"} for item in available_months()],
             "show_all": show_all,
             "can_import": user_has_service_access(request.user, "compounding_planning"),
+            "can_edit_all": user_has_service_access(request.user, "compounding_planning"),
         },
     )
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"], deny="json")
+@require_http_methods(["POST"])
+def save_record_grid(request):
+    try:
+        payload = json.loads(request.body or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid data. Reload the page."}, status=400)
+    month = parse_month(str(payload.get("month") or "")) if isinstance(payload, dict) else None
+    changes = payload.get("changes") if isinstance(payload, dict) else None
+    if month is None or not isinstance(changes, list):
+        return JsonResponse({"error": "Invalid data. Reload the page."}, status=400)
+    try:
+        saved = apply_record_changes(
+            month,
+            changes,
+            user=request.user,
+            can_edit_all=user_has_service_access(request.user, "compounding_planning"),
+        )
+    except RecordSaveError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, "saved": saved})
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["GET"])
+def download_production_record(request):
+    month = parse_month(request.GET.get("month") or "") or compounding_business_date().replace(day=1)
+    workbook = month_workbook(build_month_report(month, show_all=True))
+    response = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = f'attachment; filename="compounding-production-record-{month:%Y-%m}.xlsx"'
+    workbook.save(response)
+    return response
 
 
 @login_required
@@ -2664,6 +2706,16 @@ def set_actuals(request):
         messages.success(
             request,
             f"Saved actuals for {compound_label} and updated stock (MB stock: {mb_text}, FB stock: {fb_text}).",
+        )
+    typed_value = CompoundingRecordValue.objects.filter(
+        month=plan.plan_date.replace(day=1), compound_key=stock_key
+    ).first()
+    typed_batches = (typed_value.daily_batches or {}).get(str(plan.plan_date.day)) if typed_value else None
+    if typed_batches and int(line.actual_fb or 0) > 0:
+        messages.warning(
+            request,
+            f"{compound_label} already has {typed_batches} batches typed in the Production Record for this day. "
+            "Both are now counted. Clear the typed value if this is the same production.",
         )
     if mb_balance is not None and mb_balance < 0:
         messages.warning(
