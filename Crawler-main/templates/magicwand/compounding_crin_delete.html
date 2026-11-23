@@ -1,0 +1,7 @@
+<form method="post" action="{% url 'compounding:delete_crin' crin.id %}" class="d-inline" data-confirm="Delete {{ crin.crin_number }} ({{ crin.compound_code }})? This cannot be undone." onsubmit="return window.confirm(this.dataset.confirm);">
+  {% csrf_token %}
+  <input type="hidden" name="return_to" value="{{ return_to }}">
+  <button class="btn btn-sm btn-outline-danger" type="submit" aria-label="Delete {{ crin.crin_number }}" title="Delete CRIN">
+    <i class="bi bi-trash"></i> Delete
+  </button>
+</form>

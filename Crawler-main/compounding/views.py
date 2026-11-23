@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import math
 import csv
@@ -58,6 +59,8 @@ try:
 except Exception:  # pragma: no cover - handled at runtime via user-facing message
     load_workbook = None
 
+
+logger = logging.getLogger(__name__)
 
 _PRODUCTION_SERVICES = ["compounding_production", "compounding_planning"]
 _MAX_CRIN_ITEMS = 50
@@ -2087,6 +2090,7 @@ def planning(request):
                 "fb_planning": crin.fb_planning,
                 "status": crin.status,
                 "has_line": crin.planned_lines.exists(),
+                "can_delete": _crin_can_be_deleted(crin),
             }
         )
 
@@ -2630,6 +2634,53 @@ def create_crin(request):
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
 
+def _crin_can_be_deleted(crin: CompoundingCRIN) -> bool:
+    """Only an untouched CRIN can be deleted, so no production or stock history is lost."""
+    return (
+        crin.status == CompoundingCRIN.STATUS_OPEN
+        and crin.quantity == crin.order_quantity
+        and not crin.planned_lines.exists()
+        and not crin.stock_entries.exists()
+    )
+
+
+@login_required
+@require_service_access("compounding_planning")
+@require_http_methods(["POST"])
+@transaction.atomic
+def delete_crin(request, crin_id: int):
+    crin = get_object_or_404(CompoundingCRIN.objects.select_for_update().select_related("plan"), id=crin_id)
+    plan = crin.plan
+    page = "planning/fb/" if request.POST.get("return_to") == "fb" else "planning/"
+    redirect_url = f"/compounding/{page}?date={plan.plan_date.isoformat()}"
+
+    if not _crin_can_be_deleted(crin):
+        messages.error(
+            request,
+            f"{crin.crin_number} cannot be deleted because work has started on it.",
+        )
+        return redirect(redirect_url)
+
+    crin_number = crin.crin_number
+    compound_code = crin.compound_code
+    header_id = crin.request_id
+    crin.delete()
+    if header_id and not CompoundingCRIN.objects.filter(request_id=header_id).exists():
+        CompoundingCRINRequest.objects.filter(id=header_id).delete()
+    logger.info("Compounding CRIN %s deleted by user id %s", crin_number, request.user.pk)
+
+    messages.success(request, f"Deleted {crin_number} ({compound_code}).")
+    compound_key = _normalize_compound_code(compound_code)
+    mb_on_board = any(
+        _normalize_compound_code(line.compound_code) == compound_key
+        and any(value for value in (line.shift1_mb, line.shift2_mb, line.shift3_mb))
+        for line in plan.lines.filter(actuals_saved=False)
+    )
+    if mb_on_board:
+        messages.warning(request, f"MB for {compound_code} is still on the board. It was not changed.")
+    return redirect(redirect_url)
+
+
 @login_required
 @require_service_access("compounding_planning")
 @require_http_methods(["POST"])
@@ -2930,6 +2981,7 @@ def fb_planning_page(request):
                 "mb_ready": True,
                 "mb_alert": "",
                 "is_open": crin.status == CompoundingCRIN.STATUS_OPEN,
+                "can_delete": _crin_can_be_deleted(crin),
                 "_key": _normalize_compound_code(crin.compound_code),
                 "_needed": mb_needed,
                 "_free": free_mb,

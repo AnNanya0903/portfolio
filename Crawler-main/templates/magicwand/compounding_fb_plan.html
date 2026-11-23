@@ -35,7 +35,7 @@
               <th class="text-center" style="width: 90px;">FB</th>
               <th class="text-center" style="width: 120px;">MB needed</th>
               <th class="text-center" style="width: 120px;">MB free</th>
-              <th class="text-end" style="width: 220px;">Actions</th>
+              <th class="text-end" style="width: 320px;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -84,6 +84,9 @@
                         </button>
                       </div>
                     </form>
+                  {% endif %}
+                  {% if crin.can_delete %}
+                    <span class="d-inline-block ms-1">{% include "magicwand/compounding_crin_delete.html" with return_to="fb" %}</span>
                   {% endif %}
                 </td>
               </tr>

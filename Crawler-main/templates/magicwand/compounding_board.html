@@ -61,6 +61,7 @@
               <th>Compound</th>
               <th class="text-center" style="width: 110px;">Quantity</th>
               <th class="text-center" style="width: 120px;">Status</th>
+              <th class="text-end" style="width: 110px;">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -76,10 +77,15 @@
                     <span class="badge text-bg-secondary text-capitalize">{{ crin.status }}</span>
                   {% endif %}
                 </td>
+                <td class="text-end">
+                  {% if crin.can_delete %}
+                    {% include "magicwand/compounding_crin_delete.html" with return_to="planning" %}
+                  {% endif %}
+                </td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="4" class="text-center text-muted py-3">No CRIN requests yet.</td>
+                <td colspan="5" class="text-center text-muted py-3">No CRIN requests yet.</td>
               </tr>
             {% endfor %}
           </tbody>

@@ -19,6 +19,7 @@ urlpatterns = [
     path("board/", views.display, name="display"),
     path("planning/crin/", views.create_crin, name="create_crin"),
     path("planning/crin/<int:crin_id>/apply/", views.apply_crin, name="apply_crin"),
+    path("planning/crin/<int:crin_id>/delete/", views.delete_crin, name="delete_crin"),
     path("planning/fb/", views.fb_planning_page, name="fb_planning"),
     path("planning/mb/", views.mb_planning_page, name="mb_planning"),
     path("planning/master-sheet/upload/", views.upload_master_sheet, name="upload_master_sheet"),
