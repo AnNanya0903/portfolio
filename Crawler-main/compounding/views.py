@@ -1164,6 +1164,48 @@ def _mb_availability_display(availability: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _board_section_rows(lines: List[Dict[str, Any]], kind: str) -> List[Dict[str, Any]]:
+    """
+    Rows for the MB or FB section of the board.
+
+    A board line saves MB and FB together, so a line holding both appears in each
+    section and shares one form, which the MB section renders.
+    """
+    rows: List[Dict[str, Any]] = []
+    for line in lines:
+        has_mb = bool(line["planned_mb"] or line["actual_mb"])
+        has_fb = bool(line["planned_fb"] or line["actual_fb"])
+        if kind == "fb":
+            if not has_fb:
+                continue
+            owns_form = not has_mb
+        else:
+            if has_fb and not has_mb:
+                continue
+            owns_form = True
+        rows.append(
+            {
+                "id": line["id"],
+                "compound_code": line["compound_code"],
+                "crin_number": line["crin_number"],
+                "shift1": line[f"shift1_{kind}"],
+                "shift2": line[f"shift2_{kind}"],
+                "shift3": line[f"shift3_{kind}"],
+                "planned": line[f"planned_{kind}"],
+                "planned_weight": line[f"planned_{kind}_weight"],
+                "actual": line[f"actual_{kind}"],
+                "actual_weight": line[f"actual_{kind}_weight"],
+                "remaining": line[f"remaining_{kind}"],
+                "remaining_weight": line[f"remaining_{kind}_weight"],
+                "actual_field": f"actual_{kind}",
+                "actuals_saved": line["actuals_saved"],
+                "is_mixed": has_mb and has_fb,
+                "owns_form": owns_form,
+            }
+        )
+    return rows
+
+
 def _negative_mb_stock(plan: CompoundingPlan) -> Dict[str, tuple[str, Decimal]]:
     """Return {compound_key: (code, stock)} for every compound with MB stock below zero."""
     balances = stock_balances()
@@ -2261,7 +2303,7 @@ def display(request):
     plan = _get_or_create_plan(plan_date, user=request.user)
     _seed_rollover_lines_for_display(plan)
 
-    line_objs = list(plan.lines.all().order_by("position", "id"))
+    line_objs = list(plan.lines.select_related("crin_request").order_by("position", "id"))
     lines: list[dict[str, Any]] = []
     for line in line_objs:
         planned_mb = sum(int(v or 0) for v in (line.shift1_mb, line.shift2_mb, line.shift3_mb))
@@ -2279,10 +2321,27 @@ def display(request):
         # (including rows already sent back to planning) are hidden.
         if bool(getattr(line, "actuals_saved", False)) and remaining_mb <= 0 and remaining_fb <= 0:
             continue
+        spec = _sheet_spec_for_compound(plan, line.compound_code)
+        mb_weight = spec.get("mb_weight")
+        fb_weight = spec.get("fb_total_weight")
+
+        def mb_weight_text(batches: int) -> str:
+            return _decimal_text(Decimal(batches) * mb_weight) if mb_weight is not None and batches > 0 else ""
+
+        def fb_weight_text(batches: int) -> str:
+            return _decimal_text(Decimal(batches) * fb_weight) if fb_weight is not None and batches > 0 else ""
+
         lines.append(
             {
                 "id": line.id,
                 "compound_code": line.compound_code,
+                "planned_mb_weight": mb_weight_text(planned_mb),
+                "actual_mb_weight": mb_weight_text(actual_mb),
+                "remaining_mb_weight": mb_weight_text(remaining_mb),
+                "planned_fb_weight": fb_weight_text(planned_fb),
+                "actual_fb_weight": fb_weight_text(actual_fb),
+                "remaining_fb_weight": fb_weight_text(remaining_fb),
+                "crin_number": line.crin_request.crin_number if line.crin_request else "",
                 "planned_mb": planned_mb,
                 "planned_fb": planned_fb,
                 "actual_mb": actual_mb,
@@ -2315,6 +2374,8 @@ def display(request):
         {
             "plan": plan,
             "lines": lines,
+            "mb_rows": _board_section_rows(lines, "mb"),
+            "fb_rows": _board_section_rows(lines, "fb"),
             "pending": pending,
             "mb_alerts": _mb_shortage_alerts(plan),
             "hide_mb_plan_link": not user_has_service_access(request.user, "compounding_planning"),
@@ -2737,7 +2798,12 @@ def _ensure_line_for_crin(*, plan: CompoundingPlan, crin: CompoundingCRIN) -> Co
 
 def _ensure_line_for_compound(*, plan: CompoundingPlan, compound_code: str) -> CompoundingLine:
     compound_code = (compound_code or "").strip()
-    existing = plan.lines.filter(compound_code=compound_code).order_by("position", "id").first()
+    # MB gets its own open row: a saved row cannot take actuals, and a CRIN row holds that CRIN's FB.
+    existing = (
+        plan.lines.filter(compound_code=compound_code, actuals_saved=False, crin_request__isnull=True)
+        .order_by("position", "id")
+        .first()
+    )
     if existing:
         return existing
 
@@ -3166,11 +3232,16 @@ def mb_planning_page(request):
         else:
             mb_plan_number = f"MBP-{int(plan.cjc_number)}-{row_index:03d}"
 
+        planning_quantity_display = str(planning_quantity)
+        if mb_plan is not None and can_plan and computed_mb_batches > 0:
+            planning_quantity_display = _decimal_text(Decimal(computed_mb_batches) * auto_batch)
+
         row_payload = {
             "mb_plan_number": mb_plan_number,
             "compound_code": code,
             "total_quantity": total_qty_int,
             "planning_quantity": planning_quantity,
+            "planning_quantity_display": planning_quantity_display,
             "mb_stock": stock_level_int,
             "batch_size": auto_batch,
             "batch_size_auto": auto_batch,
@@ -3272,47 +3343,55 @@ def mb_send_to_board(request):
         messages.error(request, "MB batch size must be greater than zero.")
         return redirect(_mb_redirect(code=compound_code))
 
-    mb_qty = max(planning_quantity, 0)
-    mb_batches = _compute_batches(mb_qty, batch_size)
-
-    mb_plan, _created = CompoundingMBPlan.objects.get_or_create(
-        plan=plan,
-        compound_code=compound_code,
-        defaults={"created_by": request.user},
-    )
-    mb_plan.msl = stock_level_int
-    mb_plan.batch_size = batch_size
-    mb_plan.total_quantity = planning_quantity
-    mb_plan.mb_quantity = int(mb_qty)
-    mb_plan.mb_batches = int(mb_batches)
-    mb_plan.created_by = mb_plan.created_by or request.user
-    mb_plan.save(update_fields=["msl", "batch_size", "total_quantity", "mb_quantity", "mb_batches", "created_by", "updated_at"])
-
-    line = _ensure_line_for_compound(plan=plan, compound_code=compound_code)
-    update_fields = ["updated_at"]
-    already_set = False
-    if shift == 1:
-        already_set = line.shift1_mb is not None
-        if not already_set:
-            line.shift1_mb = mb_batches
-            update_fields.append("shift1_mb")
-    elif shift == 2:
-        already_set = line.shift2_mb is not None
-        if not already_set:
-            line.shift2_mb = mb_batches
-            update_fields.append("shift2_mb")
+    if (request.POST.get("planning_source") or "").strip() == "batches":
+        batches_text = (request.POST.get("mb_batches") or "").strip()
+        if not re.fullmatch(r"[0-9]+", batches_text) or Decimal(batches_text) * batch_size > _MAX_CRIN_QUANTITY:
+            messages.error(request, "MB batches must be a whole number.")
+            return redirect(_mb_redirect(code=compound_code))
+        mb_batches = int(batches_text)
+        planning_quantity = max(
+            int((Decimal(mb_batches) * batch_size).to_integral_value(rounding=ROUND_FLOOR)),
+            _min_quantity_for_mb_batches(batches=mb_batches, batch_size=batch_size),
+        )
+        mb_qty = planning_quantity
     else:
-        already_set = line.shift3_mb is not None
-        if not already_set:
-            line.shift3_mb = mb_batches
-            update_fields.append("shift3_mb")
+        mb_qty = max(planning_quantity, 0)
+        mb_batches = _compute_batches(mb_qty, batch_size)
 
-    if already_set:
-        messages.info(request, f"{compound_code} MB is already on the board.")
+    if mb_batches <= 0:
+        messages.error(request, "Enter at least 1 MB batch before sending to the board.")
         return redirect(_mb_redirect(code=compound_code))
 
-    line.save(update_fields=update_fields)
-    messages.success(request, f"Sent {compound_code} MB to the compounding board (shift {shift}).")
+    shift_field = f"shift{shift}_mb"
+    with transaction.atomic():
+        CompoundingPlan.objects.select_for_update().get(pk=plan.pk)
+        line = _ensure_line_for_compound(plan=plan, compound_code=compound_code)
+        current_batches = getattr(line, shift_field)
+        if current_batches is not None:
+            # Keep the saved plan and the board in step when nothing new is sent.
+            messages.warning(
+                request,
+                f"{compound_code} already has {current_batches} MB batch{'es' if current_batches != 1 else ''} "
+                f"on the board for shift {shift}. Choose another shift.",
+            )
+            return redirect(_mb_redirect(code=compound_code))
+
+        mb_plan, _created = CompoundingMBPlan.objects.get_or_create(
+            plan=plan,
+            compound_code=compound_code,
+            defaults={"created_by": request.user},
+        )
+        mb_plan.msl = stock_level_int
+        mb_plan.batch_size = batch_size
+        mb_plan.total_quantity = planning_quantity
+        mb_plan.mb_quantity = int(mb_qty)
+        mb_plan.mb_batches = int(mb_batches)
+        mb_plan.created_by = mb_plan.created_by or request.user
+        mb_plan.save(update_fields=["msl", "batch_size", "total_quantity", "mb_quantity", "mb_batches", "created_by", "updated_at"])
+
+        setattr(line, shift_field, mb_batches)
+        line.save(update_fields=[shift_field, "updated_at"])
+    messages.success(request, f"Sent {compound_code} MB to the compounding board (shift {shift}, {mb_batches} batches).")
     return redirect(_mb_redirect(code=compound_code))
 
 

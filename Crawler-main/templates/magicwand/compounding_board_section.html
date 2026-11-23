@@ -1,0 +1,90 @@
+<div class="col-12">
+  <div class="card shadow-sm" data-board-section="{{ section_key }}">
+    <div class="card-body">
+      <h2 class="h5 mb-3">{{ section_title }}</h2>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="min-width: 150px;">Compound code</th>
+              <th style="min-width: 130px;">CRIN</th>
+              <th colspan="3" class="text-center">Shift plan (batches)</th>
+              <th class="text-center">Plan</th>
+              <th class="text-center">Actual</th>
+              <th class="text-center">Remaining</th>
+              <th class="text-end" style="width: 170px;">Actions</th>
+            </tr>
+            <tr class="text-muted small">
+              <th></th>
+              <th></th>
+              <th class="text-center">1st</th>
+              <th class="text-center">2nd</th>
+              <th class="text-center">3rd</th>
+              <th class="text-center">Batches / qty</th>
+              <th class="text-center">Batches / qty</th>
+              <th class="text-center">Batches / qty</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in section_rows %}
+              <tr>
+                <td class="fw-semibold">{{ row.compound_code|default:"—" }}</td>
+                <td class="small text-nowrap">{{ row.crin_number|default:"—" }}</td>
+                <td class="text-center fw-semibold">{{ row.shift1|default_if_none:"—" }}</td>
+                <td class="text-center fw-semibold">{{ row.shift2|default_if_none:"—" }}</td>
+                <td class="text-center fw-semibold">{{ row.shift3|default_if_none:"—" }}</td>
+                <td class="text-center">
+                  {{ row.planned }}
+                  {% if row.planned_weight %}<div class="text-muted small">{{ row.planned_weight }} qty</div>{% endif %}
+                </td>
+                <td class="text-center">
+                  <input
+                    type="number"
+                    inputmode="numeric"
+                    pattern="[0-9]*"
+                    class="form-control form-control-sm text-center mx-auto"
+                    style="width: 90px; min-width: 90px;"
+                    name="{{ row.actual_field }}"
+                    min="0"
+                    step="1"
+                    value="{{ row.actual }}"
+                    form="actuals-{{ row.id }}"
+                    aria-label="{{ section_key|upper }} batches made for {{ row.compound_code }}"
+                    {% if row.actuals_saved %}disabled{% endif %}
+                  >
+                  {% if row.actual_weight %}<div class="text-muted small">{{ row.actual_weight }} qty</div>{% endif %}
+                </td>
+                <td class="text-center">
+                  {{ row.remaining }}
+                  {% if row.remaining_weight %}<div class="text-muted small">{{ row.remaining_weight }} qty</div>{% endif %}
+                </td>
+                <td class="text-end">
+                  {% if row.owns_form %}
+                    <form id="actuals-{{ row.id }}" method="post" action="{% url 'compounding:set_actuals' %}" class="d-inline me-1 js-actuals-form"{% if row.is_mixed %} data-mixed="1" data-compound="{{ row.compound_code }}"{% endif %}>
+                      {% csrf_token %}
+                      <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+                      <input type="hidden" name="line_id" value="{{ row.id }}">
+                      <button class="btn btn-sm btn-outline-primary" type="submit" {% if row.actuals_saved %}disabled{% endif %}>Save</button>
+                    </form>
+                  {% else %}
+                    <button class="btn btn-sm btn-outline-primary me-1" type="submit" form="actuals-{{ row.id }}" {% if row.actuals_saved %}disabled{% endif %}>Save</button>
+                  {% endif %}
+                  {% if row.actuals_saved %}
+                    <span class="badge text-bg-success">Done</span>
+                  {% elif row.is_mixed %}
+                    <div class="text-muted small mt-1">Saves MB and FB together</div>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="9" class="text-center text-muted py-4">No {{ section_key|upper }} batches on the board.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>

@@ -102,9 +102,10 @@
                       style="width: 120px;"
                       type="number"
                       min="0"
-                      step="1"
+                      step="any"
                       name="planning_quantity"
-                      value="{{ row.planning_quantity }}"
+                      value="{{ row.planning_quantity_display }}"
+                      aria-label="Planning quantity"
                       form="mb-send-selected"
                       {% if not row.can_plan %}disabled{% endif %}
                     />
@@ -116,12 +117,26 @@
                       <span class="text-danger small">Missing in master sheet</span>
                     {% endif %}
                   </td>
-                  <td class="text-center js-mb-batches">{{ row.mb_batches }}</td>
+                  <td class="text-center">
+                    <input
+                      class="form-control form-control-sm text-end d-inline-block js-mb-batches"
+                      style="width: 90px;"
+                      type="number"
+                      min="0"
+                      step="1"
+                      name="mb_batches"
+                      value="{{ row.mb_batches }}"
+                      aria-label="MB batches"
+                      form="mb-send-selected"
+                      {% if not row.can_plan %}disabled{% endif %}
+                    />
+                  </td>
                   <td class="text-end">
                     <form id="mb-send-selected" method="post" action="{% url 'compounding:mb_send_to_board' %}" class="d-inline">
                       {% csrf_token %}
                       <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
                       <input type="hidden" name="compound_code" value="{{ row.compound_code }}">
+                      <input type="hidden" name="planning_source" value="quantity" class="js-planning-source">
                       <div class="btn-group btn-group-sm" role="group" aria-label="Send MB to board">
                         <select class="form-select form-select-sm" name="shift" aria-label="Shift" style="width: 132px;">
                           <option value="1" selected>1st shift</option>
@@ -139,7 +154,7 @@
             </tbody>
           </table>
         </div>
-        <p class="text-muted small mt-3 mb-0">Formula: MB required = FB batches × MB weight. Shortage = MB required − MB stock − MB coming from board. MB batches = ceil(planning quantity / MB weight).</p>
+        <p class="text-muted small mt-3 mb-0">Formula: MB required = FB batches × MB weight. Shortage = MB required − MB stock − MB coming from board. Enter MB batches to calculate planning quantity (batches × MB weight), or enter a quantity to calculate batches, rounded up.</p>
       {% elif compound_options %}
         <div class="text-muted small">Select a compound to generate and view its MB plan details.</div>
       {% else %}
@@ -174,32 +189,41 @@ document.addEventListener("DOMContentLoaded", function () {
   var rows = document.querySelectorAll("tr[data-mb-row='1']");
   rows.forEach(function (row) {
     var input = row.querySelector("input[name='planning_quantity']");
-    var output = row.querySelector(".js-mb-batches");
-    if (!input || !output) {
+    var batchesInput = row.querySelector(".js-mb-batches");
+    var source = row.querySelector(".js-planning-source");
+    if (!input || !batchesInput || !source) {
       return;
     }
 
     var batchSize = parseNumber(row.getAttribute("data-batch-size"));
+    var hasBatchSize = Number.isFinite(batchSize) && batchSize > 0;
 
-    var recalc = function () {
-      if (!Number.isFinite(batchSize) || batchSize <= 0) {
-        output.textContent = "";
+    var batchesFromQuantity = function () {
+      if (!hasBatchSize) {
         return;
       }
-      var planningQty = parseWholeNumber(input.value);
-      var mbQty = Math.max(planningQty, 0);
-      var mbBatches = Math.ceil(mbQty / batchSize);
-      output.textContent = String(mbBatches);
+      var quantity = Math.max(parseNumber(input.value) || 0, 0);
+      // Rounding first stops decimal noise from adding a batch to an exact multiple.
+      batchesInput.value = String(Math.ceil(Number((quantity / batchSize).toFixed(6))));
+      source.value = "quantity";
     };
 
-    input.addEventListener("input", recalc);
-    input.addEventListener("change", recalc);
-    recalc();
+    var quantityFromBatches = function () {
+      if (!hasBatchSize) {
+        return;
+      }
+      var batches = parseWholeNumber(batchesInput.value);
+      input.value = String(Number((batches * batchSize).toFixed(3)));
+      source.value = "batches";
+    };
+
+    input.addEventListener("input", batchesFromQuantity);
+    batchesInput.addEventListener("input", quantityFromBatches);
 
     document.querySelectorAll(".js-use-suggested").forEach(function (button) {
       button.addEventListener("click", function () {
         input.value = button.getAttribute("data-suggested");
-        recalc();
+        batchesFromQuantity();
       });
     });
   });
