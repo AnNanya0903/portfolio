@@ -1,0 +1,200 @@
+{% extends 'base.html' %}
+
+{% block title %}Compounding Production Record{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">Production record</h1>
+      <p class="text-muted mb-0">{{ report.month|date:"F Y" }}. {% if report.record %}Imported from {{ report.record.source_filename|default:"Excel" }}.{% else %}Filled automatically from saved board actuals.{% endif %}</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{% url 'compounding:compound_record_summary' %}" class="btn btn-primary"><i class="bi bi-calculator me-1"></i>Compound totals</a>
+      <a href="{% url 'compounding:stock_ledger' %}" class="btn btn-outline-secondary"><i class="bi bi-box-seam me-1"></i>Stock ledger</a>
+      <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back to Compounding</a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <form method="get" class="col-12 col-lg-5 d-flex flex-wrap gap-2 align-items-end">
+          <div class="flex-grow-1">
+            <label class="form-label mb-1" for="recordMonth">Month</label>
+            <select id="recordMonth" class="form-select" name="month" onchange="this.form.submit()">
+              {% for option in month_options %}
+                <option value="{{ option.value }}" {% if option.value == month_value %}selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="recordShowAll" name="show" value="all" {% if show_all %}checked{% endif %} onchange="this.form.submit()">
+            <label class="form-check-label" for="recordShowAll">Show all compounds</label>
+          </div>
+        </form>
+        {% if can_import %}
+          <form method="post" action="{% url 'compounding:import_production_record' %}" enctype="multipart/form-data" class="col-12 col-lg-7 d-flex flex-wrap gap-2 align-items-end justify-content-lg-end">
+            {% csrf_token %}
+            <input type="hidden" name="month" value="{{ month_value }}">
+            <div class="flex-grow-1" style="max-width: 420px;">
+              <label class="form-label mb-1" for="recordFile">Import Excel record (history only)</label>
+              <input id="recordFile" class="form-control" type="file" name="record_file" accept=".xlsx,.xlsm" required>
+            </div>
+            <button class="btn btn-outline-primary" type="submit" onclick="return window.confirm('Import this Excel file? Months in the file will replace any earlier import of the same month. Live stock will not change.');">Import</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if report.board_rows_not_included %}
+    <div class="alert alert-warning">This month is shown from the imported Excel file. {{ report.board_rows_not_included }} saved board row{{ report.board_rows_not_included|pluralize }} for this month {{ report.board_rows_not_included|pluralize:"is,are" }} not included.</div>
+  {% endif %}
+  {% if report.negative_rows %}
+    <div class="alert alert-danger" role="alert">
+      <span class="fw-semibold">Negative closing MB stock:</span>
+      {% for row in report.negative_rows %}{{ row.compound_code }} ({{ row.closing_kg|floatformat:"-3" }} kg){% if not forloop.last %}, {% endif %}{% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-2 mb-3">
+    <div class="col"><div class="border rounded p-2 h-100 bg-body"><div class="text-muted small">Batches mixed</div><div class="fw-semibold">{{ report.totals.batches|floatformat:"-3" }}</div></div></div>
+    <div class="col"><div class="border rounded p-2 h-100 bg-body"><div class="text-muted small">MB mixing (kg)</div><div class="fw-semibold">{{ report.totals.mixing_kg|floatformat:"-3" }}</div></div></div>
+    <div class="col"><div class="border rounded p-2 h-100 bg-body"><div class="text-muted small">FB made (kg)</div><div class="fw-semibold">{{ report.totals.fb_kg|floatformat:"-3" }}</div></div></div>
+    <div class="col"><div class="border rounded p-2 h-100 bg-body"><div class="text-muted small">MB production (kg)</div><div class="fw-semibold">{{ report.totals.production_kg|floatformat:"-3" }}</div></div></div>
+    <div class="col"><div class="border rounded p-2 h-100 bg-body"><div class="text-muted small">Closing MB (kg)</div><div class="fw-semibold">{{ report.totals.closing_kg|floatformat:"-3" }}</div></div></div>
+    <div class="col"><div class="border rounded p-2 h-100 bg-body"><div class="text-muted small">Rejection</div><div class="fw-semibold">{{ report.totals.rejection|floatformat:2 }}%</div></div></div>
+  </div>
+
+  <form id="scrapForm" method="post" action="{% url 'compounding:save_record_scrap' %}">
+    {% csrf_token %}
+    <input type="hidden" name="month" value="{{ month_value }}">
+  </form>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="record-scroll">
+        <table class="table table-sm table-bordered align-middle mb-0 record-table">
+          <thead>
+            <tr>
+              <th class="sticky-code">Compound</th>
+              <th class="sticky-uom">UOM</th>
+              <th class="text-end">Previous bal.</th>
+              {% for day in report.days %}<th class="text-center">{{ day }}</th>{% endfor %}
+              <th class="text-end">Total MB mixing</th>
+              <th class="text-end">MB production</th>
+              <th class="text-end">MB opening</th>
+              <th class="text-end">Stock count adj.</th>
+              <th class="text-end">MB closing</th>
+              <th class="text-end">Total FB</th>
+              <th class="text-end">MB batch wt</th>
+              <th class="text-end">Chemical wt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in report.rows %}
+              <tr>
+                <th class="sticky-code" rowspan="2"><a href="{% url 'compounding:stock_ledger' %}?compound={{ row.compound_code|urlencode }}">{{ row.compound_code }}</a></th>
+                <td class="sticky-uom text-muted">kg</td>
+                <td class="text-end">{% if row.previous_balance %}{{ row.previous_balance|floatformat:"-3" }}{% endif %}</td>
+                {% for cell in row.day_cells %}<td class="text-end">{% if cell.kg %}{{ cell.kg|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+                <td class="text-end fw-semibold">{{ row.mixing_kg|floatformat:"-3" }}</td>
+                <td class="text-end">{{ row.production_kg|floatformat:"-3" }}</td>
+                <td class="text-end">{{ row.opening_kg|floatformat:"-3" }}</td>
+                <td class="text-end">{% if row.adjustment_kg %}{{ row.adjustment_kg|floatformat:"-3" }}{% endif %}</td>
+                <td class="text-end fw-semibold {% if row.is_negative %}record-negative{% endif %}">{{ row.closing_kg|floatformat:"-3" }}</td>
+                <td class="text-end fw-semibold">{{ row.fb_kg|floatformat:"-3" }}</td>
+                <td class="text-end" rowspan="2">{{ row.mb_weight|floatformat:"-3" }}</td>
+                <td class="text-end" rowspan="2">{{ row.chemical_weight|floatformat:"-3" }}</td>
+              </tr>
+              <tr class="record-batch">
+                <td class="sticky-uom text-muted">Batch</td>
+                <td></td>
+                {% for cell in row.day_cells %}<td class="text-end">{% if cell.batches %}{{ cell.batches|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+                <td class="text-end">{{ row.batches|floatformat:"-3" }}</td>
+                <td class="text-end">{{ row.production_batches|floatformat:"-3" }}</td>
+                <td class="text-end">{{ row.opening_batches|floatformat:"-3" }}</td>
+                <td></td>
+                <td class="text-end {% if row.is_negative %}record-negative{% endif %}">{{ row.closing_batches|floatformat:"-3" }}</td>
+                <td class="text-end">{{ row.batches|floatformat:"-3" }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="{{ report.days|length|add:11 }}" class="text-center text-muted py-4">No production for this month yet.</td></tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="record-total">
+              <th class="sticky-code" colspan="2">Total production (kg)</th>
+              <td class="text-end">{{ report.totals.previous_balance|floatformat:"-3" }}</td>
+              {% for item in report.day_totals %}<td class="text-end">{% if item.kg %}{{ item.kg|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+              <td class="text-end">{{ report.totals.mixing_kg|floatformat:"-3" }}</td>
+              <td class="text-end">{{ report.totals.production_kg|floatformat:"-3" }}</td>
+              <td class="text-end">{{ report.totals.opening_kg|floatformat:"-3" }}</td>
+              <td class="text-end">{{ report.totals.adjustment_kg|floatformat:"-3" }}</td>
+              <td class="text-end">{{ report.totals.closing_kg|floatformat:"-3" }}</td>
+              <td class="text-end" title="Includes previous balance">{{ report.totals.fb_with_previous|floatformat:"-3" }}</td>
+              <td colspan="2" class="small">FB includes previous bal.</td>
+            </tr>
+            <tr>
+              <th class="sticky-code" colspan="2">Total scrap (kg)</th>
+              <td></td>
+              {% for item in report.day_totals %}
+                <td><input class="form-control form-control-sm record-scrap" form="scrapForm" type="number" min="0" step="0.001" name="scrap_{{ item.day }}" value="{% if item.scrap is not None %}{{ item.scrap|floatformat:'-3u' }}{% endif %}" aria-label="Scrap for day {{ item.day }}"></td>
+              {% endfor %}
+              <td class="text-end fw-semibold">{{ report.totals.scrap|floatformat:"-3" }}</td>
+              <td colspan="7"><button class="btn btn-sm btn-primary" type="submit" form="scrapForm">Save scrap</button></td>
+            </tr>
+            <tr>
+              <th class="sticky-code" colspan="2">Rejection %</th>
+              <td></td>
+              {% for item in report.day_totals %}<td class="text-end">{% if item.rejection %}{{ item.rejection|floatformat:2 }}{% endif %}</td>{% endfor %}
+              <td class="text-end fw-semibold">{{ report.totals.rejection|floatformat:2 }}</td>
+              <td colspan="7"></td>
+            </tr>
+            <tr class="record-total">
+              <th class="sticky-code" colspan="2">Total batches</th>
+              <td></td>
+              {% for item in report.day_totals %}<td class="text-end">{% if item.batches %}{{ item.batches|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+              <td class="text-end">{{ report.totals.batches|floatformat:"-3" }}</td>
+              <td class="text-end">{{ report.totals.production_batches|floatformat:"-3" }}</td>
+              <td class="text-end">{{ report.totals.opening_batches|floatformat:"-3" }}</td>
+              <td></td>
+              <td class="text-end">{{ report.totals.closing_batches|floatformat:"-3" }}</td>
+              <td class="text-end">{{ report.totals.batches|floatformat:"-3" }}</td>
+              <td colspan="2"></td>
+            </tr>
+            <tr class="record-total">
+              <th class="sticky-code" colspan="2">Total FB (MB + chemical)</th>
+              <td></td>
+              {% for item in report.day_totals %}<td class="text-end">{% if item.fb %}{{ item.fb|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+              <td class="text-end">{{ report.totals.fb_kg|floatformat:"-3" }}</td>
+              <td colspan="7"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell { width: 100%; }
+.record-scroll { max-height: 72vh; overflow: auto; }
+.record-table { min-width: max-content; font-size: .82rem; }
+.record-table th, .record-table td { white-space: nowrap; }
+.record-table td { min-width: 58px; }
+.record-table thead th { position: sticky; top: 0; z-index: 3; background: var(--bs-tertiary-bg); }
+.record-table .sticky-code { position: sticky; left: 0; z-index: 2; min-width: 150px; background: var(--bs-body-bg); }
+.record-table .sticky-uom { position: sticky; left: 150px; z-index: 2; min-width: 54px; background: var(--bs-body-bg); }
+.record-table thead .sticky-code, .record-table thead .sticky-uom { z-index: 4; background: var(--bs-tertiary-bg); }
+.record-table tfoot .sticky-code { min-width: 204px; }
+.record-batch td { background: var(--bs-tertiary-bg); }
+.record-total td, .record-total th { font-weight: 600; background: var(--bs-secondary-bg) !important; }
+.record-negative { color: var(--bs-danger) !important; background: var(--bs-danger-bg-subtle) !important; }
+.record-scrap { width: 72px; padding-left: .25rem; padding-right: .25rem; text-align: right; }
+</style>
+{% endblock %}

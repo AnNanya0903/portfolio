@@ -33,6 +33,7 @@ from magicwand.access import (
 from .models import (
     CompoundingCRIN,
     CompoundingCRINRequest,
+    CompoundingDailyScrap,
     CompoundingLine,
     CompoundingMasterSheet,
     CompoundingPlan,
@@ -43,6 +44,15 @@ from .models import (
     IST_TIMEZONE,
     compounding_business_date,
     next_compounding_cjc_number,
+)
+from .records import (
+    RecordImportError,
+    available_months,
+    build_compound_summary,
+    build_month_report,
+    import_workbook,
+    month_bounds,
+    parse_month,
 )
 from .stock import (
     FBIssueError,
@@ -1586,6 +1596,120 @@ def production_report_csv(request):
             row["completion_display"],
         ])
     return response
+
+
+_MAX_RECORD_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _record_url(month: date) -> str:
+    return f"{reverse('compounding:production_record')}?month={month:%Y-%m}"
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["GET"])
+def production_record(request):
+    month = parse_month(request.GET.get("month") or "") or compounding_business_date().replace(day=1)
+    show_all = request.GET.get("show") == "all"
+    return render(
+        request,
+        "magicwand/compounding_record.html",
+        {
+            "report": build_month_report(month, show_all=show_all),
+            "month_value": f"{month:%Y-%m}",
+            "month_options": [{"value": f"{item:%Y-%m}", "label": f"{item:%B %Y}"} for item in available_months()],
+            "show_all": show_all,
+            "can_import": user_has_service_access(request.user, "compounding_planning"),
+        },
+    )
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["POST"])
+def save_record_scrap(request):
+    month = parse_month(request.POST.get("month") or "")
+    if month is None:
+        messages.error(request, "Select a valid month.")
+        return redirect("compounding:production_record")
+    _start, end = month_bounds(month)
+    entries: Dict[date, Optional[Decimal]] = {}
+    for day in range(1, end.day + 1):
+        text = (request.POST.get(f"scrap_{day}") or "").strip()
+        if not text:
+            entries[month.replace(day=day)] = None
+            continue
+        try:
+            quantity = Decimal(text)
+        except InvalidOperation:
+            quantity = Decimal("-1")
+        if (
+            not quantity.is_finite()
+            or quantity < 0
+            or quantity > Decimal("9999999")
+            or quantity != quantity.quantize(Decimal("0.001"))
+        ):
+            messages.error(request, f"Day {day}: enter scrap as a number with up to 3 decimal places.")
+            return redirect(_record_url(month))
+        entries[month.replace(day=day)] = quantity if quantity > 0 else None
+
+    with transaction.atomic():
+        for entry_date, quantity in entries.items():
+            if quantity is None:
+                CompoundingDailyScrap.objects.filter(date=entry_date).delete()
+            else:
+                CompoundingDailyScrap.objects.update_or_create(
+                    date=entry_date,
+                    defaults={"quantity": quantity, "updated_by": request.user},
+                )
+    messages.success(request, f"Saved scrap for {month:%B %Y}.")
+    return redirect(_record_url(month))
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["GET"])
+def compound_record_summary(request):
+    months = available_months()
+    period = (request.GET.get("period") or "all").strip()
+    selected = parse_month(period)
+    chosen = [selected] if selected in months else months
+    return render(
+        request,
+        "magicwand/compounding_record_summary.html",
+        {
+            "summary": build_compound_summary(chosen),
+            "period": f"{selected:%Y-%m}" if selected in months else "all",
+            "month_options": [{"value": f"{item:%Y-%m}", "label": f"{item:%B %Y}"} for item in months],
+        },
+    )
+
+
+@login_required
+@require_service_access("compounding_planning")
+@require_http_methods(["POST"])
+def import_production_record(request):
+    upload = request.FILES.get("record_file")
+    back = request.POST.get("month") or ""
+    redirect_url = reverse("compounding:production_record") + (f"?month={back}" if parse_month(back) else "")
+    if not upload:
+        messages.error(request, "Select the Excel production record to import.")
+        return redirect(redirect_url)
+    filename = (upload.name or "").strip()
+    if not filename.lower().endswith((".xlsx", ".xlsm")):
+        messages.error(request, "Only .xlsx or .xlsm files are supported.")
+        return redirect(redirect_url)
+    if upload.size > _MAX_RECORD_UPLOAD_BYTES:
+        messages.error(request, "The Excel file must be 10 MB or smaller.")
+        return redirect(redirect_url)
+    try:
+        results = import_workbook(upload, user=request.user, filename=filename)
+    except RecordImportError as exc:
+        messages.error(request, str(exc))
+        return redirect(redirect_url)
+    names = ", ".join(f"{item['month']:%B %Y}" for item in results)
+    messages.success(request, f"Imported {names}. Live stock was not changed.")
+    return redirect(_record_url(results[-1]["month"]))
 
 
 @login_required

@@ -468,3 +468,73 @@ class CompoundingMasterSheet(models.Model):
 
     def __str__(self) -> str:
         return f"{self.plan.plan_date}: {self.original_filename or 'master-sheet'}"
+
+
+class CompoundingRecordMonth(models.Model):
+    """
+    A month imported from the Excel production record.
+
+    Imported months are history for reports only and never change the stock ledger.
+    """
+
+    month = models.DateField(unique=True)
+    source_filename = models.CharField(max_length=255, blank=True, default="")
+    imported_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="compounding_record_imports",
+    )
+    imported_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-month"]
+
+    def __str__(self) -> str:
+        return f"Production record {self.month:%B %Y}"
+
+
+class CompoundingRecordRow(models.Model):
+    """One compound's batches and weights in an imported month."""
+
+    record = models.ForeignKey(CompoundingRecordMonth, on_delete=models.CASCADE, related_name="rows")
+    position = models.PositiveIntegerField(default=0)
+    compound_code = models.CharField(max_length=64)
+    compound_key = models.CharField(max_length=64)
+    mb_weight = models.DecimalField(max_digits=14, decimal_places=4, default=0)
+    chemical_weight = models.DecimalField(max_digits=14, decimal_places=4, default=0)
+    previous_balance = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    opening_batches = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    production_batches = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    daily_batches = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["record", "compound_key"], name="uniq_record_row_per_compound"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.record.month:%b %Y}: {self.compound_code}"
+
+
+class CompoundingDailyScrap(models.Model):
+    """Total compounding scrap in kg for one production day."""
+
+    date = models.DateField(unique=True)
+    quantity = models.DecimalField(max_digits=14, decimal_places=3)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="compounding_scrap_entries",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["date"]
+
+    def __str__(self) -> str:
+        return f"{self.date}: {self.quantity} kg scrap"

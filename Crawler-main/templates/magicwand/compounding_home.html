@@ -103,6 +103,24 @@
         </div>
     </div>
 
+    <!-- Production Record Card -->
+    <div class="col-12 col-xl-6">
+        <div class="copilot-card compounding-tile">
+            <div class="d-flex align-items-center gap-3 mb-3">
+                <div class="icon-box icon-green mb-0" style="width:40px;height:40px;font-size:1.1rem;"><i class="bi bi-table"></i></div>
+                <h5 class="fw-bold mb-0">Production record</h5>
+            </div>
+            <p class="text-muted small">Monthly compound record with daily batches, kg, FB, stock, scrap, and totals for one or more compounds.</p>
+            <div class="mt-4 pt-3 border-top border-secondary-subtle">
+                {% if can_planning or can_board %}
+                    <a href="{% url 'compounding:production_record' %}" class="btn btn-light border w-100 shadow-sm">Open Production Record</a>
+                {% else %}
+                    <button class="btn btn-light border w-100" disabled>Access Restricted</button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
     <!-- Stock Ledger Card -->
     <div class="col-12 col-xl-6">
         <div class="copilot-card compounding-tile">

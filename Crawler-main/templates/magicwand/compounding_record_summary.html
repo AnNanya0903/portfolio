@@ -1,0 +1,168 @@
+{% extends 'base.html' %}
+{% load l10n %}
+
+{% block title %}Compound Totals{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">Compound totals</h1>
+      <p class="text-muted mb-0">See one compound, tick different compounds to add them, or use the total of all compounds. Quantities are in kg.</p>
+    </div>
+    <a href="{% url 'compounding:production_record' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back to Production record</a>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <form method="get" class="col-12 col-md-4">
+          <label class="form-label mb-1" for="summaryPeriod">Period</label>
+          <select id="summaryPeriod" class="form-select" name="period" onchange="this.form.submit()">
+            <option value="all" {% if period == "all" %}selected{% endif %}>All months</option>
+            {% for option in month_options %}
+              <option value="{{ option.value }}" {% if option.value == period %}selected{% endif %}>{{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </form>
+        <div class="col-12 col-md-4">
+          <label class="form-label mb-1" for="compoundSearch">Find compound</label>
+          <input id="compoundSearch" class="form-control" type="search" placeholder="Type a compound code">
+        </div>
+        <div class="col-12 col-md-4 d-flex gap-2">
+          <button type="button" class="btn btn-outline-secondary" id="selectVisible">Tick shown</button>
+          <button type="button" class="btn btn-outline-secondary" id="clearSelected">Clear ticks</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3 border-primary" aria-live="polite">
+    <div class="card-body">
+      <div class="fw-semibold mb-2">Total of selected compounds: <span id="selectedCount">0</span></div>
+      <div class="row row-cols-2 row-cols-lg-4 g-2">
+        <div class="col"><div class="border rounded p-2"><div class="text-muted small">Batches mixed</div><div class="fw-semibold" id="selectedBatches">0</div></div></div>
+        <div class="col"><div class="border rounded p-2"><div class="text-muted small">MB mixing</div><div class="fw-semibold" id="selectedMixing">0</div></div></div>
+        <div class="col"><div class="border rounded p-2"><div class="text-muted small">FB qty</div><div class="fw-semibold" id="selectedFb">0</div></div></div>
+        <div class="col"><div class="border rounded p-2"><div class="text-muted small">MB production</div><div class="fw-semibold" id="selectedProduction">0</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="summary-scroll">
+        <table class="table table-sm table-bordered table-hover align-middle mb-0 summary-table">
+          <thead>
+            <tr>
+              <th rowspan="2" class="text-center"><span class="visually-hidden">Select</span></th>
+              <th rowspan="2" class="summary-code">Compound</th>
+              {% for month in summary.months %}<th colspan="5" class="text-center">{{ month|date:"F Y" }}</th>{% endfor %}
+              <th colspan="5" class="text-center">Selected period</th>
+            </tr>
+            <tr>
+              {% for month in summary.months %}
+                <th class="text-end">Batches</th><th class="text-end">MB mixing</th><th class="text-end">FB</th><th class="text-end">MB production</th><th class="text-end">Closing MB</th>
+              {% endfor %}
+              <th class="text-end">Batches</th><th class="text-end">MB mixing</th><th class="text-end">FB</th><th class="text-end">MB production</th><th class="text-end">FB share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in summary.rows %}
+              <tr data-compound-row data-code="{{ row.compound_code|lower }}" data-batches="{{ row.batches|unlocalize }}" data-mixing="{{ row.mixing_kg|unlocalize }}" data-fb="{{ row.fb_kg|unlocalize }}" data-production="{{ row.production_kg|unlocalize }}">
+                <td class="text-center"><input class="form-check-input js-compound-check" type="checkbox" aria-label="Select {{ row.compound_code }}"></td>
+                <th class="summary-code">{{ row.compound_code }}</th>
+                {% for cell in row.cells %}
+                  <td class="text-end">{{ cell.batches|floatformat:"-3" }}</td>
+                  <td class="text-end">{{ cell.mixing_kg|floatformat:"-3" }}</td>
+                  <td class="text-end">{{ cell.fb_kg|floatformat:"-3" }}</td>
+                  <td class="text-end">{{ cell.production_kg|floatformat:"-3" }}</td>
+                  <td class="text-end {% if cell.is_negative %}text-danger fw-semibold{% endif %}">{{ cell.closing_kg|floatformat:"-3" }}</td>
+                {% endfor %}
+                <td class="text-end fw-semibold">{{ row.batches|floatformat:"-3" }}</td>
+                <td class="text-end fw-semibold">{{ row.mixing_kg|floatformat:"-3" }}</td>
+                <td class="text-end fw-semibold">{{ row.fb_kg|floatformat:"-3" }}</td>
+                <td class="text-end fw-semibold">{{ row.production_kg|floatformat:"-3" }}</td>
+                <td class="text-end">{{ row.fb_share|floatformat:1 }}%</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="text-center text-muted py-4">No production records yet.</td></tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="summary-total">
+              <th colspan="2" class="summary-code">Total of all compounds</th>
+              {% for total in summary.month_totals %}
+                <td class="text-end">{{ total.batches|floatformat:"-3" }}</td>
+                <td class="text-end">{{ total.mixing_kg|floatformat:"-3" }}</td>
+                <td class="text-end">{{ total.fb_kg|floatformat:"-3" }}</td>
+                <td class="text-end">{{ total.production_kg|floatformat:"-3" }}</td>
+                <td class="text-end">{{ total.closing_kg|floatformat:"-3" }}</td>
+              {% endfor %}
+              <td class="text-end">{{ summary.totals.batches|floatformat:"-3" }}</td>
+              <td class="text-end">{{ summary.totals.mixing_kg|floatformat:"-3" }}</td>
+              <td class="text-end">{{ summary.totals.fb_kg|floatformat:"-3" }}</td>
+              <td class="text-end">{{ summary.totals.production_kg|floatformat:"-3" }}</td>
+              <td class="text-end">{% if summary.rows %}100%{% endif %}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var rows = Array.prototype.slice.call(document.querySelectorAll("[data-compound-row]"));
+  var format = function (value) {
+    return Number(value.toFixed(3)).toLocaleString("en-IN", { maximumFractionDigits: 3 });
+  };
+  var refresh = function () {
+    var count = 0, batches = 0, mixing = 0, fb = 0, production = 0;
+    rows.forEach(function (row) {
+      if (!row.querySelector(".js-compound-check").checked) { return; }
+      count += 1;
+      batches += Number(row.dataset.batches);
+      mixing += Number(row.dataset.mixing);
+      fb += Number(row.dataset.fb);
+      production += Number(row.dataset.production);
+    });
+    document.getElementById("selectedCount").textContent = count;
+    document.getElementById("selectedBatches").textContent = format(batches);
+    document.getElementById("selectedMixing").textContent = format(mixing);
+    document.getElementById("selectedFb").textContent = format(fb);
+    document.getElementById("selectedProduction").textContent = format(production);
+  };
+  rows.forEach(function (row) {
+    row.querySelector(".js-compound-check").addEventListener("change", refresh);
+  });
+  document.getElementById("compoundSearch").addEventListener("input", function (event) {
+    var text = event.target.value.trim().toLowerCase();
+    rows.forEach(function (row) { row.hidden = text !== "" && row.dataset.code.indexOf(text) === -1; });
+  });
+  document.getElementById("selectVisible").addEventListener("click", function () {
+    rows.forEach(function (row) { if (!row.hidden) { row.querySelector(".js-compound-check").checked = true; } });
+    refresh();
+  });
+  document.getElementById("clearSelected").addEventListener("click", function () {
+    rows.forEach(function (row) { row.querySelector(".js-compound-check").checked = false; });
+    refresh();
+  });
+  refresh();
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell { width: 100%; }
+.summary-scroll { max-height: 70vh; overflow: auto; }
+.summary-table { min-width: max-content; font-size: .85rem; }
+.summary-table th, .summary-table td { white-space: nowrap; }
+.summary-table thead th { position: sticky; top: 0; z-index: 2; background: var(--bs-tertiary-bg); }
+.summary-table thead tr:nth-child(2) th { top: 31px; }
+.summary-total td, .summary-total th { font-weight: 700; background: var(--bs-secondary-bg) !important; }
+</style>
+{% endblock %}
