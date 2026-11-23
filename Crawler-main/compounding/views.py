@@ -3006,6 +3006,8 @@ def fb_planning_page(request):
                 "has_done_line": bool(getattr(crin, "has_done_line", False)),
                 "mb_needed": _decimal_text(mb_needed) if mb_needed is not None else "—",
                 "mb_free": _decimal_text(free_mb) if free_mb is not None else "—",
+                "mb_short": "—",
+                "mb_is_short": False,
                 "mb_ready": True,
                 "mb_alert": "",
                 "is_open": crin.status == CompoundingCRIN.STATUS_OPEN,
@@ -3028,14 +3030,17 @@ def fb_planning_page(request):
             row["mb_alert"] = f"MB stock or weight is missing for {row['compound_code']}. Check the master sheet."
             continue
         left = free_left.setdefault(row["_key"], free)
+        row["mb_free"] = _decimal_text(left)
         if left >= needed:
             free_left[row["_key"]] = left - needed
+            row["mb_short"] = "0"
             continue
         row["mb_ready"] = False
-        row["mb_free"] = _decimal_text(left)
+        row["mb_is_short"] = True
+        row["mb_short"] = _decimal_text(needed - left)
         row["mb_alert"] = (
             f"MB stock is not available for {row['compound_code']}. "
-            f"Needed {_decimal_text(needed)}, free {_decimal_text(left)}, "
+            f"Required {_decimal_text(needed)}, available {_decimal_text(left)}, "
             f"short by {_decimal_text(needed - left)}. Plan MB first."
         )
     return render(

@@ -247,6 +247,39 @@ class MBStockAlertTests(TestCase):
 
         self.assertTrue(crin.planned_lines.exists())
 
+    def test_fb_page_shows_required_available_and_short(self):
+        self._sheet(mb_stock="400")
+        self._crin()
+
+        response = self.client.get(reverse("compounding:fb_planning"), {"date": PLAN_DATE})
+
+        for label in ("MB required", "MB available", "MB short"):
+            self.assertContains(response, label)
+        self.assertNotContains(response, "MB free")
+        row = response.context["crins"][0]
+        self.assertEqual((row["mb_needed"], row["mb_free"], row["mb_short"]), ("1000", "400", "600"))
+        self.assertIn("Required 1000, available 400, short by 600", row["mb_alert"])
+
+    def test_fb_page_shows_zero_short_when_stock_is_enough(self):
+        self._sheet(mb_stock="1500")
+        self._crin()
+
+        response = self.client.get(reverse("compounding:fb_planning"), {"date": PLAN_DATE})
+
+        row = response.context["crins"][0]
+        self.assertEqual((row["mb_free"], row["mb_short"]), ("1500", "0"))
+
+    def test_available_reduces_for_the_next_crin(self):
+        self._sheet(mb_stock="1500")
+        first = self._crin("CRIN-1", 1200)
+        second = self._crin("CRIN-2", 1200)
+
+        response = self.client.get(reverse("compounding:fb_planning"), {"date": PLAN_DATE})
+
+        rows = {row["id"]: row for row in response.context["crins"]}
+        self.assertEqual((rows[first.id]["mb_free"], rows[first.id]["mb_short"]), ("1500", "0"))
+        self.assertEqual((rows[second.id]["mb_free"], rows[second.id]["mb_short"]), ("500", "500"))
+
     def test_server_still_blocks_short_send(self):
         self._sheet(mb_stock="400")
         crin = self._crin()
