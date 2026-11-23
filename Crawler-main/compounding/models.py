@@ -416,7 +416,8 @@ class CompoundingStockEntry(models.Model):
     note = models.CharField(max_length=255, blank=True, default="")
     # Set for movements typed in the production record, which have no board line or plan.
     movement_date = models.DateField(null=True, blank=True)
-    record_source = models.CharField(max_length=20, blank=True, default="", db_index=True)
+    # Nullable so the previous app version can still save entries during a deploy or rollback.
+    record_source = models.CharField(max_length=20, null=True, blank=True, default="", db_index=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

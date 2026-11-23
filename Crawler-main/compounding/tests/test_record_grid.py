@@ -5,8 +5,10 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from openpyxl import load_workbook
 
 from compounding.models import (
@@ -192,6 +194,22 @@ class RecordGridTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self._row(date(2026, 11, 1))["batches"], Decimal("7"))
         self.assertFalse(Entry.objects.exists())
+
+    def test_previous_app_version_can_still_save_stock_entries(self):
+        table = Entry._meta.db_table
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"INSERT INTO {table} (compound_key, compound_code, stock_type, entry_type, quantity, note, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                [KEY, "AG-7020", "mb", "opening", "100.000", "", timezone.now()],
+            )
+
+        entry = Entry.objects.get()
+        self.assertIsNone(entry.record_source)
+        self.assertEqual(self._stock()["mb"], Decimal("100.000"))
+        # Saved today, which is before the December record being read.
+        self.assertEqual(self._row()["opening_kg"], Decimal("100.000"))
+        self.assertEqual(self._row()["adjustment_kg"], Decimal("0"))
 
     def test_page_matches_excel_layout(self):
         response = self.client.get(reverse("compounding:production_record"), {"month": "2026-12"})
