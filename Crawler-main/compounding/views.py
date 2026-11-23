@@ -1161,6 +1161,54 @@ def _mb_availability_display(availability: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _mb_shortage_alerts(
+    plan: CompoundingPlan,
+    *,
+    demand: Optional[Dict[str, Dict[str, int]]] = None,
+) -> List[Dict[str, Any]]:
+    """Compounds whose open FB needs more MB than is in stock right now."""
+    demand = demand if demand is not None else _mb_demand_by_compound(plan)
+    codes: Dict[str, str] = {}
+    for code in plan.crins.filter(status=CompoundingCRIN.STATUS_OPEN).values_list("compound_code", flat=True):
+        codes.setdefault(_normalize_compound_code(code), code)
+    for code in plan.lines.filter(actuals_saved=False).values_list("compound_code", flat=True):
+        codes.setdefault(_normalize_compound_code(code), code)
+
+    alerts: List[Dict[str, Any]] = []
+    for key, code in codes.items():
+        if not key:
+            continue
+        availability = _mb_availability(plan, code, demand=demand)
+        if availability["open_fb"] <= 0:
+            continue
+        if not availability["known"]:
+            alerts.append({"compound_code": code, "known": False, "message": f"MB stock or weight is missing for {code}."})
+            continue
+        required = availability["required"]
+        stock = availability["mb_stock"]
+        if stock >= required:
+            continue
+        available = max(stock, Decimal("0"))
+        short = required - available
+        alerts.append(
+            {
+                "compound_code": code,
+                "known": True,
+                "required": _decimal_text(required),
+                "stock": _decimal_text(available),
+                "short": _decimal_text(short),
+                "incoming": _decimal_text(availability["incoming"]) if availability["incoming"] > 0 else "",
+                "message": (
+                    f"MB stock is not available for {code}. "
+                    f"Needed {_decimal_text(required)}, in stock {_decimal_text(available)}, "
+                    f"short by {_decimal_text(short)}. Plan MB first."
+                ),
+            }
+        )
+    alerts.sort(key=lambda item: item["compound_code"])
+    return alerts
+
+
 def _recompute_master_sheet_stock_for_plan(
     plan: CompoundingPlan,
     *,
@@ -2013,6 +2061,7 @@ def planning(request):
             "crin_compound_options": compound_options,
             "crin_compounds_ready": compounds_ready,
             "master_sheet": master_sheet_context,
+            "mb_alerts": _mb_shortage_alerts(plan),
             "show_iot_dashboard": _iot_dashboard_available(),
         },
     )
@@ -2505,6 +2554,10 @@ def create_crin(request):
     )
 
     messages.success(request, f"Raised {crin_number} for {compound_code}.")
+    raised_key = _normalize_compound_code(compound_code)
+    for alert in _mb_shortage_alerts(plan):
+        if _normalize_compound_code(alert["compound_code"]) == raised_key:
+            messages.warning(request, alert["message"])
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
 
@@ -2792,6 +2845,20 @@ def fb_planning_page(request):
             else None
         )
         free_mb = availability["free"]
+        # Same rule as send_to_board: FB cannot go ahead without enough free MB.
+        mb_ready = int(fb_batches or 0) <= 0 or bool(
+            mb_needed is not None and free_mb is not None and free_mb >= mb_needed
+        )
+        mb_alert = ""
+        if not mb_ready:
+            if mb_needed is None or free_mb is None:
+                mb_alert = f"MB stock or weight is missing for {crin.compound_code}. Check the master sheet."
+            else:
+                mb_alert = (
+                    f"MB stock is not available for {crin.compound_code}. "
+                    f"Needed {_decimal_text(mb_needed)}, free {_decimal_text(free_mb)}, "
+                    f"short by {_decimal_text(mb_needed - free_mb)}. Plan MB first."
+                )
         crins.append(
             {
                 "id": crin.id,
@@ -2805,10 +2872,15 @@ def fb_planning_page(request):
                 "has_done_line": bool(getattr(crin, "has_done_line", False)),
                 "mb_needed": _decimal_text(mb_needed) if mb_needed is not None else "—",
                 "mb_free": _decimal_text(free_mb) if free_mb is not None else "—",
-                "mb_ready": bool(mb_needed is not None and free_mb is not None and free_mb >= mb_needed),
+                "mb_ready": mb_ready,
+                "mb_alert": mb_alert,
             }
         )
-    return render(request, "magicwand/compounding_fb_plan.html", {"plan": plan, "crins": crins})
+    return render(
+        request,
+        "magicwand/compounding_fb_plan.html",
+        {"plan": plan, "crins": crins, "mb_alerts": _mb_shortage_alerts(plan, demand=demand)},
+    )
 
 
 @login_required

@@ -1,0 +1,19 @@
+{% if mb_alerts %}
+  <div class="alert alert-danger shadow-sm mb-3" role="alert" data-mb-alerts="1">
+    <div class="fw-semibold mb-2"><i class="bi bi-exclamation-triangle-fill me-1"></i>MB stock is not available for {{ mb_alerts|length }} compound{{ mb_alerts|length|pluralize }}</div>
+    <ul class="mb-0 ps-3">
+      {% for alert in mb_alerts %}
+        <li class="mb-1">
+          <span class="fw-semibold">{{ alert.compound_code }}</span>:
+          {% if alert.known %}
+            needed {{ alert.required }}, in stock {{ alert.stock }}, <span class="fw-semibold">short by {{ alert.short }}</span>.
+            {% if alert.incoming %}{{ alert.incoming }} MB is already on the board.{% endif %}
+          {% else %}
+            MB stock or weight is missing in the master sheet.
+          {% endif %}
+          <a class="alert-link" href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}&amp;compound={{ alert.compound_code|urlencode }}">Plan MB</a>
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}

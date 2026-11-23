@@ -20,6 +20,8 @@
     </div>
   </div>
 
+  {% include "magicwand/compounding_mb_alerts.html" %}
+
   <div class="card shadow-sm">
     <div class="card-body">
       <div class="table-responsive">
@@ -67,7 +69,7 @@
                   {% elif crin.has_done_line %}
                     <span class="badge text-bg-secondary">Done</span>
                   {% else %}
-                    <form method="post" action="{% url 'compounding:send_to_board' crin.id %}" class="d-inline">
+                    <form method="post" action="{% url 'compounding:send_to_board' crin.id %}" class="d-inline js-fb-send"{% if crin.mb_alert %} data-mb-alert="{{ crin.mb_alert }}"{% endif %}>
                       {% csrf_token %}
                       <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
                       <input type="hidden" name="next" value="{{ request.get_full_path }}">
@@ -97,6 +99,17 @@
     </div>
   </div>
 </div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  document.querySelectorAll(".js-fb-send[data-mb-alert]").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      window.alert(form.dataset.mbAlert);
+    });
+  });
+});
+</script>
 {% endblock %}
 
 {% block extra_css %}
