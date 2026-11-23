@@ -58,9 +58,6 @@
                     <span class="text-muted">—</span>
                   {% else %}
                     <span class="fw-semibold {% if crin.mb_ready %}text-success{% else %}text-danger{% endif %}">{{ crin.mb_free }}</span>
-                    {% if not crin.mb_ready %}
-                      <a class="d-block small" href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}&amp;compound={{ crin.compound_code|urlencode }}">Plan MB</a>
-                    {% endif %}
                   {% endif %}
                 </td>
                 <td class="text-end">
@@ -68,8 +65,11 @@
                     <span class="badge text-bg-success">On board</span>
                   {% elif crin.has_done_line %}
                     <span class="badge text-bg-secondary">Done</span>
+                  {% elif crin.mb_alert %}
+                    <span class="badge text-bg-danger me-1">Waiting for MB</span>
+                    <a class="btn btn-sm btn-danger js-mb-first" data-mb-alert="{{ crin.mb_alert }}" href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}&amp;compound={{ crin.compound_code|urlencode }}">Plan MB first</a>
                   {% else %}
-                    <form method="post" action="{% url 'compounding:send_to_board' crin.id %}" class="d-inline js-fb-send"{% if crin.mb_alert %} data-mb-alert="{{ crin.mb_alert }}"{% endif %}>
+                    <form method="post" action="{% url 'compounding:send_to_board' crin.id %}" class="d-inline">
                       {% csrf_token %}
                       <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
                       <input type="hidden" name="next" value="{{ request.get_full_path }}">
@@ -102,10 +102,9 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-  document.querySelectorAll(".js-fb-send[data-mb-alert]").forEach(function (form) {
-    form.addEventListener("submit", function (event) {
-      event.preventDefault();
-      window.alert(form.dataset.mbAlert);
+  document.querySelectorAll(".js-mb-first").forEach(function (link) {
+    link.addEventListener("click", function () {
+      window.alert(link.dataset.mbAlert);
     });
   });
 });

@@ -5,13 +5,18 @@
       {% for alert in mb_alerts %}
         <li class="mb-1">
           <span class="fw-semibold">{{ alert.compound_code }}</span>:
-          {% if alert.known %}
+          {% if not alert.known %}
+            MB stock or weight is missing in the master sheet.
+          {% elif alert.negative and not alert.required %}
+            <span class="fw-semibold">MB stock is negative ({{ alert.stock }})</span>. Check the entries or upload a stock count.
+          {% else %}
+            {% if alert.negative %}<span class="fw-semibold">MB stock is negative.</span>{% endif %}
             needed {{ alert.required }}, in stock {{ alert.stock }}, <span class="fw-semibold">short by {{ alert.short }}</span>.
             {% if alert.incoming %}{{ alert.incoming }} MB is already on the board.{% endif %}
-          {% else %}
-            MB stock or weight is missing in the master sheet.
           {% endif %}
-          <a class="alert-link" href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}&amp;compound={{ alert.compound_code|urlencode }}">Plan MB</a>
+          {% if not hide_mb_plan_link %}
+            <a class="alert-link" href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}&amp;compound={{ alert.compound_code|urlencode }}">Plan MB</a>
+          {% endif %}
         </li>
       {% endfor %}
     </ul>

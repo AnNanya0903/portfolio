@@ -15,6 +15,17 @@
     </a>
   </div>
 
+  {% if negative_rows %}
+    <div class="alert alert-danger shadow-sm mb-3" role="alert" data-stock-negative="1">
+      <div class="fw-semibold mb-2"><i class="bi bi-exclamation-triangle-fill me-1"></i>Stock is negative for {{ negative_rows|length }} compound{{ negative_rows|length|pluralize }}</div>
+      <ul class="mb-0 ps-3">
+        {% for row in negative_rows %}
+          <li><span class="fw-semibold">{{ row.compound_code }}</span>:{% if row.mb_negative %} MB {{ row.mb_stock }}{% endif %}{% if row.fb_negative %} FB {{ row.fb_stock }}{% endif %}. Check the entries or upload a stock count.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
   {% if selected_row %}
     <div class="card shadow-sm mb-3">
       <div class="card-body">

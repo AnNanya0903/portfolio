@@ -1161,13 +1161,50 @@ def _mb_availability_display(availability: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _negative_mb_stock(plan: CompoundingPlan) -> Dict[str, tuple[str, Decimal]]:
+    """Return {compound_key: (code, stock)} for every compound with MB stock below zero."""
+    balances = stock_balances()
+    negative: Dict[str, tuple[str, Decimal]] = {}
+    seen: set[str] = set()
+    sheet = _master_sheet_for_plan(plan)
+    if sheet:
+        headers, rows, cols = _sheet_table_with_detected_headers(list(sheet.headers or []), list(sheet.rows or []))
+        code_idx = cols.get("compound_code")
+        stock_idx = cols.get("mb_stock")
+        if code_idx is not None:
+            for idx, _raw in enumerate(rows):
+                row = _get_sheet_row(rows, idx, len(headers))
+                code = _clean_compound_code(row[code_idx])
+                key = _normalize_compound_code(code)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                sheet_stock = _to_decimal(row[stock_idx]) if stock_idx is not None else None
+                stock = (balances.get(key) or {}).get(CompoundingStockEntry.STOCK_MB, sheet_stock)
+                if stock is not None and stock < 0:
+                    negative[key] = (code, stock)
+    for key, ledger in balances.items():
+        stock = ledger.get(CompoundingStockEntry.STOCK_MB)
+        if key in seen or stock is None or stock >= 0:
+            continue
+        code = (
+            CompoundingStockEntry.objects.filter(compound_key=key)
+            .order_by("-id")
+            .values_list("compound_code", flat=True)
+            .first()
+        )
+        negative[key] = (code or key, stock)
+    return negative
+
+
 def _mb_shortage_alerts(
     plan: CompoundingPlan,
     *,
     demand: Optional[Dict[str, Dict[str, int]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Compounds whose open FB needs more MB than is in stock right now."""
+    """Compounds whose MB stock is negative, or too low for their open FB."""
     demand = demand if demand is not None else _mb_demand_by_compound(plan)
+    negative_stock = _negative_mb_stock(plan)
     codes: Dict[str, str] = {}
     for code in plan.crins.filter(status=CompoundingCRIN.STATUS_OPEN).values_list("compound_code", flat=True):
         codes.setdefault(_normalize_compound_code(code), code)
@@ -1188,20 +1225,42 @@ def _mb_shortage_alerts(
         stock = availability["mb_stock"]
         if stock >= required:
             continue
-        available = max(stock, Decimal("0"))
-        short = required - available
+        # A negative balance must be made up as well, so it adds to the shortage.
+        short = required - stock
+        is_negative = stock < 0
+        lead = f"MB stock is negative for {code}" if is_negative else f"MB stock is not available for {code}"
         alerts.append(
             {
                 "compound_code": code,
                 "known": True,
+                "negative": is_negative,
                 "required": _decimal_text(required),
-                "stock": _decimal_text(available),
+                "stock": _decimal_text(stock),
                 "short": _decimal_text(short),
                 "incoming": _decimal_text(availability["incoming"]) if availability["incoming"] > 0 else "",
                 "message": (
-                    f"MB stock is not available for {code}. "
-                    f"Needed {_decimal_text(required)}, in stock {_decimal_text(available)}, "
+                    f"{lead}. Needed {_decimal_text(required)}, in stock {_decimal_text(stock)}, "
                     f"short by {_decimal_text(short)}. Plan MB first."
+                ),
+            }
+        )
+
+    alerted = {_normalize_compound_code(item["compound_code"]) for item in alerts}
+    for key, (code, stock) in negative_stock.items():
+        if key in alerted:
+            continue
+        alerts.append(
+            {
+                "compound_code": code,
+                "known": True,
+                "negative": True,
+                "required": "",
+                "stock": _decimal_text(stock),
+                "short": _decimal_text(-stock),
+                "incoming": "",
+                "message": (
+                    f"MB stock is negative for {code} ({_decimal_text(stock)}). "
+                    "Check the entries or upload a stock count."
                 ),
             }
         )
@@ -1560,6 +1619,7 @@ def stock_ledger(request):
         "magicwand/compounding_stock.html",
         {
             "rows": list(summary.values()),
+            "negative_rows": [row for row in summary.values() if row["mb_negative"] or row["fb_negative"]],
             "selected_compound": selected_row["compound_code"] if selected_row else "",
             "selected_row": selected_row,
             "entries": entries[:200],
@@ -2252,6 +2312,8 @@ def display(request):
             "plan": plan,
             "lines": lines,
             "pending": pending,
+            "mb_alerts": _mb_shortage_alerts(plan),
+            "hide_mb_plan_link": not user_has_service_access(request.user, "compounding_planning"),
             "can_planning": user_has_service_access(request.user, "compounding_planning"),
             "show_iot_dashboard": _iot_dashboard_available(),
         },
@@ -2555,9 +2617,16 @@ def create_crin(request):
 
     messages.success(request, f"Raised {crin_number} for {compound_code}.")
     raised_key = _normalize_compound_code(compound_code)
+    needs_mb_first = False
     for alert in _mb_shortage_alerts(plan):
         if _normalize_compound_code(alert["compound_code"]) == raised_key:
             messages.warning(request, alert["message"])
+            needs_mb_first = needs_mb_first or bool(alert.get("required")) or not alert["known"]
+    if needs_mb_first:
+        # MB comes first: a short CRIN goes to MB planning, not FB planning.
+        return redirect(
+            f"/compounding/planning/mb/?date={plan.plan_date.isoformat()}&compound={quote_plus(compound_code)}"
+        )
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
 
@@ -2845,20 +2914,6 @@ def fb_planning_page(request):
             else None
         )
         free_mb = availability["free"]
-        # Same rule as send_to_board: FB cannot go ahead without enough free MB.
-        mb_ready = int(fb_batches or 0) <= 0 or bool(
-            mb_needed is not None and free_mb is not None and free_mb >= mb_needed
-        )
-        mb_alert = ""
-        if not mb_ready:
-            if mb_needed is None or free_mb is None:
-                mb_alert = f"MB stock or weight is missing for {crin.compound_code}. Check the master sheet."
-            else:
-                mb_alert = (
-                    f"MB stock is not available for {crin.compound_code}. "
-                    f"Needed {_decimal_text(mb_needed)}, free {_decimal_text(free_mb)}, "
-                    f"short by {_decimal_text(mb_needed - free_mb)}. Plan MB first."
-                )
         crins.append(
             {
                 "id": crin.id,
@@ -2872,9 +2927,36 @@ def fb_planning_page(request):
                 "has_done_line": bool(getattr(crin, "has_done_line", False)),
                 "mb_needed": _decimal_text(mb_needed) if mb_needed is not None else "—",
                 "mb_free": _decimal_text(free_mb) if free_mb is not None else "—",
-                "mb_ready": mb_ready,
-                "mb_alert": mb_alert,
+                "mb_ready": True,
+                "mb_alert": "",
+                "is_open": crin.status == CompoundingCRIN.STATUS_OPEN,
+                "_key": _normalize_compound_code(crin.compound_code),
+                "_needed": mb_needed,
+                "_free": free_mb,
             }
+        )
+
+    # MB first: give free stock to the oldest waiting CRIN. The rest wait for MB planning.
+    free_left: Dict[str, Decimal] = {}
+    for row in reversed(crins):
+        if not row["is_open"] or row["has_line"] or row["has_done_line"] or int(row["fb_planning"] or 0) <= 0:
+            continue
+        needed = row["_needed"]
+        free = row["_free"]
+        if needed is None or free is None:
+            row["mb_ready"] = False
+            row["mb_alert"] = f"MB stock or weight is missing for {row['compound_code']}. Check the master sheet."
+            continue
+        left = free_left.setdefault(row["_key"], free)
+        if left >= needed:
+            free_left[row["_key"]] = left - needed
+            continue
+        row["mb_ready"] = False
+        row["mb_free"] = _decimal_text(left)
+        row["mb_alert"] = (
+            f"MB stock is not available for {row['compound_code']}. "
+            f"Needed {_decimal_text(needed)}, free {_decimal_text(left)}, "
+            f"short by {_decimal_text(needed - left)}. Plan MB first."
         )
     return render(
         request,
@@ -3036,6 +3118,7 @@ def mb_planning_page(request):
             "plan": plan,
             "rows": rows,
             "compound_options": compound_options,
+            "mb_alerts": _mb_shortage_alerts(plan, demand=demand),
             "selected_compound": selected_row["compound_code"] if selected_row else "",
         },
     )
