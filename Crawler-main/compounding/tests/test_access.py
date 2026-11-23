@@ -37,6 +37,13 @@ class CompoundingAccessTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Compound board")
 
+    def test_compounding_home_has_no_ai_excel_import_button(self):
+        response = self.client.get(reverse("compounding:board"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Import Excel with AI")
+        self.assertContains(response, "Production record")
+
     def test_compounding_save_requires_planning(self):
         self._restrict_to(["compounding_board"])
         response = self.client.post(
