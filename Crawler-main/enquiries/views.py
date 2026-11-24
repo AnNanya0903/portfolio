@@ -3416,7 +3416,6 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
     context = {"share_url": share_email.share_url(request, record), "share_password": password, "email": email}
     try:
         if not enquiry_id:
-        quotation_html = to_html(email["body"], name=share_email.sender_name(request.user))
             raise share_email.ShareEmailError("This share link is not linked to an enquiry.")
         to, cc = share_email.validate_recipients(email["to"], email["cc"])
         if not email["subject"] or not email["body"]:
@@ -3426,6 +3425,7 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
                                                       request=request)
         share_email.check_size(attachments)
         gmail = GmailService(request.user)
+        quotation_html = to_html(email["body"], name=share_email.sender_name(request.user))
         original = _thread_reply_target(gmail, email.get("thread"))
         if original is not None:
             # Same conversation as the earlier quotation / follow-ups: reply in that thread.

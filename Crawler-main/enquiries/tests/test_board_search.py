@@ -61,3 +61,10 @@ class BoardSearchViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-enquiry-id="3355"')
         self.assertNotContains(response, 'data-enquiry-id="4200"')
+
+    def test_search_with_open_status_and_empty_filters(self):
+        # Same query string as the board's search form: blank year / month / payment / document filters.
+        response = self.client.get(reverse("enquiries:board"), {
+            "per_page": "50", "fin_year": "", "month": "", "status": "open", "payment": "", "document": "",
+            "q": "PI Required"})
+        self.assertEqual(response.status_code, 200)
