@@ -19,6 +19,7 @@
       {% for email in t.emails %}<a href="mailto:{{ email }}">{{ email }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}{% endfor %}
   </div>
   <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary" target="_blank" rel="noopener" href="{% url 'kyc:customer_pdf' customer.pk %}"><i class="bi bi-filetype-pdf me-1"></i> Registration form (PDF)</a>
     <a class="btn btn-outline-secondary" href="{% url 'kyc:edit' customer.pk %}"><i class="bi bi-pencil me-1"></i> Edit details</a>
     <a class="btn btn-primary shadow-sm" href="{% url 'kyc:contact_new' customer.pk %}"><i class="bi bi-plus-lg me-1"></i> Add contact</a>
   </div>
@@ -98,6 +99,42 @@
           <div class="kyc-contact kyc-muted">{% if has_email %}Not sent to the customer yet.{% else %}Add a contact with an email address to send the details for verification.{% endif %}</div>
         {% endfor %}
       </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">KYC form by link</h6>
+        {% if kyc_link.active %}
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:link_detail' kyc_link.active.pk %}">Open</a>
+        {% elif can_send_kyc_link %}
+          <span class="d-flex gap-2 flex-wrap justify-content-end">
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'kyc:link_new' customer.pk %}"><i class="bi bi-send"></i> Send KYC Link</a>
+            <form method="post" action="{% url 'kyc:link_manual' customer.pk %}" class="m-0">{% csrf_token %}
+              <button class="btn btn-sm btn-outline-secondary" title="Fill the form yourself, for example while the customer is on the phone. No link or email is sent."><i class="bi bi-pencil-square"></i> Fill KYC manually</button>
+            </form>
+          </span>
+        {% endif %}
+      </div>
+      <div>
+        {% for r in kyc_link.requests %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center gap-2">
+            <span><a class="text-decoration-none" href="{% url 'kyc:link_detail' r.pk %}"><span class="kyc-chip kyc-chip--{{ r.status }}">{{ r.get_status_display }}</span></a>
+              {% if r.source == 'staff' and r.filled_by %}<span class="kyc-muted">Filled by {{ r.filled_by.get_full_name|default:r.filled_by.username }}{% if r.filled_at %} on {{ r.filled_at|date:"d M Y" }}{% endif %}</span>{% endif %}</span>
+            <span class="kyc-muted">{{ r.created_at|date:"d M Y" }}</span>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No KYC form sent yet. The customer fills it in through a private link, with documents.</div>
+        {% endfor %}
+      </div>
+      {% if kyc_link.approved %}
+        <div class="border-top p-3">
+          <div class="kyc-label mb-2">Approved KYC {% if kyc_link.approved.reviewed_at %}· {{ kyc_link.approved.reviewed_at|date:"d M Y" }}{% endif %}</div>
+          <dl class="row mb-0 small">
+            {% for row in kyc_link.approved_rows %}<dt class="col-5 fw-normal kyc-muted">{{ row.label }}</dt><dd class="col-7 mb-1" style="white-space: pre-line;">{{ row.value }}</dd>{% endfor %}
+          </dl>
+          <a class="small" href="{% url 'kyc:link_detail' kyc_link.approved.pk %}">Documents and full review</a>
+        </div>
+      {% endif %}
     </div>
 
     {% if mw_service_access.quotations|default:False %}

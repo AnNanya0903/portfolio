@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% block title %}Send KYC link - {{ customer.name }} - MagicWand 2.0{% endblock %}
+{% block extra_css %}{% include 'kyc/link/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:detail' customer.pk %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> {{ customer.name }}</a>
+    <h2 class="page-title">Send KYC link</h2>
+    <p class="page-subtitle">The customer gets a private link to fill in their KYC details and upload documents, without signing in. It works for {{ expiry_hours }} hours.</p>
+  </div>
+</div>
+{% if dry_run %}<div class="kyc-test-banner mb-3"><strong>Test mode.</strong> The email is not sent; you will see the link after clicking Send.</div>{% endif %}
+{% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+
+<div class="card border-0 shadow-sm" style="max-width: 720px;">
+  <div class="card-body">
+  {% if existing %}
+    <p>{{ customer.name }} already has a KYC request that is <span class="kyc-chip kyc-chip--{{ existing.status }}">{{ existing.get_status_display }}</span>.</p>
+    <a class="btn btn-primary" href="{% url 'kyc:link_detail' existing.pk %}">Open it</a>
+  {% elif not can_send %}
+    <p class="mb-0">Only Sales, Marketing, Accounts and Top Management can send KYC links.</p>
+  {% else %}
+    <form method="post">{% csrf_token %}
+      <div class="kyc-label mb-2">Send to (the code to open the form goes to the same address)</div>
+      {% for value, label in choices %}
+        <div class="form-check"><input class="form-check-input" type="radio" name="recipient" id="r{{ forloop.counter }}" value="{{ value }}" {% if forloop.first %}checked{% endif %}>
+          <label class="form-check-label" for="r{{ forloop.counter }}">{{ label }}</label></div>
+      {% empty %}
+        <p class="kyc-muted">This customer has no contact with an email. Type the address below.</p>
+      {% endfor %}
+      <label class="form-label mt-3" for="otherEmail">Or another email address</label>
+      <input type="email" class="form-control" id="otherEmail" name="other_email" placeholder="name@company.com" style="max-width: 360px;">
+      <label class="form-label mt-3" for="paymentTerms">Payment terms <span class="kyc-muted">(set by AVIGIRI; the customer sees it but cannot change it)</span></label>
+      <input type="text" class="form-control" id="paymentTerms" name="payment_terms" maxlength="200" list="paymentTermsList"
+             placeholder="e.g. 100 % Advance" style="max-width: 360px;">
+      <datalist id="paymentTermsList">{% for t in payment_suggestions %}<option value="{{ t }}">{% endfor %}</datalist>
+      <p class="kyc-muted mt-2">Known details (company name, addresses, GSTIN, PAN, transport, MSME, purchaser) are filled in for the customer to check.</p>
+      <button type="submit" class="btn btn-primary mt-2"><i class="bi bi-send me-1"></i> Send KYC link</button>
+    </form>
+  {% endif %}
+  </div>
+</div>
+{% endblock %}

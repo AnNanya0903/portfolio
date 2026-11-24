@@ -3,6 +3,7 @@ import io
 import shutil
 import tempfile
 from datetime import timedelta
+from decimal import Decimal
 from unittest import mock
 
 from cryptography.fernet import Fernet
@@ -41,14 +42,21 @@ def _png() -> bytes:
 PNG = _png()
 
 GOOD = {
-    "company_name": "Acme Seals Pvt Ltd", "company_address": "12 Industrial Area\nBengaluru 560058",
-    "billing_address": "12 Industrial Area\nBengaluru 560058", "delivery_address": "Plot 4, Hosur Road\nBengaluru 560068",
+    "company_name": "Acme Seals Pvt Ltd", "nature_of_company": "PRIVATE_LTD", "nature_of_business": "OEM",
+    "year_established": "2011", "cin": "u25203ka2011ptc059765", "website": "WWW.Acme.example",
+    "company_address": "12 Industrial Area", "company_city": "Bengaluru", "company_district": "Bengaluru Urban",
+    "company_state": "Karnataka", "company_pincode": "560058",
+    "same_billing_as_company": True, "same_delivery_as_billing": False,
+    "delivery_address": "Plot 4, Hosur Road", "delivery_city": "Hosur", "delivery_district": "Krishnagiri",
+    "delivery_state": "Tamil Nadu", "delivery_pincode": "635109",
     "gstin": "29ABCDE1234F1Z5", "msme_applicable": "YES", "udyam_aadhar_no": "udyam-ka-03-0012345",
+    "msme_category": "SMALL", "has_certification": "YES", "certification_no": "IATF 16949",
     "transportation": "VRL-TO PAY-DOOR", "preferred_transporter": "VRL", "delivery_type": "DOOR",
+    "products_of_interest": "Gaskets and seals", "expected_annual_business": "25.5",
     "contact_name": "Meera Rao", "contact_designation": "Purchase Manager",
     "contact_email": "meera@acme.example, stores@acme.example", "contact_phone": "98450 12345",
     "special_requirements": "Deliver before 5 PM", "pan": "ABCDE1234F", "account_holder_name": "Acme Seals Pvt Ltd",
-    "account_number": "123456789012", "ifsc": "HDFC0001234", "bank_name": "HDFC Bank",
+    "account_number": "123456789012", "ifsc": "HDFC0001234", "bank_name": "HDFC Bank, Peenya",
 }
 
 
@@ -360,8 +368,12 @@ class ValidationTests(Base):
     def test_submit_needs_every_field_document_and_consent(self):
         problems = svc.submit(self.req, consent=False, actor=Actor.customer())
         self.assertIn("consent", problems)
-        self.assertIn("account_number", problems)
-        self.assertIn("cancelled_cheque", problems)
+        # The mandatory (*) fields and documents of the paper form; bank details and the other documents are optional.
+        for key in ("nature_of_company", "company_state", "billing_pincode", "gstin", "pan", "msme_applicable",
+                    "contact_phone", "transportation", "delivery_type", "gst_certificate", "pan_card"):
+            self.assertIn(key, problems)
+        for key in ("account_number", "ifsc", "cancelled_cheque", "year_established", "udyam_certificate"):
+            self.assertNotIn(key, problems)
         self.assertEqual(KycRequest.objects.get(pk=self.req.pk).status, KycRequest.STATUS_SENT)
 
 
@@ -431,8 +443,12 @@ class FlowTests(Base):
     def test_pdf_follows_the_paper_form_and_leaves_out_pan_and_bank(self):
         from pypdf import PdfReader
 
-        _, req = self.submit_as_customer()
-        svc.set_payment_terms(req, "100 % Advance", Actor.staff(self.sales))
+        issued = self.create()
+        req = issued.request
+        svc.set_payment_terms(req, "100 % Advance", Actor.staff(self.sales))  # set before submit: printed on the form
+        self.fill_everything(req, Actor.customer())
+        self.assertEqual(svc.submit(req, True, Actor.customer()), {})
+        req = KycRequest.objects.get(pk=req.pk)
         self.client.force_login(self.accounts)
         response = self.client.get(reverse("kyc:link_request_pdf", args=[req.pk]))
         self.assertEqual(response["Content-Type"], "application/pdf")
@@ -743,3 +759,363 @@ class OnePageFormTests(Base):
     def test_old_preview_address_goes_to_the_form(self):
         self.assertRedirects(self.client.get(reverse("kyc:link_preview", args=[self.issued.token])), self.url,
                              fetch_redirect_response=False)
+
+
+# ----- The Customer Registration Form: new fields, manual filling, stored PDFs, approval ---------------------------
+
+
+def _text(content: bytes) -> str:
+    from pypdf import PdfReader
+
+    return " ".join(page.extract_text() for page in PdfReader(io.BytesIO(content)).pages)
+
+
+def _stored_text(doc) -> str:
+    from kyc.link_security import private_storage
+
+    return _text(private_storage.read(doc.storage_key))
+
+
+class RegistrationFormFieldTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.req = self.create().request
+        self.actor = Actor.customer()
+
+    def details(self):
+        return KycDetails.objects.get(request=self.req)
+
+    def test_new_fields_are_saved_and_tidied(self):
+        self.assertEqual(svc.save_draft(self.req, GOOD, self.actor), {})
+        d = self.details()
+        self.assertEqual((d.nature_of_company, d.nature_of_business, d.year_established),
+                         ("PRIVATE_LTD", "OEM", "2011"))
+        self.assertEqual((d.cin, d.website), ("U25203KA2011PTC059765", "www.acme.example"))
+        self.assertEqual((d.company_city, d.company_district, d.company_state, d.company_pincode),
+                         ("Bengaluru", "Bengaluru Urban", "Karnataka", "560058"))
+        self.assertEqual((d.delivery_city, d.delivery_district, d.delivery_state, d.delivery_pincode),
+                         ("Hosur", "Krishnagiri", "Tamil Nadu", "635109"))
+        self.assertEqual((d.msme_category, d.has_certification, d.certification_no), ("SMALL", "YES", "IATF 16949"))
+        self.assertEqual((d.products_of_interest, d.expected_annual_business), ("Gaskets and seals", "25.5"))
+
+    def test_new_fields_are_validated(self):
+        errors = svc.save_draft(self.req, {
+            "company_pincode": "56005", "billing_pincode": "060001", "year_established": "1850",
+            "nature_of_company": "CLUB", "nature_of_business": "SHOP", "msme_category": "HUGE",
+            "has_certification": "MAYBE", "expected_annual_business": "lots", "website": "not a site",
+            "company_city": "Bengaluru"}, self.actor)
+        self.assertEqual(set(errors), {"company_pincode", "billing_pincode", "year_established", "nature_of_company",
+                                       "nature_of_business", "msme_category", "has_certification",
+                                       "expected_annual_business", "website"})
+        self.assertEqual(self.details().company_city, "Bengaluru")  # the valid field is still saved
+        self.assertIn("future", svc.save_draft(self.req, {"year_established": "2099"}, self.actor)["year_established"])
+
+    def test_certificate_number_is_needed_only_when_certified(self):
+        svc.save_draft(self.req, {**GOOD, "certification_no": ""}, self.actor)
+        self.assertIn("certification_no", svc.problems_before_submit(KycRequest.objects.get(pk=self.req.pk)))
+        svc.save_draft(self.req, {"has_certification": "NO"}, self.actor)
+        self.assertNotIn("certification_no", svc.problems_before_submit(KycRequest.objects.get(pk=self.req.pk)))
+
+    def test_same_as_ticks_copy_the_address_when_saved(self):
+        svc.save_draft(self.req, {**GOOD, "billing_address": "Elsewhere", "billing_city": "Pune",
+                                  "same_billing_as_company": True, "same_delivery_as_billing": True}, self.actor)
+        d = self.details()
+        self.assertEqual((d.billing_address, d.billing_city, d.billing_state, d.billing_pincode),
+                         ("12 Industrial Area", "Bengaluru", "Karnataka", "560058"))
+        self.assertEqual((d.delivery_address, d.delivery_district, d.delivery_pincode),
+                         ("12 Industrial Area", "Bengaluru Urban", "560058"))
+        self.assertTrue(d.same_billing_as_company and d.same_delivery_as_billing)
+        # Unticked: the copy stays as text and can now be edited on its own.
+        svc.save_draft(self.req, {"same_billing_as_company": False, "billing_city": "Mysuru"}, self.actor)
+        d = self.details()
+        self.assertEqual((d.billing_city, d.billing_address, d.same_billing_as_company),
+                         ("Mysuru", "12 Industrial Area", False))
+        self.assertEqual(d.delivery_city, "Mysuru")  # delivery still follows billing
+
+    def test_same_as_does_not_overwrite_an_address_the_customer_may_not_change(self):
+        svc.save_draft(self.req, GOOD, self.actor)
+        self.fill_everything(self.req, self.actor)
+        svc.submit(self.req, True, self.actor)
+        svc.review(KycRequest.objects.get(pk=self.req.pk), "reject", Actor.staff(self.accounts),
+                   reason="Fix the delivery PIN", fields=["delivery_pincode", "same_delivery_as_billing"])
+        req = KycRequest.objects.get(pk=self.req.pk)
+        svc.save_draft(req, {"same_delivery_as_billing": True, "company_city": "Changed"}, self.actor)
+        d = self.details()
+        self.assertEqual(d.company_city, "Bengaluru")  # not reopened
+        self.assertEqual((d.delivery_pincode, d.delivery_city), ("560058", "Hosur"))  # only the reopened part copied
+
+    def test_the_ticks_start_ticked_with_the_customers_known_address(self):
+        other = Customer.objects.create(code="AV-0002", name="Beta Rubber", address="1 MG Road", city="Pune",
+                                        state="Maharashtra", pincode="411001", website="beta.example")
+        d = KycDetails.objects.get(request=svc.create(other, "b@beta.example", Actor.staff(self.sales)).request)
+        self.assertTrue(d.same_billing_as_company and d.same_delivery_as_billing)
+        self.assertEqual((d.company_city, d.billing_state, d.delivery_pincode, d.website),
+                         ("Pune", "Maharashtra", "411001", "beta.example"))
+
+    def test_only_gst_and_pan_documents_are_mandatory_and_the_others_can_be_added(self):
+        svc.save_draft(self.req, GOOD, self.actor)
+        req = KycRequest.objects.get(pk=self.req.pk)
+        self.assertEqual({k for k in svc.problems_before_submit(req) if k.endswith(("certificate", "_card", "cheque"))},
+                         {"gst_certificate", "pan_card"})
+        for doc_type in ("gst_certificate", "pan_card", "udyam_certificate", "incorporation_certificate",
+                         "iso_certificate"):
+            svc.upload_document(self.req, doc_type, pdf(), self.actor)
+        self.assertEqual(svc.submit(self.req, True, self.actor), {})
+        self.assertEqual(KycRequestDocument.objects.filter(request=self.req).exclude(
+            doc_type="generated_form").count(), 5)
+
+    def test_quality_and_stores_contacts_print_and_reach_the_customer(self):
+        rows = [dict(ACCOUNTS_CONTACT, department="quality", name="Qasim Quality", email="q@acme.example"),
+                dict(ACCOUNTS_CONTACT, department="stores_logistics", name="Sita Stores", email="s@acme.example"),
+                dict(ACCOUNTS_CONTACT, department="top_management", name="Mr MD", email="md@acme.example")]
+        svc.save_draft(self.req, {**GOOD, "extra_contacts": rows}, self.actor)
+        for doc_type in ("gst_certificate", "pan_card"):
+            svc.upload_document(self.req, doc_type, pdf(), self.actor)
+        self.assertEqual(svc.submit(self.req, True, self.actor), {})
+        sheet = link_pdf.request_sheet(KycRequest.objects.get(pk=self.req.pk))
+        by_row = {label.rstrip(" *"): c for label, c in sheet.contacts}
+        self.assertEqual((by_row["Quality"].name, by_row["Stores / Logistics"].name, by_row["Managing Director"].name),
+                         ("Qasim Quality", "Sita Stores", "Mr MD"))
+        svc.review(KycRequest.objects.get(pk=self.req.pk), "approve", Actor.staff(self.accounts))
+        got = {(c.category, c.name) for c in self.customer.contacts.all()}
+        self.assertTrue({("quality", "Qasim Quality"), ("stores_logistics", "Sita Stores"),
+                         ("top_management", "Mr MD")} <= got)
+
+    def test_models_and_migrations_agree(self):
+        # makemigrations --check exits with an error when a model has a change that no migration covers.
+        call_command("makemigrations", "kyc", "--check", "--dry-run", stdout=io.StringIO())
+
+
+class StoredFormTests(Base):
+    def submit_online(self):
+        issued = self.create()
+        actor = Actor.customer()
+        self.fill_everything(issued.request, actor)
+        self.assertEqual(svc.submit(issued.request, True, actor), {})
+        return issued, KycRequest.objects.get(pk=issued.request.pk)
+
+    def test_submit_stores_the_registration_form_as_a_document(self):
+        _, req = self.submit_online()
+        doc = svc.generated_form(req)
+        self.assertEqual((doc.doc_type, doc.is_latest, doc.mime_type), ("generated_form", True, "application/pdf"))
+        self.assertRegex(doc.original_name, r"^Customer-Registration-AVG\d+[A-Z]{2}-\d{8}-\d{4}\.pdf$")
+        self.assertRegex(doc.storage_key, r"^kyc-requests/[0-9a-f]{32}\.pdf$")  # the name is not the file name
+        text = _stored_text(doc)
+        for expected in ("Acme Seals Pvt Ltd", "29ABCDE1234F1Z5", "Meera Rao", "XXXXXX234F", "XXXXXXXX9012",
+                         "Gaskets and seals", "635109"):
+            self.assertIn(expected, text)
+        self.assertNotIn("ABCDE1234F", text.replace("29ABCDE1234F1Z5", ""))  # PAN only masked
+        self.assertNotIn("123456789012", text)
+        self.assertTrue(KycRequestAuditLog.objects.filter(request=req, action="pdf_generated").exists())
+
+    def test_every_submit_keeps_the_older_version_and_marks_the_newest(self):
+        _, req = self.submit_online()
+        svc.review(req, "reject", Actor.staff(self.accounts), reason="Check the website", fields=["website"])
+        req = KycRequest.objects.get(pk=req.pk)
+        svc.save_draft(req, {"website": "https://new.acme.example"}, Actor.customer())
+        self.assertEqual(svc.submit(req, True, Actor.customer()), {})
+        versions = svc.generated_versions(req)
+        self.assertEqual(len(versions), 2)
+        self.assertEqual([v.is_latest for v in versions], [True, False])
+        self.assertIn("new.acme.example", _stored_text(versions[0]))
+        self.assertIn("www.acme.example", _stored_text(versions[1]))
+        self.assertEqual(svc.generated_form(req).pk, versions[0].pk)
+
+    def test_downloads_use_the_stored_file_and_fall_back_to_a_live_render(self):
+        from kyc.link_security import private_storage
+
+        _, req = self.submit_online()
+        doc = svc.generated_form(req)
+        url = reverse("kyc:link_request_pdf", args=[req.pk])
+        self.assertNotEqual(self.client.get(url).status_code, 200)  # signed-in staff only
+        self.assertNotEqual(self.client.get(reverse("kyc:link_pdf_version", args=[req.pk, doc.pk])).status_code, 200)
+        self.client.force_login(self.design)
+        response = self.client.get(url)
+        self.assertEqual(response.content, private_storage.read(doc.storage_key))
+        self.assertIn(doc.original_name, response["Content-Disposition"])
+        self.assertTrue(KycRequestAuditLog.objects.filter(request=req, action="document_downloaded",
+                                                          metadata__doc_type="generated_form").exists())
+        self.assertEqual(self.client.get(reverse("kyc:link_pdf_version", args=[req.pk, doc.pk])).status_code, 200)
+        KycRequestDocument.objects.filter(doc_type="generated_form").delete()
+        live = self.client.get(url)
+        self.assertTrue(live.content.startswith(b"%PDF"))
+        self.assertTrue(KycRequestAuditLog.objects.filter(request=req, action="pdf_downloaded").exists())
+
+    def test_the_customer_downloads_the_stored_form_after_the_otp(self):
+        from kyc.link_security import private_storage
+
+        issued, req = self.submit_online()
+        url = reverse("kyc:link_pdf", args=[issued.token])
+        self.assertEqual(self.client.get(url).status_code, 403)
+        self.verify_in_browser(issued.token)
+        self.assertEqual(self.client.get(url).content, private_storage.read(svc.generated_form(req).storage_key))
+
+    def test_a_pdf_problem_does_not_stop_the_submit(self):
+        issued = self.create()
+        self.fill_everything(issued.request, Actor.customer())
+        with mock.patch("kyc.link_pdf.render", side_effect=RuntimeError("boom")):
+            self.assertEqual(svc.submit(issued.request, True, Actor.customer()), {})
+        req = KycRequest.objects.get(pk=issued.request.pk)
+        self.assertEqual(req.status, KycRequest.STATUS_SUBMITTED)
+        self.assertIsNone(svc.generated_form(req))
+        self.assertTrue(KycRequestAuditLog.objects.filter(request=req, action="pdf_failed").exists())
+
+    def test_approval_prints_the_form_again_with_the_office_use_panel(self):
+        issued = self.create()
+        req = issued.request
+        svc.set_payment_terms(req, "100 % Advance", Actor.staff(self.sales))
+        self.fill_everything(req, Actor.customer())
+        svc.submit(req, True, Actor.customer())
+        svc.set_credit_limit(req, "5,00,000", Actor.staff(self.accounts))
+        first = svc.generated_form(KycRequest.objects.get(pk=req.pk))
+        self.assertNotIn("500,000.00", _stored_text(first))  # the credit limit is internal until approval
+        svc.review(KycRequest.objects.get(pk=req.pk), "approve", Actor.staff(self.accounts))
+        req = KycRequest.objects.get(pk=req.pk)
+        latest = svc.generated_form(req)
+        self.assertNotEqual(latest.pk, first.pk)
+        self.assertEqual(len(svc.generated_versions(req)), 2)
+        text = _stored_text(latest)
+        today = timezone.localtime(req.reviewed_at, timezone.get_fixed_timezone(330))
+        for expected in ("100 % Advance", "500,000.00", f"{today:%d %b %Y}", "accounts"):
+            self.assertIn(expected, text)
+        sheet = link_pdf.request_sheet(req)
+        self.assertEqual((sheet.approved_by, sheet.verified_by, sheet.credit_limit),
+                         ("accounts", "accounts", "500,000.00"))
+        # The customer record gets what was approved.
+        c = Customer.objects.get(pk=self.customer.pk)
+        self.assertEqual((c.payment_terms, c.credit_limit), ("100 % Advance", Decimal("500000.00")))
+        self.assertEqual((c.city, c.state, c.pincode, c.website),
+                         ("Bengaluru", "Karnataka", "560058", "www.acme.example"))
+
+    def test_top_management_approval_leaves_verified_by_for_accounts_to_sign(self):
+        _, req = self.submit_online()
+        svc.review(req, "approve", Actor.staff(self.top))
+        sheet = link_pdf.request_sheet(KycRequest.objects.get(pk=req.pk))
+        self.assertEqual((sheet.approved_by, sheet.verified_by), ("apai", ""))
+
+    def test_the_customer_page_opens_the_stored_approved_form(self):
+        from kyc.link_security import private_storage
+
+        _, req = self.submit_online()
+        svc.review(req, "approve", Actor.staff(self.top))
+        approved = svc.generated_form(KycRequest.objects.get(pk=req.pk))
+        self.client.force_login(self.design)
+        response = self.client.get(reverse("kyc:customer_pdf", args=[self.customer.pk]))
+        self.assertEqual(response.content, private_storage.read(approved.storage_key))
+        self.assertContains(self.client.get(reverse("kyc:link_detail", args=[req.pk])), "Stored registration forms")
+
+    def test_credit_limit_rules(self):
+        req = self.create().request
+        with self.assertRaisesMessage(KycLinkError, "Only Accounts and Top Management"):
+            svc.set_credit_limit(req, "1000", Actor.staff(self.sales))
+        for bad in ("abc", "-5", "10.555"):
+            with self.assertRaises(KycLinkError):
+                svc.set_credit_limit(req, bad, Actor.staff(self.accounts))
+        self.assertEqual(svc.set_credit_limit(req, "12,50,000.50", Actor.staff(self.top)).credit_limit,
+                         Decimal("1250000.50"))
+        self.assertIsNone(svc.set_credit_limit(req, "", Actor.staff(self.top)).credit_limit)
+        self.client.force_login(self.sales)
+        self.client.post(reverse("kyc:link_credit_limit", args=[req.pk]), {"credit_limit": "99"})
+        self.assertIsNone(KycRequest.objects.get(pk=req.pk).credit_limit)
+        self.assertNotContains(self.client.get(reverse("kyc:link_detail", args=[req.pk])), 'name="credit_limit"')
+        self.client.force_login(self.accounts)
+        self.assertContains(self.client.get(reverse("kyc:link_detail", args=[req.pk])), 'name="credit_limit"')
+
+
+class ManualFillTests(Base):
+    def test_a_manual_request_has_no_link_email_or_otp(self):
+        req = svc.create_manual(self.customer, Actor.staff(self.sales, "10.0.0.5"), payment_terms="100 % Advance")
+        self.assertEqual((req.source, req.status, req.filled_by, req.payment_terms),
+                         ("staff", "in_progress", self.sales, "100 % Advance"))
+        self.assertEqual((req.token_hash, req.recipient_email, req.expires_at), ("", "", None))
+        self.assertFalse(EmailLog.objects.exists())
+        self.assertFalse(KycOtp.objects.exists())
+        self.assertEqual(svc.link_state(req), "invalid")  # no customer link exists
+        log = KycRequestAuditLog.objects.get(request=req, action="staff_fill_started")
+        self.assertEqual((log.actor, log.ip, log.metadata["manual"]), (self.sales, "10.0.0.5", True))
+        self.assertEqual(KycDetails.objects.get(request=req).company_name, "Acme Seals")  # known details prefilled
+
+    def test_the_manual_flow_through_the_staff_pages_ends_with_a_stored_pdf_and_a_signed_scan(self):
+        self.client.force_login(self.sales)
+        detail = self.client.get(reverse("kyc:detail", args=[self.customer.pk]))
+        self.assertContains(detail, "Fill KYC manually")
+        r = self.client.post(reverse("kyc:link_manual", args=[self.customer.pk]))
+        req = KycRequest.objects.get(customer=self.customer)
+        self.assertRedirects(r, reverse("kyc:link_fill", args=[req.pk]), fetch_redirect_response=False)
+        page = self.client.get(reverse("kyc:link_fill", args=[req.pk]))
+        self.assertContains(page, "kycFormConfig")
+        self.assertContains(page, '"mode": "staff"')
+        saved = self.client.put(reverse("kyc:link_fill_save", args=[req.pk]), {"values": GOOD},
+                                content_type="application/json")
+        self.assertEqual(saved.json()["errors"], {})
+        for doc_type in ("gst_certificate", "pan_card"):
+            r = self.client.post(reverse("kyc:link_fill_upload", args=[req.pk]), {"doc_type": doc_type, "file": pdf()})
+            self.assertEqual(r.status_code, 200, r.content)
+        r = self.client.post(reverse("kyc:link_fill_submit", args=[req.pk]), {"consent": True},
+                             content_type="application/json")
+        self.assertEqual(r.status_code, 200, r.content)
+        req = KycRequest.objects.get(pk=req.pk)
+        self.assertEqual((req.status, req.source, req.filled_by), ("submitted", "staff", self.sales))
+        self.assertIsNotNone(req.filled_at)
+        self.assertIsNotNone(svc.generated_form(req))
+        actions = set(KycRequestAuditLog.objects.filter(request=req).values_list("action", flat=True))
+        self.assertTrue({"created", "staff_fill_started", "draft_saved", "document_uploaded", "submitted",
+                         "pdf_generated"} <= actions)
+        # A scanned paper form, signed and stamped, is attached by staff.
+        r = self.client.post(reverse("kyc:link_signed_upload", args=[req.pk]), {"file": pdf("scan.pdf")})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(svc.signed_form(req).original_name, "scan.pdf")
+        self.assertContains(self.client.get(reverse("kyc:link_detail", args=[req.pk])), "Signed copy uploaded")
+
+    def test_only_signed_in_staff_who_may_send_can_fill_manually(self):
+        with self.assertRaises(KycLinkError):
+            svc.create_manual(self.customer, Actor.staff(self.design))
+        url = reverse("kyc:link_manual", args=[self.customer.pk])
+        self.assertNotEqual(self.client.post(url).status_code, 200)
+        self.client.force_login(self.design)
+        self.assertNotContains(self.client.get(reverse("kyc:detail", args=[self.customer.pk])), "Fill KYC manually")
+        self.client.post(url)
+        self.assertFalse(KycRequest.objects.exists())
+
+    def test_one_open_request_per_customer_and_the_button_gives_way_to_it(self):
+        svc.create_manual(self.customer, Actor.staff(self.sales))
+        with self.assertRaises(KycLinkError):
+            svc.create_manual(self.customer, Actor.staff(self.accounts))
+        self.client.force_login(self.sales)
+        self.assertNotContains(self.client.get(reverse("kyc:detail", args=[self.customer.pk])), "Fill KYC manually")
+        r = self.client.post(reverse("kyc:link_manual", args=[self.customer.pk]))
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(KycRequest.objects.count(), 1)
+
+    def test_only_the_staff_member_who_started_it_can_fill_it(self):
+        req = svc.create_manual(self.customer, Actor.staff(self.sales))
+        self.client.force_login(self.accounts)
+        r = self.client.put(reverse("kyc:link_fill_save", args=[req.pk]), {"values": {"company_name": "X"}},
+                            content_type="application/json")
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(KycDetails.objects.get(request=req).company_name, "Acme Seals")
+
+    def test_the_customer_can_be_asked_only_to_confirm(self):
+        req = svc.create_manual(self.customer, Actor.staff(self.accounts))
+        self.fill_everything(req, Actor.staff(self.accounts))
+        self.assertEqual(svc.submit(req, True, Actor.staff(self.accounts)), {})
+        req = KycRequest.objects.get(pk=req.pk)
+        self.assertEqual(svc.default_confirm_email(req), "meera@acme.example")  # the purchaser's, as a suggestion
+        with self.assertRaisesMessage(KycLinkError, "Enter the customer's email"):
+            svc.request_confirmation(req, Actor.staff(self.accounts))
+        with self.assertRaisesMessage(KycLinkError, "valid email"):
+            svc.request_confirmation(req, Actor.staff(self.accounts), recipient_email="nope")
+        issued = svc.request_confirmation(req, Actor.staff(self.accounts), recipient_email="Meera@Acme.example")
+        self.assertEqual((svc.link_state(issued.request), issued.request.link_purpose), ("confirm", "confirm"))
+        self.verify_in_browser(issued.token)
+        self.assertEqual(self.client.post(reverse("kyc:link_confirm", args=[issued.token])).status_code, 200)
+        done = KycRequest.objects.get(pk=req.pk)
+        self.assertIsNotNone(done.confirmed_by_customer_at)
+        self.assertEqual(done.source, "staff")
+        self.assertFalse(svc.can_approve(self.accounts, done))  # the filler still cannot approve
+
+    def test_the_fill_page_offers_the_customers_email_for_confirmation(self):
+        req = svc.create_manual(self.customer, Actor.staff(self.sales))
+        self.client.force_login(self.sales)
+        self.assertContains(self.client.get(reverse("kyc:link_fill", args=[req.pk])),
+                            '"confirmEmail": "meera@acme.example"')

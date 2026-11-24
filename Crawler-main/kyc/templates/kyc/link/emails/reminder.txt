@@ -1,0 +1,9 @@
+{% load tz %}{% autoescape off %}Dear Sir / Madam,
+
+This is a reminder to complete the KYC details for {{ customer.name }}. We sent you a private link on {{ sent_on|timezone:"Asia/Kolkata"|date:"j F Y" }} with the subject "AVIGIRI: please complete your KYC details".
+
+Please use the link in that email. Anything you have already filled in is saved. The link works until {{ valid_until|timezone:"Asia/Kolkata"|date:"j F Y, g:i A" }} (IST).
+
+If you cannot find the email, reply to this one and we will send a new link.
+
+{{ signature }}{% endautoescape %}

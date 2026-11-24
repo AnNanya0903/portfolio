@@ -119,6 +119,9 @@ class Customer(models.Model):
     pan = models.CharField("PAN", max_length=10, blank=True, default="")
     phone = models.CharField("Company phone", max_length=40, blank=True, default="")
     website = models.CharField(max_length=255, blank=True, default="")
+    # Set when a KYC form is approved (office-use panel of the Customer Registration Form).
+    payment_terms = models.CharField(max_length=200, blank=True, default="")
+    credit_limit = models.DecimalField("Credit limit (Rs.)", max_digits=14, decimal_places=2, null=True, blank=True)
     notes = models.TextField(blank=True, default="")
     kyc_status = models.CharField(max_length=10, choices=KYC_STATUS_CHOICES, default=KYC_DRAFT)
     # The teams that handle this customer: all active departments unless someone unticks some.
@@ -161,11 +164,15 @@ class CustomerContact(models.Model):
     CATEGORY_TECHNICAL = "technical"
     CATEGORY_ACCOUNTS = "accounts"
     CATEGORY_MANAGEMENT = "top_management"
+    CATEGORY_QUALITY = "quality"
+    CATEGORY_STORES = "stores_logistics"
     CATEGORY_CHOICES = (
         (CATEGORY_SALES, "Sales and marketing"),
         (CATEGORY_TECHNICAL, "Technical / design"),
         (CATEGORY_ACCOUNTS, "Accounts"),
         (CATEGORY_MANAGEMENT, "Top management"),
+        (CATEGORY_QUALITY, "Quality"),
+        (CATEGORY_STORES, "Stores / logistics"),
     )
 
     customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="contacts")
@@ -429,3 +436,237 @@ def _default_to_all_departments(sender, instance, created, raw=False, **kwargs):
     """A customer saved without a team (an API call, a script) is given every active department."""
     if created and not raw and not instance.departments.exists():
         instance.departments.add(*active_departments())
+
+
+# ----- KYC by shareable link ---------------------------------------------------------------------------------
+# Staff send a customer a private link; the customer fills the KYC form and uploads documents without signing in;
+# Accounts or Top Management approve or reject. See kyc/link_requests.py for the rules.
+
+
+class KycRequest(models.Model):
+    """One KYC form for one customer, filled through a private link (or by staff on the customer's behalf).
+
+    Only a SHA-256 hash of the link's token is stored. `token_hash` is empty while no link is open (revoked,
+    expired, submitted, or staff are filling it in).
+    """
+
+    STATUS_SENT = "sent"
+    STATUS_OPENED = "opened"
+    STATUS_IN_PROGRESS = "in_progress"
+    STATUS_SUBMITTED = "submitted"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_EXPIRED = "expired"
+    STATUS_REVOKED = "revoked"
+    STATUS_CHOICES = (
+        (STATUS_SENT, "Sent"),
+        (STATUS_OPENED, "Opened"),
+        (STATUS_IN_PROGRESS, "In progress"),
+        (STATUS_SUBMITTED, "Submitted"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_EXPIRED, "Expired"),
+        (STATUS_REVOKED, "Revoked"),
+    )
+    # The customer may still fill the form through the link in these.
+    OPEN_STATUSES = (STATUS_SENT, STATUS_OPENED, STATUS_IN_PROGRESS, STATUS_REJECTED)
+
+    SOURCE_CUSTOMER = "customer"
+    SOURCE_STAFF = "staff"
+    SOURCE_CHOICES = ((SOURCE_CUSTOMER, "Customer"), (SOURCE_STAFF, "Staff"))
+
+    PURPOSE_FILL = "fill"  # the link opens the form
+    PURPOSE_CONFIRM = "confirm"  # the link asks the customer to confirm what staff entered
+    PURPOSE_CHOICES = ((PURPOSE_FILL, "Fill the form"), (PURPOSE_CONFIRM, "Confirm details"))
+
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="kyc_requests")
+    token_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    link_purpose = models.CharField(max_length=10, choices=PURPOSE_CHOICES, default=PURPOSE_FILL)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_SENT, db_index=True)
+    recipient_email = models.CharField(max_length=254, blank=True, default="")  # the link and the OTP go here
+    # Set by AVIGIRI staff, shown read-only to the customer (e.g. "100 % Advance").
+    payment_terms = models.CharField(max_length=200, blank=True, default="")
+    # Set by Accounts / Top Management; printed in the office-use panel, never shown to the customer.
+    credit_limit = models.DecimalField("Credit limit (Rs.)", max_digits=14, decimal_places=2, null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)  # when the current link was issued
+    reminder_sent_at = models.DateTimeField(null=True, blank=True)  # reminder for the current link
+    opened_at = models.DateTimeField(null=True, blank=True)
+    otp_verified_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES, default=SOURCE_CUSTOMER)
+    filled_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    filled_at = models.DateTimeField(null=True, blank=True)
+    confirmation_requested_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by_customer_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reject_reason = models.TextField(blank=True, default="")
+    # Field keys and document types the customer may change after a rejection; empty means everything.
+    rejected_fields = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "kyc_request"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"KycRequest:{self.pk}:{self.customer_id}:{self.status}"
+
+    @property
+    def link_active(self) -> bool:
+        """The customer can still use the current link (see kyc.link_requests.link_state)."""
+        from .link_requests import link_active
+
+        return link_active(self)
+
+
+class KycDetails(models.Model):
+    """What the customer (or staff) entered. PAN and the bank account number are stored encrypted (Fernet,
+    kyc/link_security.py) with their last four characters kept apart for the masked display."""
+
+    request = models.OneToOneField(KycRequest, on_delete=models.CASCADE, related_name="details")
+    # As on the paper KYC form (DA/AC/01): company, addresses, GSTIN, MSME
+    company_name = models.CharField(max_length=255, blank=True, default="")
+    nature_of_company = models.CharField(max_length=20, blank=True, default="")  # codes: link_fields.NATURE_OF_COMPANY
+    nature_of_business = models.CharField(max_length=20, blank=True, default="")
+    year_established = models.CharField(max_length=4, blank=True, default="")
+    cin = models.CharField("CIN / registration no.", max_length=30, blank=True, default="")
+    website = models.CharField(max_length=255, blank=True, default="")
+    company_address = models.TextField(blank=True, default="")
+    company_city = models.CharField(max_length=100, blank=True, default="")
+    company_district = models.CharField(max_length=100, blank=True, default="")
+    company_state = models.CharField(max_length=100, blank=True, default="")
+    company_pincode = models.CharField(max_length=6, blank=True, default="")
+    billing_address = models.TextField(blank=True, default="")  # Billing address / Buyer
+    billing_city = models.CharField(max_length=100, blank=True, default="")
+    billing_district = models.CharField(max_length=100, blank=True, default="")
+    billing_state = models.CharField(max_length=100, blank=True, default="")
+    billing_pincode = models.CharField(max_length=6, blank=True, default="")
+    same_billing_as_company = models.BooleanField(default=False)  # the "Same as Company Address" tick
+    delivery_address = models.TextField(blank=True, default="")  # Delivery address / Consignee
+    delivery_city = models.CharField(max_length=100, blank=True, default="")
+    delivery_district = models.CharField(max_length=100, blank=True, default="")
+    delivery_state = models.CharField(max_length=100, blank=True, default="")
+    delivery_pincode = models.CharField(max_length=6, blank=True, default="")
+    same_delivery_as_billing = models.BooleanField(default=False)  # the "Same as Billing Address" tick
+    gstin = models.CharField("GSTIN", max_length=15, blank=True, default="")
+    msme_applicable = models.CharField(max_length=3, blank=True, default="")  # YES / NO
+    udyam_aadhar_no = models.CharField(max_length=50, blank=True, default="")
+    msme_category = models.CharField(max_length=6, blank=True, default="")  # MICRO / SMALL / MEDIUM
+    has_certification = models.CharField(max_length=3, blank=True, default="")  # ISO / IATF / other: YES / NO
+    certification_no = models.CharField(max_length=100, blank=True, default="")
+    # Transport and delivery (codes as on Customer: ARC / VRL / OTHER, DOOR / GODOWN)
+    transportation = models.CharField(max_length=150, blank=True, default="")
+    preferred_transporter = models.CharField(max_length=10, blank=True, default="")
+    other_transporter = models.CharField(max_length=100, blank=True, default="")
+    delivery_type = models.CharField(max_length=10, blank=True, default="")
+    products_of_interest = models.CharField(max_length=255, blank=True, default="")
+    expected_annual_business = models.CharField("Expected annual business (Rs. lacs)", max_length=12, blank=True,
+                                                default="")
+    # Contact details
+    contact_name = models.CharField(max_length=200, blank=True, default="")
+    contact_designation = models.CharField(max_length=200, blank=True, default="")
+    contact_email = models.CharField(max_length=500, blank=True, default="")  # one or more, comma-separated
+    contact_phone = models.CharField(max_length=20, blank=True, default="")
+    # More contact persons, each from a department: [{"department", "name", "designation", "email", "phone"}]
+    extra_contacts = models.JSONField(default=list, blank=True)
+    special_requirements = models.TextField(blank=True, default="")
+    # PAN (not on the paper form)
+    pan_encrypted = models.TextField(blank=True, default="")
+    pan_last4 = models.CharField(max_length=4, blank=True, default="")
+    # Bank
+    account_holder_name = models.CharField(max_length=200, blank=True, default="")
+    account_number_encrypted = models.TextField(blank=True, default="")
+    account_last4 = models.CharField(max_length=4, blank=True, default="")
+    ifsc = models.CharField("IFSC", max_length=11, blank=True, default="")
+    bank_name = models.CharField(max_length=200, blank=True, default="")
+
+    consent_given_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "kyc_request_details"
+
+    def __str__(self) -> str:
+        return f"KycDetails:{self.request_id}"
+
+
+class KycRequestDocument(models.Model):
+    """A document uploaded for a KYC request. Kept in private storage under a random name; only staff can
+    download it, through an authenticated view. A newer upload of the same type replaces the older one."""
+
+    TYPE_GST = "gst_certificate"
+    TYPE_PAN = "pan_card"
+    TYPE_CHEQUE = "cancelled_cheque"
+    TYPE_UDYAM = "udyam_certificate"
+    TYPE_INCORPORATION = "incorporation_certificate"  # certificate of incorporation / partnership deed
+    TYPE_ISO = "iso_certificate"  # ISO / IATF certificate
+    TYPE_SIGNED = "signed_form"  # the KYC form PDF, signed and stamped by the customer (Sign & Seal)
+    # The Customer Registration Form as AVIGIRI generated it, saved on every submit and approval. Older versions
+    # are kept; `is_latest` marks the current one.
+    TYPE_GENERATED = "generated_form"
+    TYPE_CHOICES = ((TYPE_GST, "GST certificate"), (TYPE_PAN, "PAN card"), (TYPE_UDYAM, "Udyam (MSME) certificate"),
+                    (TYPE_CHEQUE, "Cancelled cheque / bank letter"),
+                    (TYPE_INCORPORATION, "Certificate of incorporation / partnership deed"),
+                    (TYPE_ISO, "ISO / IATF certificate"), (TYPE_SIGNED, "Signed KYC form (sign & seal)"),
+                    (TYPE_GENERATED, "Customer Registration Form (generated)"))
+
+    request = models.ForeignKey(KycRequest, on_delete=models.CASCADE, related_name="documents")
+    doc_type = models.CharField(max_length=30, choices=TYPE_CHOICES)
+    is_latest = models.BooleanField(default=True)  # only generated forms keep older versions
+    storage_key = models.CharField(max_length=255)
+    original_name = models.CharField(max_length=255, blank=True, default="")
+    mime_type = models.CharField(max_length=60)
+    size = models.PositiveIntegerField(default=0)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "kyc_request_document"
+        ordering = ["doc_type", "-uploaded_at"]
+
+    def __str__(self) -> str:
+        return f"KycRequestDocument:{self.request_id}:{self.doc_type}"
+
+
+class KycOtp(models.Model):
+    """A one-time code sent to the customer before the form opens. Only a hash of the code is stored."""
+
+    request = models.ForeignKey(KycRequest, on_delete=models.CASCADE, related_name="otps")
+    otp_hash = models.CharField(max_length=64)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "kyc_request_otp"
+        ordering = ["-created_at", "-id"]
+
+
+class KycRequestAuditLog(models.Model):
+    """Everything that happens to a KYC request: links, OTPs, drafts, reviews and every reveal of PAN or the
+    bank account number. Never holds the values themselves."""
+
+    ACTOR_STAFF = "staff"
+    ACTOR_CUSTOMER = "customer"
+    ACTOR_SYSTEM = "system"
+    ACTOR_CHOICES = ((ACTOR_STAFF, "Staff"), (ACTOR_CUSTOMER, "Customer"), (ACTOR_SYSTEM, "System"))
+
+    request = models.ForeignKey(KycRequest, on_delete=models.CASCADE, related_name="audit_logs")
+    action = models.CharField(max_length=40, db_index=True)
+    actor_type = models.CharField(max_length=10, choices=ACTOR_CHOICES)
+    actor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "kyc_request_audit_log"
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self) -> str:
+        return f"{self.request_id}:{self.action}:{self.actor_type}"

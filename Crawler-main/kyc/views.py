@@ -115,6 +115,8 @@ def _marketing_activity(customer: Customer) -> dict:
 
 @login_required
 def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
+    from . import link_requests
+
     customer = get_object_or_404(
         Customer.objects.select_related("created_by", "updated_by").prefetch_related("departments__contacts"), pk=pk)
     log_audit(request.user, customer, KycAuditLog.ACTION_VIEW)
@@ -167,6 +169,8 @@ def customer_detail(request: HttpRequest, pk: int) -> HttpResponse:
         },
         "has_purchaser": any(c.is_purchaser for c in contacts),
         "missing_teams": [g["label"] for g in groups if not any(c.email for c in g["contacts"])],
+        "kyc_link": link_requests.customer_kyc(customer),
+        "can_send_kyc_link": link_requests.can_send(request.user),
     })
 
 

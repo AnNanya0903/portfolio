@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% load tz %}
+{% block title %}KYC requests - MagicWand 2.0{% endblock %}
+{% block extra_css %}{% include 'kyc/link/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:list' %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> KYC</a>
+    <h2 class="page-title">KYC requests</h2>
+    <p class="page-subtitle">KYC forms sent to customers by private link, or filled in by staff. Send a new one from a customer's page.</p>
+  </div>
+</div>
+
+<div class="kl-filter d-flex flex-wrap gap-1 mb-3">
+  <a class="kyc-chip kyc-chip--draft {% if not status %}active{% endif %}" href="?q={{ q|urlencode }}">All {{ total }}</a>
+  {% for s in statuses %}
+    <a class="kyc-chip kyc-chip--{{ s.key }} {% if status == s.key %}active{% endif %}" href="?status={{ s.key }}&q={{ q|urlencode }}">{{ s.label }} {{ s.count }}</a>
+  {% endfor %}
+</div>
+
+<form method="get" class="d-flex gap-2 mb-3" role="search">
+  <input type="hidden" name="status" value="{{ status }}">
+  <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="max-width: 360px;"
+         placeholder="Customer name, customer code or email" aria-label="Search KYC requests">
+  <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
+  {% if q %}<a class="btn btn-sm btn-link" href="?status={{ status }}">Clear</a>{% endif %}
+</form>
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead><tr><th>Customer</th><th>Status</th><th>Sent to</th><th>Link</th><th>Filled by</th><th>Updated</th></tr></thead>
+      <tbody>
+      {% for r in page %}
+        <tr>
+          <td><a href="{% url 'kyc:link_detail' r.pk %}" class="fw-semibold text-decoration-none">{{ r.customer.name }}</a>
+            <div class="kyc-muted kyc-code">{{ r.customer.customer_code|default:r.customer.code }}</div></td>
+          <td><span class="kyc-chip kyc-chip--{{ r.status }}">{{ r.get_status_display }}</span></td>
+          <td class="kyc-muted">{{ r.recipient_email|default:"—" }}</td>
+          <td>{% if r.link_active %}<span class="kl-countdown kyc-muted" data-expires="{{ r.expires_at|date:'c' }}"></span>{% else %}<span class="kyc-muted">—</span>{% endif %}</td>
+          <td>{% if r.source == 'staff' and r.filled_by %}<span class="kyc-chip kyc-chip--warn">Staff: {{ r.filled_by.get_full_name|default:r.filled_by.username }}</span>{% else %}<span class="kyc-muted">Customer</span>{% endif %}</td>
+          <td class="kyc-muted">{{ r.updated_at|timezone:"Asia/Kolkata"|date:"d M Y, H:i" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="6" class="text-center kyc-muted py-4">No KYC requests{% if status or q %} match{% endif %}.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% if page.has_other_pages %}
+<nav class="mt-3 d-flex gap-2">
+  {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ status }}&q={{ q|urlencode }}&page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  <span class="kyc-muted align-self-center">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ status }}&q={{ q|urlencode }}&page={{ page.next_page_number }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

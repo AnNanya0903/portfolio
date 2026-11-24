@@ -1,0 +1,28 @@
+{% include 'kyc/_styles.html' %}
+<style>
+  .kyc-chip--opened { background: #eef2ff; color: #4338ca; }
+  .kyc-chip--in_progress { background: #fffbeb; color: #b45309; }
+  .kyc-chip--submitted { background: #f0f9ff; color: #0369a1; }
+  .kyc-chip--approved { background: #ecfdf5; color: #047857; }
+  .kyc-chip--expired, .kyc-chip--revoked { background: #f1f5f9; color: #475569; }
+  .kl-filter a { text-decoration: none; }
+  .kl-filter .active { background: var(--bs-primary); color: #fff !important; }
+  .kl-countdown.soon { color: #b45309; font-weight: 600; }
+  .kl-audit { font-size: .8rem; }
+  .kl-reopened { background: #fffbeb; }
+</style>
+<script>
+  // "2d 4h left" style countdowns for every element with data-expires (ISO time).
+  document.addEventListener("DOMContentLoaded", function () {
+    function tick() {
+      document.querySelectorAll("[data-expires]").forEach(function (el) {
+        var ms = new Date(el.dataset.expires) - new Date();
+        if (ms <= 0) { el.textContent = "expired"; el.classList.add("soon"); return; }
+        var h = Math.floor(ms / 3600000), d = Math.floor(h / 24), m = Math.floor((ms % 3600000) / 60000);
+        el.textContent = (d ? d + "d " + (h % 24) + "h" : h ? h + "h " + m + "m" : m + "m") + " left";
+        el.classList.toggle("soon", ms < 12 * 3600000);
+      });
+    }
+    tick(); setInterval(tick, 60000);
+  });
+</script>

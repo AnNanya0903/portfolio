@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}Fill KYC - {{ customer.name }} - MagicWand 2.0{% endblock %}
+{% block extra_css %}{% include 'kyc/link/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:link_detail' req.pk %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> KYC request</a>
+    <h2 class="page-title">Fill KYC on behalf of {{ customer.name }}</h2>
+    <p class="page-subtitle">The customer's link is closed while you fill this in. You will not be able to approve it yourself.</p>
+  </div>
+</div>
+<div class="card border-0 shadow-sm" style="max-width: 760px;"><div class="card-body">
+  {% include 'kyc/link/_form.html' %}
+</div></div>
+{% endblock %}

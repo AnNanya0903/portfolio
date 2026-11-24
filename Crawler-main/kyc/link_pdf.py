@@ -1,9 +1,9 @@
 """The KYC details printed as AVIGIRI's Customer Registration Form (A4), for the customer to sign and stamp.
 
 The layout follows forms/Avigiri_Customer_Registration_Form.pdf: company, addresses, tax, contacts, logistics,
-bank, documents, declaration and an office-use panel. Whatever the KYC does not collect (nature of business,
-district, certifications...) stays as an empty box for the customer to fill in by hand before signing.
-PAN and the bank account number are printed masked, with only the last four characters.
+bank, documents, declaration and an office-use panel. Whatever was not given stays as an empty box for the
+customer to complete by hand before signing. PAN and the bank account number are printed masked, with only the
+last four characters. The credit limit and the approval are printed only once the KYC is approved.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from . import link_fields
+from .departments import departments_of
 from .models import CustomerContact, KycRequest, KycRequestDocument
 
 COMPANY_LINES = ("AVIGIRI Urethane &", "Rubber Industries Pvt. Ltd.")
@@ -41,8 +42,9 @@ RED = (192, 57, 43)
 WHITE = (255, 255, 255)
 IST = timezone.get_fixed_timezone(330)
 
-NATURE_OF_COMPANY = ("Proprietorship", "Partnership", "LLP", "Private Ltd.", "Public Ltd.", "Govt. / PSU")
-NATURE_OF_BUSINESS = ("OEM / Manufacturer", "Dealer / Distributor", "Trader", "End User", "Exporter", "Others")
+NATURE_OF_COMPANY = tuple(label for _, label in link_fields.NATURE_OF_COMPANY)
+NATURE_OF_BUSINESS = tuple(label for _, label in link_fields.NATURE_OF_BUSINESS)
+MSME_CATEGORIES = tuple(label for _, label in link_fields.MSME_CATEGORIES)
 DELIVERY_OPTIONS = (("DOOR", "Door Delivery"), ("GODOWN", "Go-Down Delivery"))
 PURCHASE = "Purchase *"
 CONTACT_ROWS = ("Managing Director", PURCHASE, "Design / Technical", "Accounts / Payments", "Quality",
@@ -52,14 +54,16 @@ ROW_FOR_CATEGORY = {
     CustomerContact.CATEGORY_TECHNICAL: "Design / Technical",
     CustomerContact.CATEGORY_ACCOUNTS: "Accounts / Payments",
     CustomerContact.CATEGORY_SALES: "Sales & Marketing",
+    CustomerContact.CATEGORY_QUALITY: "Quality",
+    CustomerContact.CATEGORY_STORES: "Stores / Logistics",
 }
 DOCUMENT_ROWS = (
     (KycRequestDocument.TYPE_GST, "GST Registration Certificate *"),
     (KycRequestDocument.TYPE_PAN, "PAN Card of the Company *"),
-    ("udyam", "Udyam (MSME) Certificate, if applicable"),
+    (KycRequestDocument.TYPE_UDYAM, "Udyam (MSME) Certificate, if applicable"),
     (KycRequestDocument.TYPE_CHEQUE, "Cancelled Cheque / Bank Letter"),
-    ("incorporation", "Certificate of Incorporation / Partnership Deed"),
-    ("iso", "ISO / IATF Certificate, if applicable"),
+    (KycRequestDocument.TYPE_INCORPORATION, "Certificate of Incorporation / Partnership Deed"),
+    (KycRequestDocument.TYPE_ISO, "ISO / IATF Certificate, if applicable"),
 )
 
 _REPLACE = {"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-",
@@ -80,6 +84,7 @@ class Address:
     title: str
     text: str
     city: str = ""
+    district: str = ""
     state: str = ""
     pincode: str = ""
     same_as: str = ""  # the "Same as ..." box next to the title; "" for the company address
@@ -100,23 +105,34 @@ class Sheet:
     customer_code: str = ""
     registered_on: str = ""
     company_name: str = ""
+    nature_of_company: str = ""  # a code of link_fields.NATURE_OF_COMPANY, or ""
+    nature_of_business: str = ""
+    year_established: str = ""
+    cin: str = ""
     website: str = ""
     addresses: List[Address] = field(default_factory=list)
     gstin: str = ""
     pan: str = ""
     msme: str = ""  # "YES", "NO" or ""
     udyam: str = ""
+    msme_category: str = ""  # "MICRO", "SMALL", "MEDIUM" or ""
+    certification: str = ""  # ISO / IATF / other certification: "YES", "NO" or ""
+    certification_no: str = ""
     contacts: List[Tuple[str, Optional[Contact]]] = field(default_factory=list)
     transportation: str = ""
     transporter: str = ""
     delivery: str = ""  # "DOOR", "GODOWN" or ""
+    products: str = ""
+    annual_business: str = ""
     special_requirements: str = ""
     bank_name: str = ""
     account_no: str = ""
     ifsc: str = ""
     documents: Set[str] = field(default_factory=set)
     payment_terms: str = ""
+    credit_limit: str = ""
     approved_on: str = ""
+    verified_by: str = ""
     approved_by: str = ""
     note: str = ""
 
@@ -140,6 +156,21 @@ def _date(value) -> str:
 
 def _user(user) -> str:
     return (user.get_full_name() or user.get_username()) if user else ""
+
+
+def _label_of(choices, code: str) -> str:
+    return dict(choices).get(code, "")
+
+
+def _money(value) -> str:
+    return f"{value:,.2f}" if value is not None else ""
+
+
+def _verified_by(user) -> str:
+    """Accounts verify the KYC: the approver's name goes in this box when the approver is in Accounts."""
+    if user and any(d.name == "Accounts" for d in departments_of(user)):
+        return _user(user)
+    return ""
 
 
 def _contact_table(main: Optional[Contact], others: Sequence[Tuple[str, Contact]]) -> List[Tuple[str, Optional[Contact]]]:
@@ -180,33 +211,49 @@ def request_sheet(req: KycRequest) -> Sheet:
     when = timezone.localtime(req.submitted_at or timezone.now(), IST)
     by_staff = " by AVIGIRI staff on behalf of the customer" if req.source == KycRequest.SOURCE_STAFF else ""
     customer = req.customer
+
+    def address(prefix, title, same_as="", same=False):
+        return Address(title, _with_name(d.company_name, getattr(d, f"{prefix}_address")),
+                       city=getattr(d, f"{prefix}_city"), district=getattr(d, f"{prefix}_district"),
+                       state=getattr(d, f"{prefix}_state"), pincode=getattr(d, f"{prefix}_pincode"),
+                       same_as=same_as, same=same)
+
     return Sheet(
         customer_code=customer.customer_code or customer.code or "",
         registered_on=_date(req.submitted_at),
         company_name=d.company_name,
-        website=customer.website,
+        nature_of_company=d.nature_of_company,
+        nature_of_business=d.nature_of_business,
+        year_established=d.year_established,
+        cin=d.cin,
+        website=d.website or customer.website,
         addresses=[
-            Address("Registered / Company Address", _with_name(d.company_name, d.company_address)),
-            Address("Billing Address / Buyer", _with_name(d.company_name, d.billing_address),
-                    same_as="Same as Company Address", same=_same(d.billing_address, d.company_address)),
-            Address("Delivery Address / Consignee", _with_name(d.company_name, d.delivery_address),
-                    same_as="Same as Billing Address", same=_same(d.delivery_address, d.billing_address)),
+            address("company", "Registered / Company Address"),
+            address("billing", "Billing Address / Buyer", "Same as Company Address", d.same_billing_as_company),
+            address("delivery", "Delivery Address / Consignee", "Same as Billing Address", d.same_delivery_as_billing),
         ],
         gstin=d.gstin,
         pan=_mask(d.pan_last4, 10),
         msme=d.msme_applicable,
         udyam=d.udyam_aadhar_no if d.msme_applicable == "YES" else "",
+        msme_category=d.msme_category if d.msme_applicable == "YES" else "",
+        certification=d.has_certification,
+        certification_no=d.certification_no if d.has_certification == "YES" else "",
         contacts=_contact_table(main, others),
         transportation=d.transportation,
         transporter=transporter,
         delivery=d.delivery_type,
+        products=d.products_of_interest,
+        annual_business=d.expected_annual_business,
         special_requirements=d.special_requirements,
         bank_name=d.bank_name,
         account_no=_mask(d.account_last4, 12),
         ifsc=d.ifsc,
         documents=set(req.documents.values_list("doc_type", flat=True)),
         payment_terms=req.payment_terms,
+        credit_limit=_money(req.credit_limit) if approved else "",
         approved_on=_date(req.reviewed_at) if approved else "",
+        verified_by=_verified_by(req.reviewed_by) if approved else "",
         approved_by=_user(req.reviewed_by) if approved else "",
         note=f"Filled online on {when:%d %b %Y, %I:%M %p} IST{by_staff}. "
              "Please check, sign, stamp and upload this form on the KYC link.",
@@ -224,7 +271,7 @@ def customer_sheet(customer) -> Sheet:
 
     others = [(c.category, as_contact(c)) for c in contacts if c is not main_record]
     requests = list(customer.kyc_requests.order_by("-id"))
-    terms = next((r.payment_terms for r in requests if r.payment_terms), "")
+    terms = customer.payment_terms or next((r.payment_terms for r in requests if r.payment_terms), "")
     approved = next((r for r in requests if r.status == KycRequest.STATUS_APPROVED), None)
     transporter = customer.preferred_transporter or ""
     if transporter == "OTHER":
@@ -252,7 +299,9 @@ def customer_sheet(customer) -> Sheet:
         transporter=transporter,
         delivery=customer.delivery_type or "",
         payment_terms=terms,
+        credit_limit=_money(customer.credit_limit),
         approved_on=_date(approved.reviewed_at) if approved else "",
+        verified_by=_verified_by(approved.reviewed_by) if approved else "",
         approved_by=_user(approved.reviewed_by) if approved else "",
         note=f"Customer {code}. From the KYC record on {now:%d %b %Y, %I:%M %p} IST.",
     )
@@ -423,7 +472,7 @@ class _Writer:
         self.box(self.M, self.y + self.LABEL_H, self.CW, h, a.text)
         self.y += self.LABEL_H + h + self.ROW_GAP
         if has_place:
-            self.row([("City / Town *", .32, "text", a.city), ("District", .24, "text", ""),
+            self.row([("City / Town *", .32, "text", a.city), ("District", .24, "text", a.district),
                       ("State *", .24, "text", a.state), ("PIN Code *", .20, "text", a.pincode)])
 
     def contact_table(self, rows: List[Tuple[str, Optional[Contact]]]):
@@ -530,7 +579,8 @@ def _office_use(w: _Writer, s: Sheet):
     w.pdf.set_fill_color(*LIME)
     w.pdf.rect(w.M + 3, w.y + 5.4, 43, 0.5, style="F")
     cols = (("Date of Approval", .17, s.approved_on), ("Payment Terms", .22, s.payment_terms),
-            ("Credit Limit (Rs.)", .17, ""), ("Verified by (Accounts)", .22, ""), ("Approved by", .22, s.approved_by))
+            ("Credit Limit (Rs.)", .17, s.credit_limit), ("Verified by (Accounts)", .22, s.verified_by),
+            ("Approved by", .22, s.approved_by))
     inner = w.CW - 6 - w.GAP * (len(cols) - 1)
     x = w.M + 3
     for lab, frac, value in cols:
@@ -552,9 +602,11 @@ def render_sheet(s: Sheet) -> bytes:
 
     w.section(1, "Company Details")
     w.row([("Name of the Company / Firm (as per GST) *", 1, "text", s.company_name)])
-    w.row([("Nature of Company *", 1, "choice", (NATURE_OF_COMPANY, set()))])
-    w.row([("Nature of Business *", 1, "choice", (NATURE_OF_BUSINESS, set()))])
-    w.row([("Year of Establishment", .22, "text", ""), ("CIN / Registration No.", .43, "text", ""),
+    w.row([("Nature of Company *", 1, "choice",
+            (NATURE_OF_COMPANY, {_label_of(link_fields.NATURE_OF_COMPANY, s.nature_of_company)}))])
+    w.row([("Nature of Business *", 1, "choice",
+            (NATURE_OF_BUSINESS, {_label_of(link_fields.NATURE_OF_BUSINESS, s.nature_of_business)}))])
+    w.row([("Year of Establishment", .22, "text", s.year_established), ("CIN / Registration No.", .43, "text", s.cin),
            ("Website", .35, "text", s.website)])
 
     w.section(2, "Addresses", "Name of the company is printed on every address", keep=24)
@@ -567,9 +619,11 @@ def render_sheet(s: Sheet) -> bytes:
            ("GST State Code", .30, "text", s.gstin[:2] if len(s.gstin) >= 2 else "")])
     w.row([("MSME Applicable *", .30, "choice", (("Yes", "No"), msme)),
            ("Udyam Registration No.", .40, "text", s.udyam),
-           ("MSME Category", .30, "choice", (("Micro", "Small", "Medium"), set()))])
-    w.row([("ISO / IATF / Other Certification", .30, "choice", (("Yes", "No"), set())),
-           ("If Yes, Certificate No. / Standard", .70, "text", "")])
+           ("MSME Category", .30, "choice",
+            (MSME_CATEGORIES, {_label_of(link_fields.MSME_CATEGORIES, s.msme_category)}))])
+    certification = {"YES": {"Yes"}, "NO": {"No"}}.get(s.certification, set())
+    w.row([("ISO / IATF / Other Certification", .30, "choice", (("Yes", "No"), certification)),
+           ("If Yes, Certificate No. / Standard", .70, "text", s.certification_no)])
 
     w.section(4, "Contact Details", "Purchase contact is mandatory", keep=30)
     w.contact_table(s.contacts or _contact_table(None, []))
@@ -579,8 +633,8 @@ def render_sheet(s: Sheet) -> bytes:
     w.row([("Transportation *", .5, "text", s.transportation),
            ("Delivery Type *", .5, "choice", ([label for _, label in DELIVERY_OPTIONS], delivery))])
     w.row([("Preferred Transporter (Default: ARC)", .32, "text", s.transporter),
-           ("Products / Applications of Interest", .40, "text", ""),
-           ("Expected Annual Business (Rs. Lacs)", .28, "text", "")])
+           ("Products / Applications of Interest", .40, "text", s.products),
+           ("Expected Annual Business (Rs. Lacs)", .28, "text", s.annual_business)])
     w.row([("Special Requirements (packing, labelling, documents, test certificates, delivery timings, etc.)", 1,
             "text", s.special_requirements)], min_h=9)
 
@@ -608,6 +662,13 @@ def render(req: KycRequest) -> bytes:
 def render_customer(customer) -> bytes:
     """The customer's saved details in the AVIGIRI Customer Registration Form."""
     return render_sheet(customer_sheet(customer))
+
+
+def stored_name(req: KycRequest, when) -> str:
+    """Customer-Registration-<customer code>-<yyyymmdd-hhmm>.pdf: the name a stored version is kept under."""
+    code = req.customer.customer_code or req.customer.code or str(req.customer_id)
+    safe = "".join(ch for ch in code if ch.isalnum() or ch in "-_")
+    return f"Customer-Registration-{safe}-{when:%Y%m%d-%H%M}.pdf"
 
 
 def customer_filename(customer) -> str:
