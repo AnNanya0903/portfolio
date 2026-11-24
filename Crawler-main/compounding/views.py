@@ -1864,6 +1864,130 @@ def _crin_stage(
     return "Raised", "light"
 
 
+def _safe_next(request) -> str:
+    """Return a posted Compounding page to come back to, or "" if it is not a safe local path."""
+    value = (request.POST.get("next") or "").strip()
+    if value.startswith("/compounding/") and "//" not in value and "\\" not in value:
+        return value
+    return ""
+
+
+WORK_STAGES = [
+    ("mb", "Waiting for MB", "Plan and make MB first.", "danger"),
+    ("fb", "Ready for FB", "MB is available. Send FB to the board.", "primary"),
+    ("board", "On the board", "Save actuals on the Compounding Board when made.", "warning"),
+    ("issue", "Ready to issue", "FB is made. Issue it to Production.", "success"),
+]
+
+
+def _work_queue() -> Dict[str, Any]:
+    """Every open CRIN in the step it needs next, oldest first."""
+    crins = list(
+        CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN)
+        .select_related("plan")
+        .order_by("plan__plan_date", "created_at", "id")
+    )
+    status_rows = {row["id"]: row for row in _crin_status_rows(crins)}
+    board_lines: Dict[int, List[CompoundingLine]] = {}
+    for line in CompoundingLine.objects.filter(crin_request__in=crins, actuals_saved=False).select_related("plan"):
+        board_lines.setdefault(line.crin_request_id, []).append(line)
+
+    # MB on the board and FB reserving MB, across every date: MB sent here goes on today's board.
+    board_fb: Dict[str, int] = {}
+    board_mb: Dict[str, int] = {}
+    for line in CompoundingLine.objects.filter(actuals_saved=False):
+        key = _normalize_compound_code(line.compound_code)
+        planned_mb = sum(int(v or 0) for v in (line.shift1_mb, line.shift2_mb, line.shift3_mb))
+        planned_fb = sum(int(v or 0) for v in (line.shift1_fb, line.shift2_fb, line.shift3_fb))
+        board_fb[key] = board_fb.get(key, 0) + max(planned_fb - int(line.actual_fb or 0) - int(line.returned_to_planning_fb or 0), 0)
+        board_mb[key] = board_mb.get(key, 0) + max(planned_mb - int(line.actual_mb or 0) - int(line.returned_to_planning_mb or 0), 0)
+    free_left: Dict[str, Decimal] = {}
+    incoming_left: Dict[str, Decimal] = {}
+    groups: Dict[str, List[Dict[str, Any]]] = {key: [] for key, *_rest in WORK_STAGES}
+
+    for crin in crins:
+        status = status_rows[crin.id]
+        item = dict(status)
+        item["plan_date"] = crin.plan.plan_date
+        if crin.id in board_lines:
+            shifts = []
+            for line in board_lines[crin.id]:
+                for number in (1, 2, 3):
+                    fb = getattr(line, f"shift{number}_fb")
+                    mb = getattr(line, f"shift{number}_mb")
+                    if fb or mb:
+                        parts = [f"{fb} FB" if fb else "", f"{mb} MB" if mb else ""]
+                        shifts.append(f"Shift {number}: " + ", ".join(part for part in parts if part))
+                item["board_date"] = board_lines[crin.id][0].plan.plan_date
+            item["detail"] = "; ".join(shifts) or "On the board"
+            groups["board"].append(item)
+            continue
+        if status["stage_label"] in ("FB Ready", "Part Issued"):
+            groups["issue"].append(item)
+            continue
+
+        spec = _sheet_spec_for_compound(crin.plan, crin.compound_code)
+        fb_weight = spec.get("fb_total_weight")
+        mb_weight = spec.get("mb_weight")
+        batches = int(crin.fb_planning) if crin.fb_planning is not None else _compute_batches(crin.quantity, fb_weight)
+        item["fb_batches"] = batches
+        if batches <= 0:
+            groups["fb"].append(item)
+            continue
+        needed = _fb_required_mb_stock(fb_batches=batches, mb_weight=mb_weight)
+        key = _normalize_compound_code(crin.compound_code)
+        stock = spec.get("mb_stock")
+        if needed is None or stock is None or not mb_weight:
+            item["problem"] = "MB weight or stock is missing in the master sheet."
+            groups["mb"].append(item)
+            continue
+        if key not in free_left:
+            free_left[key] = max(stock - Decimal(board_fb.get(key, 0)) * mb_weight, Decimal("0"))
+            incoming_left[key] = Decimal(board_mb.get(key, 0)) * mb_weight
+        left = free_left[key]
+        item["mb_needed"] = _decimal_text(needed)
+        if left >= needed:
+            free_left[key] = left - needed
+            groups["fb"].append(item)
+            continue
+        short = needed - left
+        free_left[key] = Decimal("0")
+        coming = incoming_left[key]
+        item["mb_available"] = _decimal_text(left)
+        item["mb_short"] = _decimal_text(short)
+        if coming >= short:
+            incoming_left[key] = coming - short
+            item["mb_on_board"] = True
+        else:
+            incoming_left[key] = Decimal("0")
+            remaining = short - coming
+            item["mb_on_board_part"] = _decimal_text(coming) if coming > 0 else ""
+            item["suggested_batches"] = int((remaining / mb_weight).to_integral_value(rounding=ROUND_CEILING)) if mb_weight else 0
+        groups["mb"].append(item)
+
+    stages = [
+        {"key": key, "title": title, "hint": hint, "color": color, "items": groups[key]}
+        for key, title, hint, color in WORK_STAGES
+    ]
+    return {"stages": stages, "total": sum(len(items) for items in groups.values())}
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["GET"])
+def work_queue(request):
+    return render(
+        request,
+        "magicwand/compounding_work.html",
+        {
+            "queue": _work_queue(),
+            "can_planning": user_has_service_access(request.user, "compounding_planning"),
+            "today": compounding_business_date(),
+            "back_url": reverse("compounding:work_queue"),
+        },
+    )
+
+
 def _crin_status_rows(crin_objs: List[CompoundingCRIN]) -> List[Dict[str, Any]]:
     crin_ids = [crin.id for crin in crin_objs]
     totals = crin_fb_totals(crin_ids)
@@ -2134,7 +2258,7 @@ def fb_issue_page(request):
 @require_http_methods(["POST"])
 @transaction.atomic
 def issue_fb(request, crin_id: int):
-    redirect_url = reverse("compounding:fb_issue")
+    redirect_url = _safe_next(request) or reverse("compounding:fb_issue")
     crin = get_object_or_404(CompoundingCRIN.objects.select_for_update().select_related("plan"), id=crin_id)
     if crin.status != CompoundingCRIN.STATUS_OPEN:
         messages.info(request, f"{crin.crin_number} is already closed.")
@@ -3465,6 +3589,9 @@ def mb_send_to_board(request):
 
     compound_code = (request.POST.get("compound_code") or "").strip()
     def _mb_redirect(*, code: str = "") -> str:
+        back = _safe_next(request)
+        if back:
+            return back
         selected = _clean_compound_code(code or compound_code)
         if not selected:
             return base_url

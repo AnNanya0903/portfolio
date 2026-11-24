@@ -1,0 +1,168 @@
+{% extends 'base.html' %}
+
+{% block title %}Today's Work - Compounding{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">Today's work</h1>
+      <p class="text-muted mb-0">Every open CRIN, grouped by what it needs next. Oldest CRINs are first and get MB first.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{% url 'compounding:display' %}" class="btn btn-outline-secondary"><i class="bi bi-grid-1x2 me-1"></i>Compounding Board</a>
+      {% if can_planning %}<a href="{% url 'compounding:planning' %}" class="btn btn-outline-primary"><i class="bi bi-plus-circle me-1"></i>Raise CRIN</a>{% endif %}
+      <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back</a>
+    </div>
+  </div>
+
+  <nav class="row row-cols-2 row-cols-lg-4 g-2 mb-3" aria-label="Work stages">
+    {% for stage in queue.stages %}
+      <div class="col">
+        <a href="#stage-{{ stage.key }}" class="work-count border rounded p-3 h-100 d-block text-decoration-none border-{{ stage.color }}">
+          <div class="text-muted small">{{ forloop.counter }}. {{ stage.title }}</div>
+          <div class="fs-3 fw-bold text-{{ stage.color }}">{{ stage.items|length }}</div>
+        </a>
+      </div>
+    {% endfor %}
+  </nav>
+
+  <div class="mb-3" style="max-width: 360px;">
+    <label for="workSearch" class="form-label mb-1">Find CRIN or compound</label>
+    <input id="workSearch" class="form-control" type="search" placeholder="Type CRIN number or compound">
+  </div>
+
+  {% if not queue.total %}
+    <div class="alert alert-success">No open CRINs. Everything raised has been issued.</div>
+  {% endif %}
+
+  {% for stage in queue.stages %}
+    <section id="stage-{{ stage.key }}" class="card shadow-sm mb-3 border-{{ stage.color }}">
+      <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 bg-{{ stage.color }}-subtle">
+        <h2 class="h6 mb-0">{{ forloop.counter }}. {{ stage.title }} <span class="badge text-bg-{{ stage.color }} ms-1">{{ stage.items|length }}</span></h2>
+        <span class="small text-muted">{{ stage.hint }}</span>
+      </div>
+      <div class="card-body p-0">
+        {% if stage.items %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0 work-table">
+              <thead>
+                <tr>
+                  <th>CRIN</th>
+                  <th>Compound</th>
+                  <th class="text-end">Ordered</th>
+                  <th>{% if stage.key == "mb" %}MB position{% elif stage.key == "fb" %}FB batches{% elif stage.key == "board" %}On board{% else %}To issue{% endif %}</th>
+                  <th class="text-end" style="min-width: 300px;">Next action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in stage.items %}
+                  <tr data-work-row data-search="{{ item.crin_number|lower }} {{ item.compound_code|lower }}">
+                    <td><span class="fw-semibold">{{ item.crin_number }}</span><div class="small text-muted">{{ item.plan_date|date:"d M Y" }}</div></td>
+                    <td class="fw-semibold">{{ item.compound_code }}</td>
+                    <td class="text-end">{{ item.ordered }}</td>
+                    <td class="small">
+                      {% if stage.key == "mb" %}
+                        {% if item.problem %}
+                          <span class="text-danger">{{ item.problem }}</span>
+                        {% else %}
+                          Needs {{ item.mb_needed }}, available {{ item.mb_available }}, <span class="fw-semibold text-danger">short {{ item.mb_short }}</span>
+                          {% if item.mb_on_board %}<div class="text-warning-emphasis">Enough MB is already on the board.</div>{% elif item.mb_on_board_part %}<div>{{ item.mb_on_board_part }} MB already on the board.</div>{% endif %}
+                        {% endif %}
+                      {% elif stage.key == "fb" %}
+                        {{ item.fb_batches }} FB batch{{ item.fb_batches|pluralize:"es" }}{% if item.mb_needed %} using {{ item.mb_needed }} MB{% endif %}
+                      {% elif stage.key == "board" %}
+                        {{ item.detail }}
+                      {% else %}
+                        <span class="fw-semibold">{{ item.to_issue }}</span> of {{ item.ordered }}<div class="text-muted">FB stock {{ item.fb_stock }}</div>
+                      {% endif %}
+                    </td>
+                    <td class="text-end">
+                      {% if stage.key == "mb" %}
+                        {% if item.problem %}
+                          {% if can_planning %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'compounding:planning' %}">Check master sheet</a>{% endif %}
+                        {% elif item.mb_on_board %}
+                          <a class="btn btn-sm btn-outline-secondary" href="{% url 'compounding:display' %}">Open board</a>
+                        {% elif can_planning %}
+                          <form method="post" action="{% url 'compounding:mb_send_to_board' %}" class="d-inline-flex flex-wrap gap-1 justify-content-end js-work-form" data-confirm="Send {{ item.suggested_batches }} MB batches of {{ item.compound_code }} to the board?">
+                            {% csrf_token %}
+                            <input type="hidden" name="next" value="{{ back_url }}">
+                            <input type="hidden" name="plan_date" value="{{ today|date:'Y-m-d' }}">
+                            <input type="hidden" name="compound_code" value="{{ item.compound_code }}">
+                            <input type="hidden" name="planning_source" value="batches">
+                            <input class="form-control form-control-sm text-end" style="width: 74px;" type="number" min="1" step="1" name="mb_batches" value="{{ item.suggested_batches }}" aria-label="MB batches for {{ item.crin_number }}" required>
+                            <select class="form-select form-select-sm" style="width: 104px;" name="shift" aria-label="Shift for {{ item.crin_number }}">
+                              <option value="1">1st shift</option><option value="2">2nd shift</option><option value="3">3rd shift</option>
+                            </select>
+                            <button class="btn btn-sm btn-danger" type="submit">Send MB</button>
+                          </form>
+                        {% else %}
+                          <span class="small text-muted">Planning will send MB</span>
+                        {% endif %}
+                      {% elif stage.key == "fb" %}
+                        {% if can_planning %}
+                          <form method="post" action="{% url 'compounding:send_to_board' item.id %}" class="d-inline-flex flex-wrap gap-1 justify-content-end js-work-form" data-confirm="Send {{ item.crin_number }} ({{ item.compound_code }}) FB to the board?">
+                            {% csrf_token %}
+                            <input type="hidden" name="next" value="{{ back_url }}">
+                            <input type="hidden" name="plan_date" value="{{ item.plan_date|date:'Y-m-d' }}">
+                            <select class="form-select form-select-sm" style="width: 104px;" name="shift" aria-label="Shift for {{ item.crin_number }}">
+                              <option value="1">1st shift</option><option value="2">2nd shift</option><option value="3">3rd shift</option>
+                            </select>
+                            <button class="btn btn-sm btn-primary" type="submit">Send FB</button>
+                          </form>
+                        {% else %}
+                          <span class="small text-muted">Planning will send FB</span>
+                        {% endif %}
+                      {% elif stage.key == "board" %}
+                        <a class="btn btn-sm btn-warning" href="{% url 'compounding:display' %}?date={{ item.board_date|date:'Y-m-d' }}">Save actuals on board</a>
+                      {% elif item.can_issue %}
+                        <form method="post" action="{% url 'compounding:issue_fb' item.id %}" class="d-inline-flex flex-wrap gap-1 justify-content-end js-work-form" data-confirm="Issue FB to Production on {{ item.crin_number }}?">
+                          {% csrf_token %}
+                          <input type="hidden" name="next" value="{{ back_url }}">
+                          <input type="hidden" name="expected_issued" value="{{ item.issued_raw }}">
+                          <input class="form-control form-control-sm text-end" style="width: 96px;" type="number" min="0.001" max="{{ item.max_issue }}" step="0.001" name="quantity" value="{{ item.max_issue }}" aria-label="Issue quantity for {{ item.crin_number }}" required>
+                          <button class="btn btn-sm btn-success" type="submit">Issue</button>
+                        </form>
+                      {% else %}
+                        <span class="small text-muted">No FB stock to issue</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="text-muted small mb-0 p-3">Nothing here.</p>
+        {% endif %}
+      </div>
+    </section>
+  {% endfor %}
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  document.querySelectorAll(".js-work-form").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      if (!window.confirm(form.dataset.confirm)) { event.preventDefault(); return; }
+      form.querySelector("button[type=submit]").disabled = true;
+    });
+  });
+  var rows = Array.prototype.slice.call(document.querySelectorAll("[data-work-row]"));
+  document.getElementById("workSearch").addEventListener("input", function (event) {
+    var text = event.target.value.trim().toLowerCase();
+    rows.forEach(function (row) { row.hidden = text !== "" && row.dataset.search.indexOf(text) === -1; });
+  });
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell { width: 100%; }
+.work-count { color: inherit; background: var(--bs-body-bg); }
+.work-count:hover, .work-count:focus { background: var(--bs-tertiary-bg); }
+.work-table td, .work-table th { white-space: nowrap; }
+</style>
+{% endblock %}

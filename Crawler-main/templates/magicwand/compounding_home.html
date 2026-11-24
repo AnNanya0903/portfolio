@@ -12,6 +12,24 @@
 </div>
 
 <div class="row g-4">
+    {% if can_planning or can_board %}
+    <!-- Today's Work -->
+    <div class="col-12">
+        <a href="{% url 'compounding:work_queue' %}" class="text-decoration-none">
+            <div class="copilot-card border-primary d-flex flex-wrap align-items-center justify-content-between gap-3" style="padding: 1.5rem;">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="icon-box icon-blue mb-0" style="width:48px;height:48px;font-size:1.3rem;"><i class="bi bi-list-check"></i></div>
+                    <div>
+                        <h5 class="fw-bold mb-1 text-body">Today's work</h5>
+                        <p class="text-muted small mb-0">Start here. See every open CRIN and do its next step: send MB, send FB, save on the board, or issue.</p>
+                    </div>
+                </div>
+                <span class="btn btn-primary">Open Today's work</span>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
     <!-- Planning Card -->
     <div class="col-12 col-xl-6">
         <div class="copilot-card compounding-tile">
