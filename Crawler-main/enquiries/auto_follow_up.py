@@ -375,8 +375,13 @@ def due_follow_ups(today: Optional[date] = None) -> List[Dict[str, Any]]:
     return due
 
 
-def _sender():
-    username = (getattr(settings, "FOLLOW_UP_AUTO_SENDER", "") or "").strip()
+def _sender(stage: str = ""):
+    """The Gmail account that sends: Marketing's own sender for Marketing stages, else the enquiry sender."""
+    username = ""
+    if stage == MARKETING_STAGE:
+        username = (getattr(settings, "MARKETING_FOLLOW_UP_SENDER", "") or "").strip()
+    if not username:
+        username = (getattr(settings, "FOLLOW_UP_AUTO_SENDER", "") or "").strip()
     if not username:
         return None
     return get_user_model().objects.filter(username=username, is_active=True).first()
@@ -388,12 +393,12 @@ def run_auto_follow_up(enquiry_id: str, today: Optional[date] = None) -> Dict[st
     today = today or timezone.localdate()
     if not getattr(settings, "FOLLOW_UP_AUTO_ENABLED", False):
         return _result(enquiry_id, SKIPPED, "automatic follow-ups are turned off")
-    sender = _sender()
-    if sender is None:
-        return _result(enquiry_id, FAILED, "FOLLOW_UP_AUTO_SENDER is not set to an active user")
     cycle = cycles([enquiry_id]).get(enquiry_id)
     if cycle is None:
         return _result(enquiry_id, SKIPPED, "no quotation or proforma invoice has been sent yet")
+    sender = _sender(cycle.stage)
+    if sender is None:
+        return _result(enquiry_id, FAILED, "the automatic sender is not set to an active user")
     try:
         enquiry = services.fetch_enquiry(_api_root(), enquiry_id)
     except services.EnquiryServiceError as exc:

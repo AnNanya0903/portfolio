@@ -269,7 +269,9 @@ FOLLOW_UP_DEFAULT_CC = config('FOLLOW_UP_DEFAULT_CC', default='')
 # Stage 2: automatic follow-ups, run once an hour by App Engine cron (cron.yaml, enquiries/scheduler.py)
 FOLLOW_UP_AUTO_ENABLED = config('FOLLOW_UP_AUTO_ENABLED', default=False, cast=bool)  # master on/off switch
 FOLLOW_UP_AUTO_DRY_RUN = config('FOLLOW_UP_AUTO_DRY_RUN', default=True, cast=bool)  # log only, send nothing
-FOLLOW_UP_AUTO_SENDER = config('FOLLOW_UP_AUTO_SENDER', default='')  # username whose Gmail sends
+FOLLOW_UP_AUTO_SENDER = config('FOLLOW_UP_AUTO_SENDER', default='')  # username whose Gmail sends (enquiries)
+# Username whose Gmail sends the Marketing follow-ups. Empty = the same as FOLLOW_UP_AUTO_SENDER.
+MARKETING_FOLLOW_UP_SENDER = config('MARKETING_FOLLOW_UP_SENDER', default='')
 # Days to wait after the quotation / PI (or rejection) email and after each follow-up; the last value
 # repeats (no more after FOLLOW_UP_MAX_COUNT).
 FOLLOW_UP_AUTO_GAP_DAYS = [
