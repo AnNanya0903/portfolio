@@ -1,0 +1,212 @@
+{% extends 'base.html' %}
+
+{% block title %}Compounding Planning{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Production</p>
+      <h1 class="mb-1">Compounding Planning</h1>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <a href="{% url 'compounding:work_queue' %}" class="btn btn-primary"><i class="bi bi-list-check me-1"></i>Today's work</a>
+      <a href="{% url 'compounding:display' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-grid-1x2 me-1"></i>Compounding
+      </a>
+      <a href="{% url 'compounding:production_report' %}?period=daily&date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-bar-chart-line me-1"></i>Reports
+      </a>
+      {% if show_iot_dashboard %}
+        <a href="{% url 'compounding:iot_dashboard' %}" class="btn btn-outline-secondary">
+          <i class="bi bi-cpu me-1"></i>IOT dashboard
+        </a>
+      {% endif %}
+      <a href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-box-seam me-1"></i>MB plan
+      </a>
+      <a href="{% url 'compounding:fb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-layers me-1"></i>FB plan
+      </a>
+      <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#cpRaiseCrinModal">
+        <i class="bi bi-plus-circle me-1"></i>Raise CRIN
+      </button>
+    </div>
+  </div>
+
+  {% include "magicwand/compounding_mb_alerts.html" %}
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <div>
+          <h2 class="h5 mb-0">CRIN requests</h2>
+          <div class="text-muted small">One compound per CRIN. Use MB plan / FB plan to send CRINs to the board.</div>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#cpRaiseCrinModal">
+          <i class="bi bi-plus-circle me-1"></i>Raise CRIN
+        </button>
+      </div>
+
+      {% if not crin_compounds_ready %}
+        <div class="alert alert-warning mb-3">
+          Upload a master sheet first. CRIN compounds are sourced from the <strong>Compound Code</strong> column.
+        </div>
+      {% endif %}
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="min-width: 150px;">CRIN</th>
+              <th>Compound</th>
+              <th class="text-center" style="width: 110px;">Quantity</th>
+              <th class="text-center" style="width: 120px;">Status</th>
+              <th class="text-end" style="width: 110px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for crin in crin_requests %}
+              <tr>
+                <td class="fw-semibold">{{ crin.crin_number }}</td>
+                <td>{{ crin.compound_code|default:"—" }}</td>
+                <td class="text-center">{{ crin.quantity }}</td>
+                <td class="text-center">
+                  {% if crin.has_line %}
+                    <span class="badge text-bg-success">Added</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary text-capitalize">{{ crin.status }}</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  {% if crin.can_delete %}
+                    {% include "magicwand/compounding_crin_delete.html" with return_to="planning" %}
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="5" class="text-center text-muted py-3">No CRIN requests yet.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+          <h2 class="h5 mb-0">Master sheet</h2>
+          <div class="text-muted small">Upload master Excel to load a read-only snapshot used for planning calculations.</div>
+        </div>
+      </div>
+
+      <form method="post" action="{% url 'compounding:upload_master_sheet' %}" enctype="multipart/form-data" class="row g-2 align-items-end mb-3">
+        {% csrf_token %}
+        <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+        <div class="col-12 col-lg-7">
+          <label for="cpMasterExcel" class="form-label mb-1">Master Excel file (.xlsx/.xlsm)</label>
+          <input id="cpMasterExcel" type="file" class="form-control" name="master_excel" accept=".xlsx,.xlsm" required>
+        </div>
+        <div class="col-12 col-lg-3">
+          <button type="submit" class="btn btn-outline-primary w-100">
+            <i class="bi bi-upload me-1"></i>Upload and convert
+          </button>
+        </div>
+      </form>
+
+      {% if master_sheet.exists %}
+        <div class="small text-muted mb-2">
+          Loaded: <span class="fw-semibold">{{ master_sheet.original_filename }}</span>
+          {% if master_sheet.worksheet_name %} · Sheet: <span class="fw-semibold">{{ master_sheet.worksheet_name }}</span>{% endif %}
+          {% if master_sheet.updated_at %} · Updated: <span class="fw-semibold">{{ master_sheet.updated_at|date:"Y-m-d H:i" }}</span>{% endif %}
+        </div>
+        {% if master_sheet.is_carried_forward %}
+          <div class="alert alert-info py-2 small mb-2">
+            Using the latest uploaded master sheet from {{ master_sheet.source_plan_date|date:"Y-m-d" }}. Upload a new Excel file to replace it for this plan date.
+          </div>
+        {% endif %}
+      {% endif %}
+
+      {% if master_sheet.headers %}
+        <div class="small text-muted mb-2">Values are locked after upload. Upload a new Excel file to change them.</div>
+        <div class="table-responsive" style="max-height: 540px;">
+          <table class="table table-sm table-bordered align-middle mb-0" id="cpMasterSheetTable">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 56px;">#</th>
+                {% for header in master_sheet.headers %}
+                  <th style="min-width: 170px;">{{ header }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in master_sheet.rows %}
+                <tr>
+                  <td class="text-muted fw-semibold">{{ forloop.counter }}</td>
+                  {% for cell in row %}
+                    <td>{{ cell }}</td>
+                  {% endfor %}
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan="{{ master_sheet.headers|length|add:1 }}" class="text-center text-muted py-3">No rows in sheet.</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted small">Upload a master Excel to view it here.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+<div class="modal fade" id="cpRaiseCrinModal" tabindex="-1" aria-labelledby="cpRaiseCrinModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" action="{% url 'compounding:create_crin' %}">
+        {% csrf_token %}
+        <div class="modal-header">
+          <h5 class="modal-title" id="cpRaiseCrinModalLabel">Raise CRIN</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+
+          <div class="mb-3">
+            <label class="form-label">Compound code</label>
+            <select class="form-select" name="compound_code" {% if not crin_compounds_ready %}disabled{% endif %} required>
+              <option value="">Select a compound…</option>
+              {% for compound in crin_compound_options %}
+                <option value="{{ compound.value }}">{{ compound.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-0">
+            <label class="form-label">Quantity</label>
+            <input type="number" class="form-control" name="quantity" min="1" step="1" required>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary" {% if not crin_compounds_ready %}disabled{% endif %}>Create CRIN</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

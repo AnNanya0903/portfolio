@@ -1,0 +1,421 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Enquiry {{ enquiry.enquiry_id }}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .form-section {
+    background: #f8fbff;
+    border: 1px solid rgba(13, 81, 143, 0.08);
+    border-radius: 1rem;
+    padding: 1.5rem;
+  }
+  .form-section + .form-section {
+    margin-top: 1.5rem;
+  }
+  .form-section-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #3c4f6b;
+    margin-bottom: 1.25rem;
+  }
+  .quotation-matrix-intro {
+    background-color: rgba(13, 81, 143, 0.05);
+    border: 1px dashed rgba(13, 81, 143, 0.25);
+    border-radius: 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+  .matrix-scroll {
+    overflow-x: auto;
+    position: relative;
+  }
+  .enquiry-matrix {
+    min-width: 720px;
+    border-collapse: separate;
+    border-spacing: 0;
+    background-color: #fff;
+  }
+  .enquiry-matrix thead th {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background-color: #fff;
+  }
+  .matrix-header {
+    font-weight: 600;
+    white-space: nowrap;
+    text-align: center;
+  }
+  .matrix-header--die {
+    background-color: rgba(13, 81, 143, 0.08);
+  }
+  .matrix-header--mold {
+    background-color: rgba(37, 155, 36, 0.08);
+  }
+  .matrix-label {
+    background-color: #f6f8fb;
+    font-weight: 600;
+    position: sticky;
+    left: 0;
+    z-index: 2;
+  }
+  .enquiry-matrix thead .matrix-label {
+    z-index: 5;
+  }
+  .matrix-cell--na {
+    background-color: #f9fafb;
+    text-align: center;
+    color: #adb5bd;
+  }
+  .matrix-textarea {
+    min-height: 2.75rem;
+  }
+  .matrix-scroll::-webkit-scrollbar {
+    height: 8px;
+  }
+  .matrix-scroll::-webkit-scrollbar-thumb {
+    background-color: rgba(13, 81, 143, 0.25);
+    border-radius: 999px;
+  }
+  .currency-input-group .currency-symbol {
+    min-width: 3rem;
+    justify-content: center;
+    font-weight: 600;
+  }
+</style>
+{% endblock %}
+
+{% block auth_content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <a class="btn btn-link px-0" href="{% url 'enquiries:board' %}">
+      <i class="bi bi-arrow-left"></i> Back to board
+    </a>
+    <h1 class="display-6 mb-0">Enquiry {{ enquiry.enquiry_id }}</h1>
+    <p class="text-muted mb-0">Manage the commercial record, attachments, and workflow status.</p>
+  </div>
+  <div class="text-end">
+    <span class="badge text-bg-secondary">Status: {{ enquiry.status|upper }}</span>
+    <span class="badge text-bg-light ms-2">Priority: {{ enquiry.priority|upper }}</span>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5">Update enquiry</h2>
+        <div class="d-flex justify-content-end flex-wrap gap-2 mb-3">
+          <a class="btn btn-outline-secondary" href="{% url 'enquiries:subdivision_create' enquiry.enquiry_id %}">
+            <i class="bi bi-diagram-3 me-1"></i>Add SubEnquiry
+          </a>
+          <a class="btn btn-outline-primary" href="{% url 'enquiries:preview' enquiry.enquiry_id %}" target="_blank" rel="noopener">
+            <i class="bi bi-link-45deg me-1"></i>Generate Link
+          </a>
+        </div>
+        <form method="post" enctype="multipart/form-data" data-enquiry-calculations="true" novalidate>
+          {% csrf_token %}
+          {{ form.non_field_errors }}
+          {% if form.fields.status %}
+            <section class="form-section">
+              <h3 class="form-section-title">Workflow</h3>
+              <div class="row g-3">
+                <div class="col-md-4 col-lg-3">
+                  {% include 'enquiries/_form_field.html' with field=form.status %}
+                </div>
+                <div class="col-md-5 col-lg-5 d-none" id="lostReasonBox">
+                  <label class="form-label" for="lostReason">Why was it lost? <span class="text-danger">*</span></label>
+                  <div class="d-flex gap-2">
+                    <select name="lost_reason" id="lostReason" class="form-select">
+                      <option value="">Choose a reason…</option>{% for r in lost_reasons %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+                    </select>
+                    <input name="lost_reason_note" class="form-control" maxlength="200" placeholder="Note (for Other)">
+                  </div>
+                </div>
+                <script>
+                  (function () {
+                    var status = document.getElementById('{{ form.status.id_for_label }}'), box = document.getElementById('lostReasonBox');
+                    if (!status || !box) return;
+                    function sync() { box.classList.toggle('d-none', status.value !== 'rejected' || '{{ enquiry.status }}' === 'rejected'); }
+                    status.addEventListener('change', sync); sync();
+                  })();
+                </script>
+              </div>
+            </section>
+          {% endif %}
+          <section class="form-section">
+            <h3 class="form-section-title">Customer Details</h3>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.currency %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.enquiry_date %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.customer_name %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.project_name %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.enq_number %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.customer_part_number %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.avigiri_part_number %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.warranty_period %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.die_development_lead_time %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.production_lead_time %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.manufacturing_process %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.surface_treatment %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.minimum_order_quantity %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.pack_size %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.material_specification %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.price_per_kg %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.supplier_metal_percent %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.supplier_cost_per_piece_percent %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.price_per_meter %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.price_per_piece %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.total_price_per_meter %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.total_price_per_piece %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.incoterms_percent %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.packing_percent %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.scrap_percent %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.x20_percent %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.conversion_rate %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.final_price_per_meter %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.final_price_per_piece %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.final_price_per_pack_meters %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.final_price_per_pack_pcs %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.total_die_development_charge %}</div>
+            </div>
+            <div class="row g-3">
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.total_mold_development_charge %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.supplier_mold_development_percent %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.nrc_payment_terms %}</div>
+              <div class="col-md-3">{% include 'enquiries/_form_field.html' with field=form.rc_payment_terms %}</div>
+            </div>
+          </section>
+          <section class="form-section">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+              <h3 class="form-section-title mb-0">Quotation Matrix</h3>
+              <span class="text-muted small">Update extrusion die (D) and mold (M) variants directly in the grid.</span>
+            </div>
+            <div class="row g-3 align-items-end">
+              <div class="col-md-3">
+                {% include 'enquiries/_form_field.html' with field=form.extrusion_die_count %}
+              </div>
+              <div class="col-md-3">
+                {% include 'enquiries/_form_field.html' with field=form.mold_count %}
+              </div>
+              <div class="col-md-6">
+                <div class="quotation-matrix-intro">
+                  <strong class="d-block">Heads-up</strong>
+                  <span class="small">Matches the create experience. Adjust counts to add/remove columns, then maintain geometry, weight, and costing values per variant.</span>
+                </div>
+              </div>
+            </div>
+            {% if form.extrusion_die_columns.errors or form.mold_columns.errors %}
+              <div class="alert alert-danger mt-3">
+                {% for error in form.extrusion_die_columns.errors %}<div>{{ error }}</div>{% endfor %}
+                {% for error in form.mold_columns.errors %}<div>{{ error }}</div>{% endfor %}
+              </div>
+            {% endif %}
+            <div class="d-none">
+              {{ form.extrusion_die_columns }}
+              {{ form.mold_columns }}
+            </div>
+            <div
+              class="mt-3"
+              data-column-builder
+              data-die-field="{{ form.extrusion_die_columns.id_for_label }}"
+              data-mold-field="{{ form.mold_columns.id_for_label }}"
+              data-die-count-field="{{ form.extrusion_die_count.id_for_label }}"
+              data-mold-count-field="{{ form.mold_count.id_for_label }}"
+            ></div>
+          </section>
+          <div class="row">
+            <div class="col-12">
+              {% include 'enquiries/_form_field.html' with field=form.remarks %}
+            </div>
+          </div>
+          <div class="row g-3">
+            <div class="col-md-6 col-lg-4">
+              {% include 'enquiries/_form_field.html' with field=form.profile %}
+            </div>
+            <div class="col-md-6 col-lg-4">
+              {% include 'enquiries/_form_field.html' with field=form.attachments %}
+            </div>
+          </div>
+          {% if enquiry.profile_attachments %}
+            <div class="mb-3">
+              <strong class="d-block mb-2">Profile</strong>
+              <ul class="list-unstyled">
+                {% for attachment in enquiry.profile_attachments %}
+                  <li class="mb-1">
+                    <a href="{% url 'enquiries:download_attachment' enquiry.enquiry_id attachment.attachment_id %}" target="_blank" rel="noopener">
+                      {{ attachment.file_name }}
+                    </a>
+                    <small class="text-muted ms-1">({{ attachment.size_bytes|filesizeformat }})</small>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+          {% if enquiry.general_attachments %}
+            <div class="mb-3">
+              <strong class="d-block mb-2">Attachments</strong>
+              <ul class="list-unstyled">
+                {% for attachment in enquiry.general_attachments %}
+                  <li class="mb-1">
+                    <a href="{% url 'enquiries:download_attachment' enquiry.enquiry_id attachment.attachment_id %}" target="_blank" rel="noopener">
+                      {{ attachment.file_name }}
+                    </a>
+                    <small class="text-muted ms-1">({{ attachment.size_bytes|filesizeformat }})</small>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+          <div class="d-flex gap-2 flex-wrap align-items-center">
+            <button type="submit" class="btn btn-primary">
+              <i class="bi bi-save me-1"></i>Save changes
+            </button>
+            <a class="btn btn-outline-secondary" href="{% url 'enquiries:board' %}">Cancel</a>
+            <a
+              class="btn btn-outline-primary"
+              href="{% url 'enquiries:preview' enquiry.enquiry_id %}"
+              target="_blank"
+              rel="noopener"
+            >
+              <i class="bi bi-link-45deg me-1"></i>Generate Link
+            </a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    {% if column_matrix.columns %}
+      <div class="card shadow-sm mb-4">
+        <div class="card-body">
+          <h2 class="h5 mb-3">Quotation Matrix</h2>
+          <div class="matrix-scroll">
+            <table class="table table-sm table-bordered enquiry-matrix">
+              <thead>
+                <tr>
+                  <th class="matrix-label">Parameter</th>
+                  {% for column in column_matrix.columns %}
+                    <th class="matrix-header {% if column.group == 'die' %}matrix-header--die{% else %}matrix-header--mold{% endif %}">
+                      {{ column.title|default:column.code }}
+                    </th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in column_matrix.rows %}
+                  <tr>
+                    <th class="matrix-label">{{ row.label }}</th>
+                    {% for cell in row.cells %}
+                      {% if not cell.enabled %}
+                        <td class="matrix-cell matrix-cell--na">—</td>
+                      {% else %}
+                        <td class="matrix-cell">
+                          {% if cell.value is None or cell.value == '' %}
+                            <span class="text-muted">—</span>
+                          {% elif row.type == 'percent' %}
+                            {{ cell.value|floatformat:2 }}%
+                          {% elif row.type == 'number' or row.type == 'currency' %}
+                            {{ cell.value|floatformat:2 }}
+                          {% else %}
+                            {{ cell.value }}
+                          {% endif %}
+                        </td>
+                      {% endif %}
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h5">Quick facts</h2>
+        <dl class="row mb-0">
+          <dt class="col-5 text-muted">Enquiry ID</dt>
+          <dd class="col-7">{{ enquiry.enquiry_id }}</dd>
+          <dt class="col-5 text-muted">Channel</dt>
+          <dd class="col-7">{{ enquiry.channel|title }}</dd>
+          <dt class="col-5 text-muted">Received</dt>
+          <dd class="col-7">
+            {% if enquiry.received_at_dt %}
+              {{ enquiry.received_at_dt|date:"Y-m-d H:i" }}
+            {% else %}
+              <span class="text-muted">Unknown</span>
+            {% endif %}
+          </dd>
+          {% if enquiry.assigned_to %}
+            <dt class="col-5 text-muted">Owner</dt>
+            <dd class="col-7">{{ enquiry.assigned_to }}</dd>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+    <div class="card shadow-sm mt-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2 class="h5 mb-0">SubEnquiries</h2>
+          <a class="btn btn-outline-primary btn-sm" href="{% url 'enquiries:subdivision_create' enquiry.enquiry_id %}">
+            <i class="bi bi-plus"></i> Add SubEnquiry
+          </a>
+        </div>
+        {% if subdivisions %}
+          <div class="vstack gap-3">
+            {% for subdivision in subdivisions %}
+              <div class="border rounded p-3">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <div class="fw-semibold">{{ subdivision.subdivision_id }}</div>
+                    <div class="text-muted small">Code {{ subdivision.code|upper }} • Status {{ subdivision.status|default:'open'|upper }}</div>
+                    {% if subdivision.description %}
+                      <p class="mb-1 mt-2">{{ subdivision.description }}</p>
+                    {% endif %}
+                    {% if subdivision.final_price_per_piece %}
+                      <small class="text-muted">Final Price / Piece: {{ subdivision.final_price_per_piece }}</small>
+                    {% endif %}
+                  </div>
+                  <div class="btn-group">
+                    <a class="btn btn-sm btn-outline-primary" href="{% url 'enquiries:subdivision_detail' enquiry.enquiry_id subdivision.subdivision_id %}">View</a>
+                    <a class="btn btn-sm btn-outline-success" href="{% url 'enquiries:subdivision_preview' enquiry.enquiry_id subdivision.subdivision_id %}" target="_blank" rel="noopener">Preview</a>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-muted mb-0">No sub-enquiries yet.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+  {{ block.super }}
+  <script src="{% static 'js/enquiry-currency.js' %}"></script>
+  <script src="{% static 'js/enquiry-column-builder.js' %}"></script>
+  <script src="{% static 'js/enquiry-calculations.js' %}"></script>
+{% endblock %}

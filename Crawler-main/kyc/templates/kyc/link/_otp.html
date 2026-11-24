@@ -1,0 +1,46 @@
+{# The emailed one-time code: needs `urls` (otpSend, otpVerify). Reloads the page once verified. #}
+    <div id="otpAlert" class="alert d-none" role="alert"></div>
+    <div id="otpTest" class="kp-test mb-3 d-none"></div>
+    <button type="button" class="btn btn-primary w-100 mb-3" id="otpSend">Email me the code</button>
+    <form id="otpForm" class="d-none" novalidate>
+      <label for="otpCode" class="form-label">Enter the 6-digit code</label>
+      <input id="otpCode" class="form-control kp-otp mx-auto mb-3" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" pattern="[0-9]{6}" required>
+      <button type="submit" class="btn btn-success w-100">Verify</button>
+      <p class="text-muted small mt-2 mb-0">The code works for 10 minutes. You can try 5 times.</p>
+    </form>
+    {{ urls|json_script:"otpUrls" }}
+    <script>
+    (function () {
+      const urls = JSON.parse(document.getElementById("otpUrls").textContent);
+      const csrf = () => (document.cookie.split("; ").find((p) => p.startsWith("csrftoken=")) || "").split("=")[1] || "";
+      const alertBox = document.getElementById("otpAlert");
+      const say = (msg, kind) => { alertBox.className = "alert alert-" + kind; alertBox.textContent = msg; };
+      async function post(url, body) {
+        const res = await fetch(url, { method: "POST", credentials: "same-origin",
+          headers: { "X-CSRFToken": csrf(), "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+        let data = {}; try { data = await res.json(); } catch (e) {}
+        if (res.status === 410) window.location.reload();
+        return { ok: res.ok, data };
+      }
+      document.getElementById("otpSend").addEventListener("click", async (ev) => {
+        ev.target.disabled = true;
+        const r = await post(urls.otpSend);
+        say(r.data.message || (r.ok ? "Code sent." : "Could not send the code."), r.ok ? "info" : "danger");
+        if (r.data.testCode) {
+          const t = document.getElementById("otpTest");
+          t.textContent = "Test mode: no email was sent. The code is " + r.data.testCode;
+          t.classList.remove("d-none");
+        }
+        if (r.ok) { document.getElementById("otpForm").classList.remove("d-none"); document.getElementById("otpCode").focus(); ev.target.textContent = "Send a new code"; }
+        setTimeout(() => { ev.target.disabled = false; }, 30000);
+      });
+      document.getElementById("otpForm").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const code = document.getElementById("otpCode").value.replace(/\D/g, "");
+        if (code.length !== 6) { say("Enter the 6 digits from the email.", "danger"); return; }
+        const r = await post(urls.otpVerify, { code });
+        if (r.ok) window.location.reload(); else say(r.data.message || "That code is not right.", "danger");
+      });
+    })();
+    </script>

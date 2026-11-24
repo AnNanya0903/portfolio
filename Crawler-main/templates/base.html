@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="MagicWand 2.0 - AI Enabled ERP">
+    <title>{% block title %}MagicWand 2.0{% endblock %}</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+
+    {% load static %}
+    <link href="{% static 'css/copilot.css' %}" rel="stylesheet">
+
+    {% block extra_css %}{% endblock %}
+</head>
+<body class="theme-copilot">
+    {% if not user.is_authenticated %}
+        <!-- Standard Nav for Landing -->
+        <nav class="navbar navbar-expand-lg border-bottom border-secondary-subtle py-3 bg-white bg-opacity-75" style="backdrop-filter: blur(14px);">
+            <div class="{% block public_nav_container_class %}container{% endblock %}">
+                <a class="navbar-brand d-flex align-items-center gap-2" href="/">
+                    <img src="{% static 'images/avigiri-logo.jpg' %}" alt="Logo" height="32" style="height:32px;width:auto;max-width:none;border-radius:4px;display:block;">
+                    <span class="fw-bold text-dark">MagicWand</span>
+                </a>
+                <div class="ms-auto">
+                    <a href="/accounts/google/login/?process=login" class="btn btn-primary btn-sm px-4">
+                        <i class="bi bi-google me-2"></i>Sign in
+                    </a>
+                </div>
+            </div>
+        </nav>
+
+        <main class="{% block public_main_class %}container py-5{% endblock %}">
+            {% block content %}{% endblock %}
+        </main>
+    {% else %}
+        <header class="copilot-mobile-header d-lg-none">
+            <button class="btn btn-light border flex-shrink-0" type="button" data-bs-toggle="offcanvas" data-bs-target="#copilotMobileNav" aria-controls="copilotMobileNav">
+                <i class="bi bi-list"></i>
+            </button>
+            <a href="/" class="copilot-mobile-brand d-inline-flex align-items-center text-decoration-none text-dark">
+                <img src="{% static 'images/avigiri-logo.jpg' %}" alt="Logo" style="height:28px;width:auto;max-width:none;border-radius:6px;display:block;">
+                <span>MagicWand 2.0</span>
+            </a>
+            <div class="copilot-mobile-actions flex-shrink-0">
+                <a href="{% url 'settings_portal' %}" class="btn btn-light border">
+                    <i class="bi bi-gear"></i>
+                </a>
+            </div>
+        </header>
+
+        <div class="offcanvas offcanvas-start copilot-mobile-menu" tabindex="-1" id="copilotMobileNav" aria-labelledby="copilotMobileNavLabel">
+            <div class="offcanvas-header">
+                <h5 class="offcanvas-title" id="copilotMobileNavLabel">MagicWand 2.0</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+            </div>
+            <div class="offcanvas-body d-flex flex-column">
+                <a href="/" class="sidebar-logo">
+                    <img src="{% static 'images/avigiri-logo.jpg' %}" alt="Logo" style="height:32px;width:auto;max-width:none;border-radius:6px;display:block;">
+                    <span class="fw-bold">MagicWand <span class="text-primary">2.0</span></span>
+                </a>
+
+                <nav class="copilot-mobile-nav flex-grow-1">
+                    <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or '/quotations/' in request.path or 'cad' in request.path %}open{% endif %}>
+                    <summary class="copilot-mobile-section-title">Core ERP</summary>
+                    <div class="sidebar-section-links">
+                    <a href="/" class="nav-pill-custom {% if request.path == '/' %}active{% endif %}">
+                        <i class="bi bi-grid-1x2"></i> Dashboard
+                    </a>
+                    {% if mw_service_access.enquiries|default:False %}
+                    <a href="{% url 'enquiries:board' %}" class="nav-pill-custom {% if 'enquiries' in request.path %}active{% endif %}">
+                        <i class="bi bi-journal-text"></i> Enquiries
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.kyc|default:False %}
+                    <a href="{% url 'kyc:list' %}" class="nav-pill-custom {% if '/kyc/' in request.path %}active{% endif %}">
+                        <i class="bi bi-person-vcard"></i> KYC
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.marketing|default:False %}
+                    <a href="{% url 'marketing:board' %}" class="nav-pill-custom {% if '/marketing/' in request.path %}active{% endif %}">
+                        <i class="bi bi-megaphone"></i> Marketing
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.quotations|default:False %}
+                    <a href="{% url 'quotations:list' %}" class="nav-pill-custom {% if '/quotations/' in request.path %}active{% endif %}">
+                        <i class="bi bi-file-earmark-text"></i> Quotations
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.design|default:False %}
+                    <a href="{% url 'cad_library' %}" class="nav-pill-custom {% if 'cad' in request.path %}active{% endif %}">
+                        <i class="bi bi-diagram-3"></i> Design Match
+                    </a>
+                    {% endif %}
+                    </div>
+                    </details>
+
+                    {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board or mw_service_access.compounding_production %}
+                    <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
+                    <summary class="copilot-mobile-section-title">Operations</summary>
+                    <div class="sidebar-section-links">
+                    {% if mw_service_access.mrp|default:False %}
+                    <a href="{% url 'mrp:portal' %}" class="nav-pill-custom {% if request.path == '/mrp/' %}active{% endif %}">
+                        <i class="bi bi-cpu"></i> Manufacturing
+                    </a>
+                    <a href="{% url 'mrp:purchase_workspace' %}" class="nav-pill-custom {% if '/mrp/purchase/' in request.path %}active{% endif %}">
+                        <i class="bi bi-cart-check"></i> Purchase
+                    </a>
+                    <a href="{% url 'mrp:sales_workspace' %}" class="nav-pill-custom {% if '/mrp/sales/' in request.path %}active{% endif %}">
+                        <i class="bi bi-receipt"></i> Sales
+                    </a>
+                    <a href="{% url 'mrp:inventory_workspace' %}" class="nav-pill-custom {% if '/mrp/inventory/' in request.path %}active{% endif %}">
+                        <i class="bi bi-boxes"></i> Inventory
+                    </a>
+                    <a href="{% url 'mrp:accounting_workspace' %}" class="nav-pill-custom {% if '/mrp/accounting/' in request.path %}active{% endif %}">
+                        <i class="bi bi-bank"></i> Accounting
+                    </a>
+                    <a href="{% url 'mrp:forecasts_workspace' %}" class="nav-pill-custom {% if '/mrp/forecasts/' in request.path %}active{% endif %}">
+                        <i class="bi bi-graph-up-arrow"></i> Forecasts
+                    </a>
+                    <a href="{% url 'mrp:quality_workspace' %}" class="nav-pill-custom {% if '/mrp/quality/' in request.path %}active{% endif %}">
+                        <i class="bi bi-shield-check"></i> Quality
+                    </a>
+                    <a href="{% url 'mrp:hr_workspace' %}" class="nav-pill-custom {% if '/mrp/hr/' in request.path %}active{% endif %}">
+                        <i class="bi bi-people"></i> HR Lite
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
+                    <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                        <i class="bi bi-droplet-half"></i> Compounding
+                    </a>
+                    {% elif mw_service_access.compounding_production|default:False %}
+                    <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                        <i class="bi bi-clipboard-plus"></i> Raise CRIN
+                    </a>
+                    {% endif %}
+                    </div>
+                    </details>
+                    {% endif %}
+
+                    {% if mw_service_access.deskera or mw_service_access.mrp %}
+                    <details class="sidebar-section" {% if 'deskera' in request.path or '/mrp/integrations/' in request.path %}open{% endif %}>
+                    <summary class="copilot-mobile-section-title">Integrations</summary>
+                    <div class="sidebar-section-links">
+                    {% if mw_service_access.deskera|default:False %}
+                    <a href="{% url 'deskera_portal' %}" class="nav-pill-custom {% if 'deskera' in request.path %}active{% endif %}">
+                        <i class="bi bi-building-gear"></i> Deskera MRP
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.mrp|default:False %}
+                    <a href="{% url 'mrp:integration_hub' %}" class="nav-pill-custom {% if '/mrp/integrations/' in request.path %}active{% endif %}">
+                        <i class="bi bi-plug"></i> Integration Hub
+                    </a>
+                    {% endif %}
+                    </div>
+                    </details>
+                    {% endif %}
+
+                    {% if mw_service_access.gmail_ai %}
+                    <details class="sidebar-section" {% if 'gmail' in request.path %}open{% endif %}>
+                    <summary class="copilot-mobile-section-title">Intelligence</summary>
+                    <div class="sidebar-section-links">
+                    {% if mw_service_access.gmail_ai|default:False %}
+                    <a href="{% url 'gmail_ai' %}" class="nav-pill-custom {% if 'gmail' in request.path %}active{% endif %}">
+                        <i class="bi bi-robot"></i> Gmail AI
+                    </a>
+                    {% endif %}
+                    </div>
+                    </details>
+                    {% endif %}
+
+                    {% if mw_service_access.accounts or mw_service_access.document_scanner or mw_service_access.gasket_counter %}
+                    <details class="sidebar-section" {% if 'accounts-portal' in request.path or 'accounts-service' in request.path or 'documents' in request.path or 'gasket-counter' in request.path %}open{% endif %}>
+                    <summary class="copilot-mobile-section-title">Utilities</summary>
+                    <div class="sidebar-section-links">
+                    {% if mw_service_access.accounts|default:False %}
+                    <a href="{% url 'accounts_portal' %}" class="nav-pill-custom {% if 'accounts-portal' in request.path or 'accounts-service' in request.path %}active{% endif %}">
+                        <i class="bi bi-bank"></i> Accounts Portal
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.document_scanner|default:False %}
+                    <a href="{% url 'docscanner:list' %}" class="nav-pill-custom {% if 'documents' in request.path %}active{% endif %}">
+                        <i class="bi bi-folder2-open"></i> Documents
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.gasket_counter|default:False %}
+                    <a href="{% url 'gasket_counter:list' %}" class="nav-pill-custom {% if 'gasket-counter' in request.path %}active{% endif %}">
+                        <i class="bi bi-bullseye"></i> Gasket Counter
+                    </a>
+                    {% endif %}
+                    </div>
+                    </details>
+                    {% endif %}
+
+                    {% if mw_service_access.discussion %}
+                    <details class="sidebar-section" {% if 'discussion' in request.path %}open{% endif %}>
+                    <summary class="copilot-mobile-section-title">Collaboration</summary>
+                    <div class="sidebar-section-links">
+                    {% if mw_service_access.discussion|default:False %}
+                    <a href="{% url 'discussion:board' %}" class="nav-pill-custom {% if 'discussion' in request.path %}active{% endif %}">
+                        <i class="bi bi-chat-dots"></i> Forum
+                    </a>
+                    {% endif %}
+                    </div>
+                    </details>
+                    {% endif %}
+                </nav>
+
+                <div class="copilot-mobile-footer">
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <div class="avatar-circle bg-primary-subtle text-primary fw-bold text-center" style="width:36px;height:36px;line-height:36px;border-radius:50%; font-size: 0.85rem;">{{ user.first_name|first|default:user.username|first }}</div>
+                        <div class="small flex-grow-1">
+                            <div class="fw-bold text-dark">{{ user.first_name|default:user.username }}</div>
+                            <div class="text-muted">{{ user.email }}</div>
+                        </div>
+                    </div>
+                    <form method="post" action="{% url 'account_logout' %}" class="mb-0">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger w-100">Sign Out</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modern Copilot Sidebar -->
+        <aside class="copilot-sidebar d-none d-lg-flex flex-column">
+            <a href="/" class="sidebar-logo">
+                <img src="{% static 'images/avigiri-logo.jpg' %}" alt="Logo" style="height:32px;width:auto;max-width:none;border-radius:6px;display:block;">
+                <span class="fw-bold">MagicWand <span class="text-primary">2.0</span></span>
+            </a>
+
+            <nav class="copilot-sidebar-nav flex-grow-1">
+                <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or '/quotations/' in request.path or 'cad' in request.path %}open{% endif %}>
+                <summary class="sidebar-section-title">Core ERP</summary>
+                <div class="sidebar-section-links">
+                <a href="/" class="nav-pill-custom {% if request.path == '/' %}active{% endif %}">
+                    <i class="bi bi-grid-1x2"></i> Dashboard
+                </a>
+                {% if mw_service_access.enquiries|default:False %}
+                <a href="{% url 'enquiries:board' %}" class="nav-pill-custom {% if 'enquiries' in request.path %}active{% endif %}" data-ai-context="enquiries">
+                    <i class="bi bi-journal-text"></i> Enquiries
+                </a>
+                {% endif %}
+                {% if mw_service_access.kyc|default:False %}
+                <a href="{% url 'kyc:list' %}" class="nav-pill-custom {% if '/kyc/' in request.path %}active{% endif %}">
+                    <i class="bi bi-person-vcard"></i> KYC
+                </a>
+                {% endif %}
+                {% if mw_service_access.marketing|default:False %}
+                <a href="{% url 'marketing:board' %}" class="nav-pill-custom {% if '/marketing/' in request.path %}active{% endif %}">
+                    <i class="bi bi-megaphone"></i> Marketing
+                </a>
+                {% endif %}
+                {% if mw_service_access.quotations|default:False %}
+                <a href="{% url 'quotations:list' %}" class="nav-pill-custom {% if '/quotations/' in request.path %}active{% endif %}">
+                    <i class="bi bi-file-earmark-text"></i> Quotations
+                </a>
+                {% endif %}
+                {% if mw_service_access.design|default:False %}
+                <a href="{% url 'cad_library' %}" class="nav-pill-custom {% if 'cad' in request.path %}active{% endif %}" data-ai-context="design">
+                    <i class="bi bi-diagram-3"></i> Design Match
+                </a>
+                {% endif %}
+                </div>
+                </details>
+
+                {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board or mw_service_access.compounding_production %}
+                <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
+                <summary class="sidebar-section-title">Operations</summary>
+                <div class="sidebar-section-links">
+                {% if mw_service_access.mrp|default:False %}
+                <a href="{% url 'mrp:portal' %}" class="nav-pill-custom {% if request.path == '/mrp/' %}active{% endif %}">
+                    <i class="bi bi-cpu"></i> Manufacturing
+                </a>
+                <a href="{% url 'mrp:purchase_workspace' %}" class="nav-pill-custom {% if '/mrp/purchase/' in request.path %}active{% endif %}">
+                    <i class="bi bi-cart-check"></i> Purchase
+                </a>
+                <a href="{% url 'mrp:sales_workspace' %}" class="nav-pill-custom {% if '/mrp/sales/' in request.path %}active{% endif %}">
+                    <i class="bi bi-receipt"></i> Sales
+                </a>
+                <a href="{% url 'mrp:inventory_workspace' %}" class="nav-pill-custom {% if '/mrp/inventory/' in request.path %}active{% endif %}">
+                    <i class="bi bi-boxes"></i> Inventory
+                </a>
+                <a href="{% url 'mrp:accounting_workspace' %}" class="nav-pill-custom {% if '/mrp/accounting/' in request.path %}active{% endif %}">
+                    <i class="bi bi-bank"></i> Accounting
+                </a>
+                <a href="{% url 'mrp:forecasts_workspace' %}" class="nav-pill-custom {% if '/mrp/forecasts/' in request.path %}active{% endif %}">
+                    <i class="bi bi-graph-up-arrow"></i> Forecasts
+                </a>
+                <a href="{% url 'mrp:quality_workspace' %}" class="nav-pill-custom {% if '/mrp/quality/' in request.path %}active{% endif %}">
+                    <i class="bi bi-shield-check"></i> Quality
+                </a>
+                <a href="{% url 'mrp:hr_workspace' %}" class="nav-pill-custom {% if '/mrp/hr/' in request.path %}active{% endif %}">
+                    <i class="bi bi-people"></i> HR Lite
+                </a>
+                {% endif %}
+                {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
+                <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}" data-ai-context="compounding">
+                    <i class="bi bi-droplet-half"></i> Compounding
+                </a>
+                {% elif mw_service_access.compounding_production|default:False %}
+                <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                    <i class="bi bi-clipboard-plus"></i> Raise CRIN
+                </a>
+                {% endif %}
+                </div>
+                </details>
+                {% endif %}
+
+                {% if mw_service_access.deskera or mw_service_access.mrp %}
+                <details class="sidebar-section" {% if 'deskera' in request.path or '/mrp/integrations/' in request.path %}open{% endif %}>
+                <summary class="sidebar-section-title">Integrations</summary>
+                <div class="sidebar-section-links">
+                {% if mw_service_access.deskera|default:False %}
+                <a href="{% url 'deskera_portal' %}" class="nav-pill-custom {% if 'deskera' in request.path %}active{% endif %}" data-ai-context="deskera">
+                    <i class="bi bi-building-gear"></i> Deskera MRP
+                </a>
+                {% endif %}
+                {% if mw_service_access.mrp|default:False %}
+                <a href="{% url 'mrp:integration_hub' %}" class="nav-pill-custom {% if '/mrp/integrations/' in request.path %}active{% endif %}">
+                    <i class="bi bi-plug"></i> Integration Hub
+                </a>
+                {% endif %}
+                </div>
+                </details>
+                {% endif %}
+
+                {% if mw_service_access.gmail_ai %}
+                <details class="sidebar-section" {% if 'gmail' in request.path %}open{% endif %}>
+                <summary class="sidebar-section-title">Intelligence</summary>
+                <div class="sidebar-section-links">
+                {% if mw_service_access.gmail_ai|default:False %}
+                <a href="{% url 'gmail_ai' %}" class="nav-pill-custom {% if 'gmail' in request.path %}active{% endif %}" data-ai-context="gmail">
+                    <i class="bi bi-robot"></i> Gmail AI
+                </a>
+                {% endif %}
+                </div>
+                </details>
+                {% endif %}
+
+                {% if mw_service_access.accounts or mw_service_access.document_scanner or mw_service_access.gasket_counter %}
+                <details class="sidebar-section" {% if 'accounts-portal' in request.path or 'accounts-service' in request.path or 'documents' in request.path or 'gasket-counter' in request.path %}open{% endif %}>
+                <summary class="sidebar-section-title">Utilities</summary>
+                <div class="sidebar-section-links">
+                {% if mw_service_access.accounts|default:False %}
+                <a href="{% url 'accounts_portal' %}" class="nav-pill-custom {% if 'accounts-portal' in request.path or 'accounts-service' in request.path %}active{% endif %}" data-ai-context="accounts">
+                    <i class="bi bi-bank"></i> Accounts Portal
+                </a>
+                {% endif %}
+                {% if mw_service_access.document_scanner|default:False %}
+                <a href="{% url 'docscanner:list' %}" class="nav-pill-custom {% if 'documents' in request.path %}active{% endif %}">
+                    <i class="bi bi-folder2-open"></i> Documents
+                </a>
+                {% endif %}
+                {% if mw_service_access.gasket_counter|default:False %}
+                <a href="{% url 'gasket_counter:list' %}" class="nav-pill-custom {% if 'gasket-counter' in request.path %}active{% endif %}">
+                    <i class="bi bi-bullseye"></i> Gasket Counter
+                </a>
+                {% endif %}
+                </div>
+                </details>
+                {% endif %}
+
+                {% if mw_service_access.discussion %}
+                <details class="sidebar-section" {% if 'discussion' in request.path %}open{% endif %}>
+                <summary class="sidebar-section-title">Collaboration</summary>
+                <div class="sidebar-section-links">
+                {% if mw_service_access.discussion|default:False %}
+                <a href="{% url 'discussion:board' %}" class="nav-pill-custom {% if 'discussion' in request.path %}active{% endif %}" data-ai-context="forum">
+                    <i class="bi bi-chat-dots"></i> Forum
+                </a>
+                {% endif %}
+                </div>
+                </details>
+                {% endif %}
+            </nav>
+
+            <div class="sidebar-footer mt-auto pt-4 border-top border-secondary-subtle">
+                <div class="d-flex align-items-center gap-2 px-2">
+                    <div class="avatar-circle bg-primary-subtle text-primary fw-bold text-center" style="width:32px;height:32px;line-height:32px;border-radius:50%; font-size: 0.8rem;">{{ user.first_name|first|default:user.username|first }}</div>
+                    <div class="small flex-grow-1">
+                        <div class="fw-bold text-dark">{{ user.first_name|default:user.username }}</div>
+                        <form method="post" action="{% url 'account_logout' %}" class="sidebar-signout-form mb-0">
+                            {% csrf_token %}
+                            <button type="submit" class="sidebar-signout-btn">
+                                <i class="bi bi-box-arrow-right" aria-hidden="true"></i>
+                                <span>Sign Out</span>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- AI Portal Modal -->
+        <div id="aiPortal" class="ai-portal-overlay">
+            <button class="ai-close-btn" onclick="closeAiPortal()">&times;</button>
+            <div class="ai-portal-content">
+                <div class="ai-portal-avatar">🤖</div>
+                <h2 class="ai-portal-title" id="aiPortalTitle">How can I help?</h2>
+                <p class="text-muted mb-4 fs-5" id="aiPortalSubtitle">I am your manufacturing copilot.</p>
+
+                <div class="ai-portal-input-container">
+                    <button type="button" class="btn btn-light border px-3" id="aiFileTrigger" title="Attach a file">
+                        <i class="bi bi-paperclip"></i>
+                    </button>
+                    <input type="text" class="ai-portal-input" placeholder="Type your request or select a suggestion below..." id="aiInput">
+                    <button type="button" class="btn btn-primary px-4" style="border-radius: 14px;" id="aiSendButton">
+                        <i class="bi bi-send-fill"></i>
+                    </button>
+                </div>
+                <input type="file" id="aiFileInput" class="d-none">
+                <div class="ai-portal-meta text-start">
+                    <div id="aiFileMeta" class="small text-muted"></div>
+                    <div id="aiCategoryWrap" class="mt-2" hidden>
+                        <label for="aiCategorySelect" class="form-label small fw-semibold mb-1">Category</label>
+                        <div class="ai-category-row">
+                            <select id="aiCategorySelect" class="form-select form-select-sm">
+                                <option value="">Select category to match</option>
+                                <option value="AGR">AGR</option>
+                                <option value="AGX">AGX</option>
+                                <option value="AGS">AGS</option>
+                                <option value="AGM">AGM</option>
+                            </select>
+                            <select id="aiMatchCountSelect" class="form-select form-select-sm ai-match-count-select" aria-label="Match count" hidden>
+                                <option value="3" selected>Top 3</option>
+                                <option value="5">Top 5</option>
+                                <option value="10">Top 10</option>
+                                <option value="20">Top 20</option>
+                            </select>
+                            <a id="aiDesignMatchLink" class="btn btn-sm btn-success ai-design-match-link" href="{% url 'cad_library' %}" hidden>Open Design Match</a>
+                        </div>
+                        <div id="aiGasketIdWrap" class="mt-2" hidden>
+                            <label for="aiGasketIdInput" class="form-label small fw-semibold mb-1">Die No.</label>
+                            <input id="aiGasketIdInput" class="form-control form-control-sm ai-gasket-id-input" type="text" placeholder="AGR-1725">
+                        </div>
+                    </div>
+                    <div id="aiSharePasswordWrap" class="mt-2" hidden>
+                        <label for="aiSharePasswordInput" class="form-label small fw-semibold mb-1">Share Password</label>
+                        <input id="aiSharePasswordInput" class="form-control form-control-sm ai-share-password-input" type="password" placeholder="Enter password for the generated link" autocomplete="new-password">
+                        <div class="form-text small">Recipients will need this password to open the PDF link.</div>
+                    </div>
+                    <div id="aiPortalStatus" class="small"></div>
+                </div>
+
+                <div id="aiConversation" class="ai-conversation-panel" hidden></div>
+
+                <div class="ai-suggestion-grid" id="aiSuggestions">
+                    <!-- Suggestions dynamic -->
+                </div>
+                <div id="aiResults" class="ai-result-panel mt-4" hidden></div>
+            </div>
+        </div>
+
+        <div id="appLoadingOverlay" class="app-loading-overlay" hidden aria-live="polite" aria-busy="true">
+            <div class="app-loading-card shadow-sm">
+                <div class="spinner-border text-primary app-loading-spinner" role="status" aria-hidden="true"></div>
+                <div class="fw-semibold app-loading-title">Thinking...</div>
+                <div id="appLoadingMessage" class="text-muted small">Please wait while MagicWand finishes the request.</div>
+            </div>
+        </div>
+
+        <!-- Main Content for Auth -->
+        <main class="copilot-main">
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags|default:'info' }} border-0 bg-dark text-white shadow-sm mb-4 py-2" role="alert">
+                        <small>{{ message }}</small>
+                    </div>
+                {% endfor %}
+            {% endif %}
+
+            <div class="container-fluid p-0">
+                {% block auth_content %}{% endblock %}
+            </div>
+        </main>
+    {% endif %}
+
+    <!-- Bootstrap JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        const AI_ACTION_ENDPOINT = "{% url 'ai_portal_action' %}";
+        const DESIGN_LIBRARY_CATEGORIES = ["AGR", "AGX", "AGS", "AGM"];
+        let activeAiContext = "dashboard";
+        let aiPendingAction = "";
+
+        function setAppLoading(message = "Please wait while MagicWand finishes the request.") {
+            const overlay = document.getElementById("appLoadingOverlay");
+            const label = document.getElementById("appLoadingMessage");
+            if (!overlay) {
+                return;
+            }
+            overlay.hidden = false;
+            document.body.classList.add("app-loading-active");
+            if (label) {
+                label.textContent = message || "Please wait while MagicWand finishes the request.";
+            }
+        }
+
+        function clearAppLoading() {
+            const overlay = document.getElementById("appLoadingOverlay");
+            if (!overlay) {
+                return;
+            }
+            overlay.hidden = true;
+            document.body.classList.remove("app-loading-active");
+        }
+
+        function navigateTo(url, message = "Opening module...") {
+            setAppLoading(message);
+            closeAiPortal(false);
+            window.location.href = url;
+        }
+
+        function focusOrNavigate(url, selector, behavior = "focus") {
+            const target = selector ? document.querySelector(selector) : null;
+            const targetPath = url ? new URL(url, window.location.origin).pathname : window.location.pathname;
+            const onTargetPage = window.location.pathname === targetPath;
+            if (target && onTargetPage) {
+                closeAiPortal(false);
+                if (behavior === "click") {
+                    target.click();
+                } else {
+                    target.focus();
+                    if (behavior === "select" && typeof target.select === "function") {
+                        target.select();
+                    }
+                }
+                return;
+            }
+            navigateTo(url);
+        }
+
+        const AI_CONFIGS = {
+            dashboard: {
+                title: "Welcome, {{ user.first_name|default:user.username|escapejs }}",
+                subtitle: "Choose a workspace or ask for an action directly.",
+                fileAccept: ".pdf,.dwg,.dxf",
+                suggestions: [
+                    {% if mw_service_access.enquiries|default:False %}
+                    { icon: "📋", text: "Open Enquiry Board", action: () => navigateTo("{% url 'enquiries:board' %}") },
+                    {% endif %}
+                    {% if mw_service_access.design|default:False %}
+                    { icon: "📐", text: "Go to Design Match", action: () => navigateTo("{% url 'cad_library' %}") },
+                    {% endif %}
+                    {% if mw_service_access.deskera|default:False %}
+                    { icon: "🏭", text: "Access Deskera MRP", action: () => navigateTo("{% url 'deskera_portal' %}") },
+                    {% endif %}
+                    {% if mw_service_access.accounts|default:False %}
+                    { icon: "💳", text: "Open Accounts", action: () => navigateTo("{% url 'accounts_portal' %}") },
+                    {% endif %}
+                    {% if mw_service_access.gmail_ai|default:False %}
+                    { icon: "🤖", text: "Talk to Gmail AI", action: () => navigateTo("{% url 'gmail_ai' %}") },
+                    {% endif %}
+                ].filter(Boolean),
+            },
+            enquiries: {
+                title: "Enquiry Copilot",
+                subtitle: "Create enquiries, upload RFQs, or move into the board.",
+                fileAccept: ".pdf",
+                suggestions: [
+                    { icon: "📊", text: "View Full Enquiry Board", action: () => navigateTo("{% url 'enquiries:board' %}") },
+                    { icon: "📂", text: "Upload PDF RFQ", action: () => primeAiRequest("Create a new enquiry from this PDF", ".pdf", true, "upload_pdf_enquiry") },
+                    { icon: "📈", text: "View Summary Report", action: () => navigateTo("{% url 'enquiries:summary' %}") },
+                ],
+            },
+            design: {
+                title: "Design Intelligence",
+                subtitle: "Upload drawings or match a customer PDF against the CAD library.",
+                fileAccept: ".pdf,.dwg,.dxf",
+                suggestions: [
+                    { icon: "📚", text: "Open Design Library", action: () => navigateTo("{% url 'cad_library' %}") },
+                    { icon: "🔍", text: "Run AI Match on PDF", action: () => primeAiRequest("Match this PDF to the design library", ".pdf", true, "design_match") },
+                    { icon: "⬆️", text: "Ingest New Drawing", action: () => primeAiRequest("Upload this drawing to the design library as ", ".pdf,.dwg,.dxf", true, "design_upload") },
+                    { icon: "📁", text: "Browse Library Files", action: () => navigateTo("{% url 'design_library_folder' %}") },
+                ],
+            },
+            deskera: {
+                title: "Deskera MRP Copilot",
+                subtitle: "Jump into work orders, job cards, or the Kanban board.",
+                fileAccept: ".pdf,.dwg,.dxf",
+                suggestions: [
+                    { icon: "📋", text: "View Job Cards", action: () => navigateTo("{% url 'deskera_jobcards' %}") },
+                    { icon: "⚙️", text: "Monitor Work Orders", action: () => navigateTo("{% url 'deskera_workorders' %}") },
+                    { icon: "🔀", text: "Open Kanban Board", action: () => navigateTo("{% url 'deskera_portal' %}") },
+                ],
+            },
+            compounding: {
+                title: "Compounding Copilot",
+                subtitle: "Open planning, floor display, or live telemetry.",
+                fileAccept: ".pdf",
+                suggestions: [
+                    { icon: "📅", text: "Open Planning", action: () => navigateTo("{% url 'compounding:board' %}") },
+                    { icon: "📺", text: "Open Shop-Floor Board", action: () => navigateTo("{% url 'compounding:display' %}") },
+                    { icon: "📡", text: "IoT Telemetry", action: () => navigateTo("{% url 'compounding:iot_dashboard' %}") },
+                ],
+            },
+            gmail: {
+                title: "Gmail AI Copilot",
+                subtitle: "Jump into Gmail AI or the lead queue.",
+                fileAccept: ".pdf",
+                suggestions: [
+                    { icon: "🤖", text: "Open Gmail AI", action: () => navigateTo("{% url 'gmail_ai' %}") },
+                    {% if mw_service_access.enquiries|default:False %}
+                    { icon: "📥", text: "Open Lead Queue", action: () => navigateTo("{% url 'enquiries:gmail_queue' %}") },
+                    {% endif %}
+                ].filter(Boolean),
+            },
+            forum: {
+                title: "Forum Copilot",
+                subtitle: "Team conversations, channels, and thread follow-up.",
+                fileAccept: ".pdf",
+                suggestions: [
+                    { icon: "💬", text: "Open Discussion Board", action: () => navigateTo("{% url 'discussion:board' %}") },
+                ],
+            },
+            accounts: {
+                title: "Accounts Copilot",
+                subtitle: "Launch the Accounts workspace and Tally relay tools.",
+                fileAccept: ".pdf",
+                suggestions: [
+                    { icon: "💳", text: "Open Accounts Workspace", action: () => navigateTo("{% url 'accounts_portal' %}") },
+                    { icon: "🧾", text: "Open in New Tab", action: () => window.open("{% url 'accounts_portal' %}", "_blank", "noopener") },
+                ],
+            },
+        };
+
+        const AI_HASH_PREFIX = "#ai-";
+        const AI_CONVERSATION_STORAGE_KEY = "mw-ai-portal-history-v1";
+        let aiConversationHistory = [];
+
+        function getAiPortalHash(context) {
+            return `${AI_HASH_PREFIX}${context || "dashboard"}`;
+        }
+
+        function getAiPortalContextFromLocation() {
+            const hash = window.location.hash || "";
+            if (!hash.startsWith(AI_HASH_PREFIX)) {
+                return "";
+            }
+            const context = hash.slice(AI_HASH_PREFIX.length);
+            return AI_CONFIGS[context] ? context : "";
+        }
+
+        function getCsrfToken() {
+            const cookie = document.cookie
+                .split(";")
+                .map((part) => part.trim())
+                .find((part) => part.startsWith("csrftoken="));
+            return cookie ? decodeURIComponent(cookie.split("=", 2)[1]) : "";
+        }
+
+        function escapeHtml(value) {
+            return String(value || "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/\"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function getConversationStore() {
+            try {
+                return JSON.parse(sessionStorage.getItem(AI_CONVERSATION_STORAGE_KEY) || "{}");
+            } catch (_error) {
+                return {};
+            }
+        }
+
+        function saveConversationStore(store) {
+            try {
+                sessionStorage.setItem(AI_CONVERSATION_STORAGE_KEY, JSON.stringify(store || {}));
+            } catch (_error) {
+                // Ignore storage failures.
+            }
+        }
+
+        function renderAiConversation() {
+            const panel = document.getElementById("aiConversation");
+            if (!panel) {
+                return;
+            }
+            if (!aiConversationHistory.length) {
+                panel.hidden = true;
+                panel.innerHTML = "";
+                return;
+            }
+            panel.hidden = false;
+            panel.innerHTML = aiConversationHistory.map((turn) => {
+                const role = turn.role === "user" ? "user" : "assistant";
+                const label = role === "user" ? "You" : "Copilot";
+                const content = escapeHtml(turn.content || "").replace(/\n/g, "<br>");
+                return (
+                    `<div class="ai-conversation-message ai-conversation-message--${role}">` +
+                    `<div class="ai-conversation-label">${label}</div>` +
+                    `<div class="ai-conversation-body">${content}</div>` +
+                    `</div>`
+                );
+            }).join("");
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        function persistAiConversation() {
+            const store = getConversationStore();
+            store[activeAiContext] = aiConversationHistory.slice(-12);
+            saveConversationStore(store);
+        }
+
+        function appendAiConversation(role, content) {
+            const normalizedRole = role === "user" ? "user" : "assistant";
+            const normalizedContent = String(content || "").trim();
+            if (!normalizedContent) {
+                return;
+            }
+            aiConversationHistory.push({ role: normalizedRole, content: normalizedContent });
+            aiConversationHistory = aiConversationHistory.slice(-12);
+            persistAiConversation();
+            renderAiConversation();
+        }
+
+        function seedAiConversation(context, subtitle) {
+            const store = getConversationStore();
+            const saved = Array.isArray(store[context]) ? store[context] : [];
+            aiConversationHistory = saved.filter((turn) => turn && turn.role && turn.content).slice(-12);
+            if (!aiConversationHistory.length) {
+                aiConversationHistory = [
+                    {
+                        role: "assistant",
+                        content: subtitle || "Ask for an action or a question and I will help from here.",
+                    },
+                ];
+                persistAiConversation();
+            }
+            renderAiConversation();
+        }
+
+        function setPortalStatus(message, tone = "muted") {
+            const status = document.getElementById("aiPortalStatus");
+            if (!status) {
+                return;
+            }
+            status.className = `small ai-portal-status text-${tone}`;
+            status.textContent = message || "";
+        }
+
+        function updateFileMeta() {
+            const fileInput = document.getElementById("aiFileInput");
+            const fileMeta = document.getElementById("aiFileMeta");
+            if (!fileInput || !fileMeta) {
+                return;
+            }
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) {
+                fileMeta.textContent = "";
+                return;
+            }
+            const sizeKb = Math.max(1, Math.round(file.size / 1024));
+            fileMeta.textContent = `Attached: ${file.name} (${sizeKb} KB)`;
+        }
+
+        function clearAiCategory() {
+            const wrap = document.getElementById("aiCategoryWrap");
+            const select = document.getElementById("aiCategorySelect");
+            const matchCount = document.getElementById("aiMatchCountSelect");
+            const gasketIdWrap = document.getElementById("aiGasketIdWrap");
+            const gasketIdInput = document.getElementById("aiGasketIdInput");
+            const sharePasswordWrap = document.getElementById("aiSharePasswordWrap");
+            const sharePasswordInput = document.getElementById("aiSharePasswordInput");
+            const link = document.getElementById("aiDesignMatchLink");
+            if (select) {
+                select.value = "";
+            }
+            if (matchCount) {
+                matchCount.value = "3";
+                matchCount.hidden = true;
+            }
+            if (gasketIdInput) {
+                gasketIdInput.value = "";
+            }
+            if (gasketIdWrap) {
+                gasketIdWrap.hidden = true;
+            }
+            if (sharePasswordInput) {
+                sharePasswordInput.value = "";
+            }
+            if (sharePasswordWrap) {
+                sharePasswordWrap.hidden = true;
+            }
+            if (link) {
+                link.hidden = true;
+                link.setAttribute("href", "{% url 'cad_library' %}");
+            }
+            if (wrap) {
+                wrap.hidden = true;
+            }
+        }
+
+        function syncAiCategoryPrompt() {
+            const fileInput = document.getElementById("aiFileInput");
+            const wrap = document.getElementById("aiCategoryWrap");
+            const select = document.getElementById("aiCategorySelect");
+            const matchCount = document.getElementById("aiMatchCountSelect");
+            const gasketIdWrap = document.getElementById("aiGasketIdWrap");
+            const sharePasswordWrap = document.getElementById("aiSharePasswordWrap");
+            const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+            const needsCategory = activeAiContext === "design" && ["design_match", "design_upload"].includes(aiPendingAction) && !!file;
+            const isDesignMatch = activeAiContext === "design" && aiPendingAction === "design_match";
+            const isDesignUpload = activeAiContext === "design" && aiPendingAction === "design_upload";
+            const isPdfEnquiryUpload = activeAiContext === "enquiries" && aiPendingAction === "upload_pdf_enquiry";
+
+            if (!wrap || !select) {
+                return;
+            }
+
+            wrap.hidden = !needsCategory;
+            if (matchCount) {
+                matchCount.hidden = !isDesignMatch;
+            }
+            if (gasketIdWrap) {
+                gasketIdWrap.hidden = !isDesignUpload;
+            }
+            if (sharePasswordWrap) {
+                sharePasswordWrap.hidden = !isPdfEnquiryUpload;
+            }
+            if (needsCategory && !select.value) {
+                setPortalStatus(
+                    isDesignMatch
+                        ? "Select the category to match this PDF against."
+                        : "Select the category to upload this drawing into.",
+                    "warning"
+                );
+            } else if (isPdfEnquiryUpload) {
+                setPortalStatus("Enter a share password to generate the enquiry link.", "warning");
+            }
+        }
+
+        function setPortalFileAccept(accept) {
+            const fileInput = document.getElementById("aiFileInput");
+            if (fileInput) {
+                fileInput.setAttribute("accept", accept || "");
+            }
+        }
+
+        function clearAiResults() {
+            const results = document.getElementById("aiResults");
+            if (!results) {
+                return;
+            }
+            results.hidden = true;
+            results.innerHTML = "";
+        }
+
+        function renderAiResults(payload) {
+            const results = document.getElementById("aiResults");
+            const designMatchLink = document.getElementById("aiDesignMatchLink");
+            if (!results) {
+                return;
+            }
+
+            if (designMatchLink) {
+                designMatchLink.hidden = true;
+                designMatchLink.setAttribute("href", "{% url 'cad_library' %}");
+            }
+
+            const sections = [];
+            if (payload.reauth_url) {
+                sections.push(
+                    `<div class="card border-0 shadow-sm"><div class="card-body text-start">` +
+                    `<div class="fw-semibold mb-2">Reconnect Google</div>` +
+                    `<a class="btn btn-sm btn-primary" href="${escapeHtml(payload.reauth_url)}">Reconnect account</a>` +
+                    `</div></div>`
+                );
+            }
+
+            if (Array.isArray(payload.links) && payload.links.length) {
+                const inlineDesignLink = payload.action === "design_match"
+                    ? payload.links.find((link) => link.label === "Open Design Match")
+                    : null;
+
+                if (inlineDesignLink && designMatchLink) {
+                    designMatchLink.hidden = false;
+                    designMatchLink.setAttribute("href", inlineDesignLink.url || "{% url 'cad_library' %}");
+                }
+
+                const links = payload.links
+                .filter((link) => !(payload.action === "design_match" && link.label === "Open Design Match"))
+                .map((link) => {
+                    const style = link.style === "primary" ? "btn-primary" : "btn-outline-secondary";
+                    const target = link.external ? ` target="_blank" rel="noopener"` : "";
+                    return `<a class="btn btn-sm ${style}" href="${escapeHtml(link.url)}"${target}>${escapeHtml(link.label)}</a>`;
+                }).join("");
+                if (links) {
+                    sections.push(`<div class="ai-result-actions text-start">${links}</div>`);
+                }
+            }
+
+            if (payload.result && payload.result.share_url) {
+                const sharePassword = payload.result.share_password
+                    ? `<div class="small text-muted mt-2">Password: <strong>${escapeHtml(payload.result.share_password)}</strong></div>`
+                    : "";
+                sections.push(
+                    `<div class="card border-0 shadow-sm"><div class="card-body text-start">` +
+                    `<div class="fw-semibold mb-2">Share Link Generated</div>` +
+                    `<input class="form-control form-control-sm ai-share-link-box" type="text" readonly value="${escapeHtml(payload.result.share_url)}">` +
+                    `<div class="d-flex gap-2 flex-wrap mt-3">` +
+                    `<button type="button" class="btn btn-sm btn-outline-secondary" data-copy-text="${escapeHtml(payload.result.share_url)}">Copy Link</button>` +
+                    `<a class="btn btn-sm btn-primary" href="${escapeHtml(payload.result.share_url)}" target="_blank" rel="noopener">Open Link</a>` +
+                    `</div>` +
+                    `${sharePassword}` +
+                    `</div></div>`
+                );
+            }
+
+            if (Array.isArray(payload.matches) && payload.matches.length) {
+                const rows = payload.matches.map((match) => {
+                    const preview = match.preview_url
+                        ? `<a class="btn btn-sm btn-light border" href="${escapeHtml(match.preview_url)}" target="_blank" rel="noopener">Preview</a>`
+                        : "";
+                    const download = match.download_url
+                        ? `<a class="btn btn-sm btn-primary" href="${escapeHtml(match.download_url)}" target="_blank" rel="noopener">Download</a>`
+                        : "";
+                    return (
+                        `<tr>` +
+                        `<td><div class="fw-semibold">${escapeHtml(match.title)}</div><div class="small text-muted">${escapeHtml(match.drawing_id || "")}</div></td>` +
+                        `<td>${escapeHtml(match.verdict || "—")}</td>` +
+                        `<td>${match.similarity_percent !== null && match.similarity_percent !== undefined ? `${Number(match.similarity_percent).toFixed(0)}%` : "—"}</td>` +
+                        `<td class="text-end"><div class="d-flex justify-content-end gap-2">${preview}${download}</div></td>` +
+                        `</tr>`
+                    );
+                }).join("");
+                sections.push(
+                    `<div class="card border-0 shadow-sm"><div class="card-header bg-white text-start fw-semibold">Design Match Results</div>` +
+                    `<div class="table-responsive"><table class="table table-sm align-middle mb-0">` +
+                    `<thead><tr><th>Drawing</th><th>Verdict</th><th>Confidence</th><th class="text-end">Actions</th></tr></thead>` +
+                    `<tbody>${rows}</tbody></table></div></div>`
+                );
+            } else if (payload.action === "design_match") {
+                const categoryLabel = payload.selected_category ? ` in category <strong>${escapeHtml(payload.selected_category)}</strong>` : "";
+                sections.push(
+                    `<div class="card border-0 shadow-sm"><div class="card-body text-start">` +
+                    `<div class="fw-semibold mb-2">No design matches found</div>` +
+                    `<div class="text-muted">The selected PDF did not return any matches${categoryLabel}. Try another category or open Design Match for the full workflow.</div>` +
+                    `</div></div>`
+                );
+            }
+
+            if (!sections.length) {
+                results.hidden = true;
+                results.innerHTML = "";
+                return;
+            }
+
+            results.hidden = false;
+            results.innerHTML = sections.join("");
+        }
+
+        function primeAiRequest(message, accept = "", openPicker = false, pendingAction = "") {
+            const input = document.getElementById("aiInput");
+            if (!input) {
+                return;
+            }
+            aiPendingAction = pendingAction || "";
+            input.value = message || "";
+            setPortalFileAccept(accept || (AI_CONFIGS[activeAiContext] || AI_CONFIGS.dashboard).fileAccept || "");
+            clearAiCategory();
+            clearAiResults();
+            setPortalStatus("Add any missing details, then send.", "muted");
+            syncAiCategoryPrompt();
+            if (message) {
+                appendAiConversation("assistant", `Ready for ${message.trim()}. Add any missing details and send when you’re ready.`);
+            }
+            input.focus();
+            if (openPicker) {
+                document.getElementById("aiFileInput")?.click();
+            }
+        }
+
+        async function submitAiPortal() {
+            const input = document.getElementById("aiInput");
+            const fileInput = document.getElementById("aiFileInput");
+            const sendButton = document.getElementById("aiSendButton");
+            const categorySelect = document.getElementById("aiCategorySelect");
+            const matchCountSelect = document.getElementById("aiMatchCountSelect");
+            const gasketIdInput = document.getElementById("aiGasketIdInput");
+            const sharePasswordInput = document.getElementById("aiSharePasswordInput");
+            const message = input ? input.value.trim() : "";
+            const attachment = fileInput && fileInput.files ? fileInput.files[0] : null;
+            const selectedCategory = categorySelect ? categorySelect.value.trim().toUpperCase() : "";
+            const selectedMatchCount = matchCountSelect ? matchCountSelect.value.trim() : "3";
+            const selectedGasketId = gasketIdInput ? gasketIdInput.value.trim().toUpperCase() : "";
+            const selectedSharePassword = sharePasswordInput ? sharePasswordInput.value.trim() : "";
+
+            if (!message && !attachment) {
+                setPortalStatus("Type a request or attach a file.", "warning");
+                return;
+            }
+
+            if (message) {
+                appendAiConversation("user", message);
+            } else if (attachment) {
+                appendAiConversation("user", `Attached file: ${attachment.name}`);
+            }
+
+            if (activeAiContext === "design" && ["design_match", "design_upload"].includes(aiPendingAction)) {
+                if (!attachment) {
+                    setPortalStatus(
+                        aiPendingAction === "design_match" ? "Attach the PDF first." : "Attach the drawing file first.",
+                        "warning"
+                    );
+                    return;
+                }
+                if (!selectedCategory || !DESIGN_LIBRARY_CATEGORIES.includes(selectedCategory)) {
+                    setPortalStatus(
+                        aiPendingAction === "design_match" ? "Select the category to match from." : "Select the category to upload into.",
+                        "warning"
+                    );
+                    if (categorySelect) {
+                        categorySelect.focus();
+                    }
+                    return;
+                }
+                if (aiPendingAction === "design_upload" && !selectedGasketId) {
+                    setPortalStatus("Enter the die number for this drawing.", "warning");
+                    gasketIdInput?.focus();
+                    return;
+                }
+            }
+            if (activeAiContext === "enquiries" && aiPendingAction === "upload_pdf_enquiry") {
+                if (!attachment) {
+                    setPortalStatus("Attach the PDF first.", "warning");
+                    return;
+                }
+                if (!selectedSharePassword) {
+                    setPortalStatus("Enter a share password to generate the enquiry link.", "warning");
+                    sharePasswordInput?.focus();
+                    return;
+                }
+            }
+
+            const formData = new FormData();
+            formData.append("context", activeAiContext);
+            if (message) {
+                formData.append("message", message);
+            }
+            if (attachment) {
+                formData.append("attachment", attachment);
+            }
+            formData.append("history", JSON.stringify(aiConversationHistory.slice(-8)));
+            if (selectedCategory) {
+                formData.append("gasket_type", selectedCategory);
+            }
+            if (selectedGasketId) {
+                formData.append("gasket_id", selectedGasketId);
+            }
+            if (selectedSharePassword) {
+                formData.append("share_password", selectedSharePassword);
+            }
+            if (activeAiContext === "design" && aiPendingAction === "design_match" && selectedMatchCount) {
+                formData.append("top_k", selectedMatchCount);
+            }
+
+            if (sendButton) {
+                sendButton.disabled = true;
+            }
+            clearAiResults();
+            setPortalStatus("Working…", "muted");
+
+            try {
+                setAppLoading("Copilot is thinking...");
+                const response = await fetch(AI_ACTION_ENDPOINT, {
+                    method: "POST",
+                    body: formData,
+                    headers: {
+                        "X-CSRFToken": getCsrfToken(),
+                    },
+                    credentials: "same-origin",
+                });
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok || payload.ok === false) {
+                    if (payload.accepted_types) {
+                        setPortalFileAccept(payload.accepted_types);
+                    }
+                    if (activeAiContext === "enquiries" && aiPendingAction === "upload_pdf_enquiry") {
+                        const sharePasswordWrap = document.getElementById("aiSharePasswordWrap");
+                        if (sharePasswordWrap) {
+                            sharePasswordWrap.hidden = false;
+                        }
+                    }
+                    renderAiResults(payload);
+                    const errorMessage = payload.message || "The request could not be completed.";
+                    setPortalStatus(errorMessage, "danger");
+                    appendAiConversation("assistant", errorMessage);
+                    return;
+                }
+
+                if (payload.accepted_types) {
+                    setPortalFileAccept(payload.accepted_types);
+                }
+                renderAiResults(payload);
+                const assistantMessage = payload.assistant_message || payload.message || "Done.";
+                setPortalStatus(payload.message || "Done.", "success");
+                appendAiConversation("assistant", assistantMessage);
+
+                if (payload.auto_navigate && payload.navigate_url) {
+                    window.location.href = payload.navigate_url;
+                    return;
+                }
+
+                if (payload.action === "create_google_sheet_enquiry" || payload.action === "upload_pdf_enquiry") {
+                    if (input) {
+                        input.value = "";
+                    }
+                }
+                if (payload.ok) {
+                    aiPendingAction = "";
+                }
+            } catch (error) {
+                setPortalStatus("The assistant request failed. Please try again.", "danger");
+            } finally {
+                clearAppLoading();
+                if (sendButton) {
+                    sendButton.disabled = false;
+                }
+            }
+        }
+
+        function openAiPortal(context = "dashboard", syncHistory = true) {
+            const config = AI_CONFIGS[context] || AI_CONFIGS.dashboard;
+            const portal = document.getElementById("aiPortal");
+            const title = document.getElementById("aiPortalTitle");
+            const subtitle = document.getElementById("aiPortalSubtitle");
+            const grid = document.getElementById("aiSuggestions");
+            const input = document.getElementById("aiInput");
+
+            activeAiContext = context;
+            aiPendingAction = "";
+            title.innerText = config.title;
+            subtitle.innerText = config.subtitle;
+            if (input) {
+                input.placeholder = config.placeholder || "Type a request or select a suggestion below…";
+            }
+            setPortalFileAccept(config.fileAccept || "");
+            clearAiCategory();
+            setPortalStatus("", "muted");
+            clearAiResults();
+            grid.innerHTML = "";
+            seedAiConversation(context, config.subtitle);
+
+            config.suggestions.forEach((suggestion) => {
+                const card = document.createElement("div");
+                card.className = "ai-suggestion-card shadow-sm";
+                card.innerHTML = `<div class="fs-4 mb-2">${suggestion.icon}</div><div class="fw-bold">${suggestion.text}</div>`;
+                card.onclick = suggestion.action;
+                grid.appendChild(card);
+            });
+
+            portal.style.display = "flex";
+            input?.focus();
+            updateFileMeta();
+            syncAiCategoryPrompt();
+            if (syncHistory) {
+                const targetHash = getAiPortalHash(context);
+                if (window.location.hash !== targetHash) {
+                    window.history.pushState({ aiPortalContext: context }, "", targetHash);
+                }
+            }
+        }
+
+        function closeAiPortal(syncHistory = true) {
+            if (syncHistory && getAiPortalContextFromLocation()) {
+                window.history.back();
+                return;
+            }
+            document.getElementById("aiPortal").style.display = "none";
+        }
+
+        function syncAiPortalFromLocation() {
+            const context = getAiPortalContextFromLocation();
+            if (context) {
+                openAiPortal(context, false);
+                return;
+            }
+            const portal = document.getElementById("aiPortal");
+            if (portal) {
+                portal.style.display = "none";
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            clearAppLoading();
+            syncAiPortalFromLocation();
+            document.querySelectorAll("form[data-loading-message]").forEach((form) => {
+                form.addEventListener("submit", () => {
+                    const message = form.getAttribute("data-loading-message") || "";
+                    setAppLoading(message);
+                });
+            });
+
+            document.querySelectorAll("[data-ai-context]").forEach((link) => {
+                link.addEventListener("click", (event) => {
+                    event.preventDefault();
+                    openAiPortal(link.getAttribute("data-ai-context") || "dashboard");
+                });
+            });
+
+            document.getElementById("aiSendButton")?.addEventListener("click", submitAiPortal);
+            document.getElementById("aiFileTrigger")?.addEventListener("click", () => {
+                document.getElementById("aiFileInput")?.click();
+            });
+            document.getElementById("aiFileInput")?.addEventListener("change", () => {
+                updateFileMeta();
+                syncAiCategoryPrompt();
+            });
+            document.getElementById("aiCategorySelect")?.addEventListener("change", () => {
+                if (document.getElementById("aiCategorySelect")?.value) {
+                    setPortalStatus("Category selected. You can send the match request now.", "muted");
+                }
+            });
+            document.getElementById("aiMatchCountSelect")?.addEventListener("change", () => {
+                const value = document.getElementById("aiMatchCountSelect")?.value || "3";
+                setPortalStatus(`Match count set to top ${value}.`, "muted");
+            });
+            document.getElementById("aiInput")?.addEventListener("keydown", (event) => {
+                if (event.key === "Enter") {
+                    event.preventDefault();
+                    submitAiPortal();
+                }
+            });
+            document.addEventListener("click", async (event) => {
+                const copyButton = event.target.closest("[data-copy-text]");
+                if (!copyButton) {
+                    return;
+                }
+                const text = copyButton.getAttribute("data-copy-text") || "";
+                if (!text) {
+                    return;
+                }
+                try {
+                    await navigator.clipboard.writeText(text);
+                    copyButton.textContent = "Copied";
+                } catch (_error) {
+                    setPortalStatus("Could not copy automatically. Use the link box to copy it manually.", "warning");
+                }
+            });
+            document.addEventListener("keydown", (event) => {
+                if (event.key === "Escape" && document.getElementById("aiPortal")?.style.display === "flex") {
+                    closeAiPortal();
+                }
+            });
+        });
+        window.addEventListener("pageshow", () => {
+            clearAppLoading();
+            syncAiPortalFromLocation();
+        });
+        window.addEventListener("popstate", syncAiPortalFromLocation);
+        window.addEventListener("hashchange", syncAiPortalFromLocation);
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

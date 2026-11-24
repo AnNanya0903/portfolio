@@ -1,0 +1,7 @@
+{% autoescape off %}Your verification code for the AVIGIRI KYC form is:
+
+{{ code }}
+
+It works for {{ minutes }} minutes. If you did not ask for this code, you can ignore this email.
+
+{{ signature }}{% endautoescape %}

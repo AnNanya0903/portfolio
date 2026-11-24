@@ -1,0 +1,11 @@
+{% load tz %}{% autoescape off %}Dear Sir / Madam,
+
+Our team has entered the KYC details for {{ customer.name }} on your behalf. Please check them and confirm that they are correct:
+
+{{ link }}
+
+We will email a 6-digit code to {{ req.recipient_email }} before the details are shown. Bank account and PAN numbers are shown partly hidden.
+
+The link works until {{ valid_until|timezone:"Asia/Kolkata"|date:"j F Y, g:i A" }} (IST). If anything is wrong, simply reply to this email.
+
+{{ signature }}{% endautoescape %}

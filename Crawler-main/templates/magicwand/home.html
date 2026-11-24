@@ -1,0 +1,1183 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}MagicWand | AI Manufacturing ERP{% endblock %}
+
+{% block public_nav_container_class %}container-fluid px-4 px-xl-5{% endblock %}
+{% block public_main_class %}container-fluid p-0{% endblock %}
+
+{% block extra_css %}
+<style>
+    body.theme-copilot {
+        background: linear-gradient(180deg, #f9fbff 0%, #f3f7fd 52%, #eef4fb 100%);
+        color: #12203a;
+        font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+    }
+
+    .mw-landing {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 2rem clamp(1.5rem, 4vw, 3.5rem) 4.5rem;
+    }
+
+    .mw-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.02fr) minmax(640px, 1.08fr);
+        gap: clamp(1rem, 1.8vw, 1.75rem);
+        align-items: center;
+        padding: 2rem 0 3rem;
+        min-height: calc(100vh - 130px);
+    }
+
+    .mw-hero-copy {
+        max-width: 720px;
+    }
+
+    .mw-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.55rem 0.9rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.84);
+        border: 1px solid rgba(18, 32, 58, 0.08);
+        color: #3057c7;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.06);
+    }
+
+    .mw-hero-title {
+        margin: 1.25rem 0 1.1rem;
+        font-size: clamp(3.6rem, 5.2vw, 5.35rem);
+        line-height: 1.02;
+        letter-spacing: 0;
+        font-weight: 800;
+        color: #0d1a31;
+        max-width: 720px;
+    }
+
+    .mw-hero-title-line {
+        display: block;
+    }
+
+    .mw-hero-title-line.tight {
+        margin-top: 0.02em;
+    }
+
+    .mw-rotating-word {
+        display: inline-block;
+        position: relative;
+        min-width: 6.4ch;
+        padding-right: 0.05em;
+        background: linear-gradient(110deg, #2563eb 0%, #0f766e 35%, #38bdf8 50%, #0f766e 65%, #2563eb 100%);
+        background-size: 240% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        animation: mw-shimmer 2.8s linear infinite;
+        transition: opacity 0.22s ease, transform 0.22s ease;
+    }
+
+    .mw-hero-title-suffix {
+        color: #0d1a31;
+        white-space: nowrap;
+    }
+
+    .mw-rotating-word.is-changing {
+        opacity: 0;
+        transform: translateY(0.08em);
+    }
+
+    @keyframes mw-shimmer {
+        0% {
+            background-position: 180% 50%;
+        }
+        100% {
+            background-position: -60% 50%;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .mw-rotating-word {
+            animation: none;
+            transition: none;
+        }
+    }
+
+    .mw-hero-body {
+        font-size: 1.14rem;
+        line-height: 1.82;
+        color: rgba(18, 32, 58, 0.72);
+        max-width: 760px;
+        margin-bottom: 1.6rem;
+    }
+
+    .mw-hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        align-items: center;
+        margin-bottom: 1.8rem;
+    }
+
+    .mw-primary-cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 1rem 1.55rem;
+        border-radius: 18px;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        color: #fff;
+        font-weight: 700;
+        text-decoration: none;
+        box-shadow: 0 20px 45px rgba(37, 99, 235, 0.28);
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .mw-primary-cta:hover {
+        color: #fff;
+        transform: translateY(-1px);
+        box-shadow: 0 24px 52px rgba(37, 99, 235, 0.34);
+    }
+
+    .mw-secondary-note {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6rem;
+        font-size: 0.92rem;
+        color: #586883;
+        font-weight: 600;
+    }
+
+    .mw-proof-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+        max-width: 820px;
+    }
+
+    .mw-proof-card {
+        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 24px;
+        padding: 1.2rem 1.2rem 1.05rem;
+        box-shadow: 0 18px 38px rgba(15, 23, 42, 0.06);
+        backdrop-filter: blur(12px);
+    }
+
+    .mw-proof-value {
+        display: block;
+        font-size: 1.75rem;
+        font-weight: 800;
+        color: #0d1a31;
+        margin-bottom: 0.18rem;
+    }
+
+    .mw-proof-label {
+        display: block;
+        font-size: 0.9rem;
+        line-height: 1.5;
+        color: #617089;
+    }
+
+    .mw-ai-stage {
+        position: relative;
+        min-height: 620px;
+        padding-left: 0;
+    }
+
+    .mw-console {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        background: linear-gradient(180deg, rgba(255,255,255,0.95) 0%, rgba(244,248,255,0.95) 100%);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 34px;
+        box-shadow: 0 28px 70px rgba(15, 23, 42, 0.14);
+        overflow: hidden;
+        backdrop-filter: blur(16px);
+    }
+
+    .mw-console-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 1.35rem 1.5rem;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.07);
+        background: linear-gradient(180deg, rgba(37, 99, 235, 0.08) 0%, rgba(255,255,255,0.22) 100%);
+    }
+
+    .mw-console-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.9rem;
+    }
+
+    .mw-console-avatar {
+        width: 56px;
+        height: 56px;
+        border-radius: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
+        color: white;
+        font-size: 1.4rem;
+        box-shadow: 0 16px 30px rgba(37, 99, 235, 0.2);
+    }
+
+    .mw-console-brand strong {
+        display: block;
+        font-size: 1.08rem;
+        color: #10203d;
+    }
+
+    .mw-console-brand span {
+        display: block;
+        font-size: 0.9rem;
+        color: #62718a;
+    }
+
+    .mw-console-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.48rem 0.8rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.84);
+        color: #0f766e;
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+
+    .mw-console-body {
+        padding: 1.55rem;
+    }
+
+    .mw-chat-window {
+        background: #f8fbff;
+        border: 1px solid rgba(37, 99, 235, 0.08);
+        border-radius: 26px;
+        padding: 1.15rem;
+        margin-bottom: 1rem;
+    }
+
+    .mw-bubble {
+        max-width: 92%;
+        border-radius: 22px;
+        padding: 1rem 1.08rem;
+        margin-bottom: 0.8rem;
+        line-height: 1.65;
+        font-size: 0.96rem;
+    }
+
+    .mw-bubble.user {
+        margin-left: auto;
+        background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+        color: #fff;
+        border-bottom-right-radius: 8px;
+    }
+
+    .mw-bubble.ai {
+        background: rgba(255, 255, 255, 0.94);
+        color: #14233f;
+        border: 1px solid rgba(15, 23, 42, 0.07);
+        border-bottom-left-radius: 8px;
+        box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+    }
+
+    .mw-match-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin-top: 1rem;
+    }
+
+    .mw-match-card {
+        background: linear-gradient(180deg, rgba(239,246,255,0.95) 0%, rgba(255,255,255,0.95) 100%);
+        border: 1px solid rgba(37, 99, 235, 0.12);
+        border-radius: 18px;
+        padding: 0.95rem;
+    }
+
+    .mw-match-card strong {
+        display: block;
+        color: #0f1b33;
+        font-size: 0.98rem;
+        margin-bottom: 0.2rem;
+    }
+
+    .mw-match-card span {
+        display: block;
+        color: #5d6d87;
+        font-size: 0.82rem;
+        margin-bottom: 0.45rem;
+    }
+
+    .mw-match-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.6rem;
+        border-radius: 999px;
+        background: rgba(16, 185, 129, 0.12);
+        color: #047857;
+        font-size: 0.75rem;
+        font-weight: 700;
+    }
+
+    .mw-module-bar {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin-top: 1rem;
+    }
+
+    .mw-module-pill {
+        padding: 0.92rem 0.95rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.84);
+        border: 1px solid rgba(15, 23, 42, 0.07);
+        font-size: 0.86rem;
+        font-weight: 700;
+        color: #243452;
+        text-align: center;
+    }
+
+    .mw-strip {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 1rem;
+        align-items: stretch;
+        margin-top: 0.75rem;
+    }
+
+    .mw-strip-card {
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 26px;
+        padding: 1.35rem;
+        box-shadow: 0 18px 34px rgba(15, 23, 42, 0.06);
+    }
+
+    .mw-strip-card h3 {
+        font-size: 1.12rem;
+        font-weight: 800;
+        color: #10203d;
+        margin-bottom: 0.45rem;
+    }
+
+    .mw-strip-card p {
+        font-size: 0.95rem;
+        color: #617089;
+        line-height: 1.65;
+        margin: 0;
+    }
+
+    .mw-feature-section {
+        margin-top: 1.5rem;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+    }
+
+    .mw-feature-card {
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        border-radius: 28px;
+        padding: 1.45rem;
+        box-shadow: 0 18px 36px rgba(15, 23, 42, 0.06);
+    }
+
+    .mw-feature-icon {
+        width: 50px;
+        height: 50px;
+        border-radius: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.15rem;
+        margin-bottom: 1rem;
+    }
+
+    .mw-feature-card h3 {
+        font-size: 1.08rem;
+        font-weight: 800;
+        color: #10203d;
+        margin-bottom: 0.5rem;
+    }
+
+    .mw-feature-card p {
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.68;
+        color: #607089;
+    }
+
+    .mw-bottom-band {
+        margin-top: 1rem;
+        padding: 1.05rem 1.25rem;
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(29, 78, 216, 0.95) 100%);
+        border-radius: 24px;
+        color: rgba(255, 255, 255, 0.88);
+        font-size: 0.95rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+
+    .mw-bottom-band strong {
+        color: #fff;
+    }
+
+    .hub-shell {
+        max-width: 100%;
+    }
+
+    .hub-status-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.75rem;
+    }
+
+    .hub-title {
+        margin: 0 0 0.35rem;
+        font-size: clamp(2rem, 3.4vw, 3rem);
+        line-height: 1.05;
+        letter-spacing: -0.025em;
+        font-weight: 800;
+        color: #0d1a31;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .hub-subtitle {
+        margin: 0;
+        max-width: 34rem;
+        font-size: 1.08rem;
+        line-height: 1.65;
+        color: #6b7b95;
+    }
+
+    .hub-card-grid .copilot-card {
+        min-height: 100%;
+    }
+
+    .hub-card-grid .copilot-card h5 {
+        font-size: 2rem;
+        margin-bottom: 0.7rem;
+    }
+
+    .hub-card-grid .copilot-card p {
+        font-size: 1rem;
+        line-height: 1.65;
+        margin-bottom: 0;
+    }
+
+    .hub-primary-card {
+        padding: clamp(1.35rem, 2vw, 1.85rem);
+    }
+
+    .hub-primary-card h3 {
+        font-size: clamp(1.8rem, 3.2vw, 2.35rem);
+        margin-bottom: 0.8rem;
+    }
+
+    .hub-primary-card p {
+        font-size: 1.06rem;
+        line-height: 1.7;
+    }
+
+    .hub-primary-card .btn {
+        min-width: 220px;
+    }
+
+    @media (max-width: 1199.98px) {
+        .mw-hero,
+        .mw-feature-section,
+        .mw-strip,
+        .mw-proof-row,
+        .mw-match-strip,
+        .mw-module-bar {
+            grid-template-columns: 1fr;
+        }
+
+        .mw-hero-title {
+            max-width: 680px;
+            font-size: clamp(3.4rem, 8vw, 4.7rem);
+        }
+
+        .mw-ai-stage {
+            min-height: auto;
+            padding-left: 0;
+        }
+
+        .hub-title {
+            max-width: 100%;
+        }
+    }
+
+    @media (max-width: 767.98px) {
+        .mw-landing {
+            padding: 1rem 1rem 3rem;
+        }
+
+        .mw-hero {
+            padding-top: 1rem;
+            min-height: auto;
+        }
+
+        .mw-hero-title {
+            max-width: none;
+            font-size: clamp(2.45rem, 11vw, 3.15rem);
+            line-height: 1.04;
+        }
+
+        .mw-hero-actions {
+            align-items: stretch;
+        }
+
+        .mw-primary-cta {
+            width: 100%;
+            justify-content: center;
+        }
+
+        .mw-console-top {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .mw-bottom-band {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .welcome-header {
+            margin-bottom: 1.1rem !important;
+        }
+
+        .hub-status-row {
+            gap: 0.5rem;
+            margin-bottom: 0.65rem;
+        }
+
+        .hub-title {
+            font-size: clamp(1.55rem, 6.3vw, 2.05rem);
+            line-height: 1.05;
+            max-width: 100%;
+            letter-spacing: -0.02em;
+        }
+
+        .hub-subtitle {
+            font-size: 0.92rem;
+            line-height: 1.45;
+            max-width: 100%;
+        }
+
+        .hub-card-grid {
+            --bs-gutter-x: 0.9rem;
+            --bs-gutter-y: 0.9rem;
+        }
+
+        .hub-card-grid .copilot-card {
+            padding: 0.95rem;
+            border-radius: 12px;
+        }
+
+        .hub-card-grid .copilot-card h5 {
+            font-size: 1.2rem;
+        }
+
+        .hub-card-grid .copilot-card p {
+            font-size: 0.92rem;
+            line-height: 1.55;
+        }
+
+        .hub-card-grid .icon-box {
+            width: 40px;
+            height: 40px;
+            font-size: 1.1rem;
+            margin-bottom: 1rem;
+        }
+
+        .hub-primary-card .row {
+            --bs-gutter-y: 0.9rem;
+        }
+
+        .hub-primary-card .btn {
+            width: 100%;
+            min-width: 0;
+            padding: 0.75rem 1rem !important;
+            font-size: 1rem;
+        }
+
+        .hub-primary-card {
+            padding: 0.25rem;
+        }
+
+        .hub-primary-card h3 {
+            font-size: 1.45rem;
+            line-height: 1.15;
+        }
+
+        .hub-primary-card p {
+            font-size: 0.92rem;
+            line-height: 1.5;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="mw-landing">
+    <div class="mw-hero">
+        <div class="mw-hero-copy">
+            <span class="mw-kicker">
+                <i class="bi bi-stars"></i>
+                AI-Native ERP for Factories
+            </span>
+
+            <h1 class="mw-hero-title">
+                <span class="mw-hero-title-line">Connect your</span>
+                <span class="mw-hero-title-line tight">factory.</span>
+                <span class="mw-hero-title-line tight">
+                    <span class="mw-rotating-word" data-words="Run MRP|Sync ERP|Plan Jobs|Track Stock|Ship Orders">Run MRP</span>
+                    <span class="mw-hero-title-suffix">with AI.</span>
+                </span>
+            </h1>
+
+            <p class="mw-hero-body">
+                MagicWand connects Tally, Zoho, Deskera, ERPNext, Odoo, SAP Business One, Marg, BUSY,
+                Excel files, Gmail, drawings, inventory, QC, purchase, sales, and shop-floor execution into
+                one AI-enabled manufacturing workspace. Keep the tools your factory already uses, then add
+                native MRP, work orders, job cards, shortage alerts, traceability, and AI reports on top.
+            </p>
+
+            <div class="mw-hero-actions">
+                <a href="/accounts/google/login/?process=login" class="mw-primary-cta">
+                    <i class="bi bi-google"></i>
+                    <span>Start with Google Sign-In</span>
+                </a>
+                <span class="mw-secondary-note">
+                    <i class="bi bi-shield-lock"></i>
+                    Role-based access stays enforced after login.
+                </span>
+            </div>
+
+            <div class="mw-proof-row">
+                <div class="mw-proof-card">
+                    <span class="mw-proof-value">Connect</span>
+                    <span class="mw-proof-label">sync existing ERP, accounting, inventory, Gmail, Excel, and factory data</span>
+                </div>
+                <div class="mw-proof-card">
+                    <span class="mw-proof-value">Plan</span>
+                    <span class="mw-proof-label">build products, BOMs, routing, work orders, stock, purchase, and QC</span>
+                </div>
+                <div class="mw-proof-card">
+                    <span class="mw-proof-value">Act</span>
+                    <span class="mw-proof-label">ask AI to find shortages, prepare PRs, summarize risk, and route work</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="mw-ai-stage">
+            <div class="mw-console">
+                <div class="mw-console-top">
+                    <div class="mw-console-brand">
+                        <div class="mw-console-avatar">
+                            <i class="bi bi-robot"></i>
+                        </div>
+                        <div>
+                            <strong>MagicWand Factory Copilot</strong>
+                            <span>AI assistant for MRP, integrations, shop-floor and finance workflows</span>
+                        </div>
+                    </div>
+                    <div class="mw-console-status">
+                        <i class="bi bi-activity"></i>
+                        AI Enabled
+                    </div>
+                </div>
+
+                <div class="mw-console-body">
+                    <div class="mw-chat-window">
+                        <div class="mw-bubble user">
+                            Show what will block production today, create purchase requests for shortages, and sync the latest ERP data.
+                        </div>
+                        <div class="mw-bubble ai">
+                            I found 3 work orders at risk, 14 shortage lines, and 2 QC holds. I prepared purchase requests,
+                            highlighted the blocked job cards, and queued the connector sync for review.
+                            <div class="mw-match-strip">
+                                <div class="mw-match-card">
+                                    <strong>WO-1042</strong>
+                                    <span>Material shortage</span>
+                                    <div class="mw-match-chip">PR Ready</div>
+                                </div>
+                                <div class="mw-match-card">
+                                    <strong>JC-2208</strong>
+                                    <span>QC result pending</span>
+                                    <div class="mw-match-chip" style="background: rgba(59, 130, 246, 0.12); color: #1d4ed8;">Needs Review</div>
+                                </div>
+                                <div class="mw-match-card">
+                                    <strong>Tally + Deskera</strong>
+                                    <span>Connector sync</span>
+                                    <div class="mw-match-chip" style="background: rgba(245, 158, 11, 0.16); color: #b45309;">Queued</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mw-module-bar">
+                        <div class="mw-module-pill">Integration Hub</div>
+                        <div class="mw-module-pill">Import Excel with AI</div>
+                        <div class="mw-module-pill">Native MRP</div>
+                        <div class="mw-module-pill">Shop Floor</div>
+                    </div>
+
+                    <div class="mw-strip">
+                        <div class="mw-strip-card">
+                            <h3>AI that works through real ERP data</h3>
+                            <p>MagicWand is not a standalone chatbot. The assistant reads products, BOMs, routing, work orders, stock, purchase, sales, QC, and accounting context before it recommends action.</p>
+                        </div>
+                        <div class="mw-strip-card">
+                            <h3>Safe read-first integrations</h3>
+                            <p>Connectors start read-only, use staging and preview flows, and keep writeback behind user approval so factory data stays controlled.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mw-feature-section">
+        <article class="mw-feature-card">
+            <div class="mw-feature-icon" style="background: rgba(37, 99, 235, 0.12); color: #2563eb;">
+                <i class="bi bi-plug"></i>
+            </div>
+            <h3>Integration Hub for existing software</h3>
+            <p>Connect Tally, Zoho, Deskera, ERPNext, Odoo, SAP Business One, Marg, BUSY, Gmail, Excel, and shop-floor systems without forcing a rip-and-replace.</p>
+        </article>
+
+        <article class="mw-feature-card">
+            <div class="mw-feature-icon" style="background: rgba(16, 185, 129, 0.12); color: #059669;">
+                <i class="bi bi-stars"></i>
+            </div>
+            <h3>Import Excel with AI</h3>
+            <p>Upload product masters, BOMs, stock, vendors, routing, and work-order sheets. MagicWand maps, validates, previews, and imports only after approval.</p>
+        </article>
+
+        <article class="mw-feature-card">
+            <div class="mw-feature-icon" style="background: rgba(245, 158, 11, 0.14); color: #b45309;">
+                <i class="bi bi-clipboard-check"></i>
+            </div>
+            <h3>Work orders to dispatch in one surface</h3>
+            <p>Auto-expand BOMs, reserve stock, create job cards, capture QC, receive finished goods, ship orders, handle returns, and trace batches.</p>
+        </article>
+    </div>
+
+    <div class="mw-bottom-band">
+        <div>
+            <strong>AI-first does not mean uncontrolled.</strong>
+            MagicWand keeps staging, approvals, audit logs, role access, and human review in the workflow.
+        </div>
+        <a href="/accounts/google/login/?process=login" class="text-white text-decoration-none fw-semibold">Sign in to open the factory workspace</a>
+    </div>
+</section>
+{% endblock %}
+
+{% block auth_content %}
+<div class="hub-shell">
+<div class="welcome-header mb-5">
+    <div class="hub-status-row">
+        <span class="status-pill bg-primary-subtle text-primary border border-primary-subtle">Online</span>
+        <span class="text-muted small">Updated 1m ago</span>
+    </div>
+    <h1 class="hub-title">Welcome back, {{ user.first_name|default:user.username }}</h1>
+    <p class="hub-subtitle">Your manufacturing copilot is ready.</p>
+</div>
+
+<div class="row g-4 hub-card-grid">
+    {% if mw_service_access.gmail_ai|default:False %}
+    <div class="col-12">
+        <div class="copilot-card border-primary-subtle" onclick="openAiPortal('dashboard')" style="cursor:pointer; background: linear-gradient(135deg, rgba(37,99,235,0.05) 0%, rgba(255,255,255,1) 100%);">
+            <div class="row align-items-center hub-primary-card">
+                <div class="col-md-8">
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <div class="icon-box icon-blue mb-0"><i class="bi bi-stars"></i></div>
+                        <span class="badge bg-primary">AI Enabled</span>
+                    </div>
+                    <h3>Gmail Copilot</h3>
+                    <p class="text-muted">Search through thousands of factory emails with natural language. Extract lead info or summarize technical RFQs instantly.</p>
+                </div>
+                <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                    <a href="{% url 'gmail_ai' %}" class="btn btn-primary btn-lg px-5 py-3 shadow-lg">Ask Copilot</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.design|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="javascript:void(0)" onclick="openAiPortal('design')" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-green"><i class="bi bi-diagram-3-fill"></i></div>
+                <h5 class="text-dark">Design Match</h5>
+                <p class="text-muted small">Compare incoming PDFs against your CAD library using Gemini Vision.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">
+                        {% if dashboard_design_count is not None %}
+                            {{ dashboard_design_count }} PDFs
+                        {% else %}
+                            Catalogue PDFs
+                        {% endif %}
+                    </span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.enquiries|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="javascript:void(0)" onclick="openAiPortal('enquiries')" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-amber"><i class="bi bi-journal-text"></i></div>
+                <h5 class="text-dark">Enquiry Board</h5>
+                <p class="text-muted small">Track live customer RFQs from initial contact to converted work order.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="status-pill bg-amber-subtle text-warning">
+                        {% if dashboard_enquiry_count is not None %}
+                            {{ dashboard_enquiry_count }} Enquiries
+                        {% else %}
+                            Total Enquiries
+                        {% endif %}
+                    </span>
+                    <i class="bi bi-arrow-right text-warning"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.marketing|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'marketing:board' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-blue"><i class="bi bi-megaphone"></i></div>
+                <h5 class="text-dark">Marketing</h5>
+                <p class="text-muted small">Rejected and No response enquiries, with notes, Do not contact and win-back.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="status-pill bg-primary-subtle text-primary">Lost enquiries</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.quotations|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'quotations:list' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-blue"><i class="bi bi-file-earmark-text"></i></div>
+                <h5 class="text-dark">Quotations</h5>
+                <p class="text-muted small">Quotation and feasibility reports, price approval and the PDF to send.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="status-pill bg-primary-subtle text-primary">Price approval</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.kyc|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'kyc:list' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-blue"><i class="bi bi-person-vcard"></i></div>
+                <h5 class="text-dark">KYC</h5>
+                <p class="text-muted small">Customer codes, company details and contacts for each team.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="status-pill bg-primary-subtle text-primary">Customer master</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.deskera|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="javascript:void(0)" onclick="openAiPortal('deskera')" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-blue"><i class="bi bi-building-gear"></i></div>
+                <h5 class="text-dark">Deskera MRP</h5>
+                <p class="text-muted small">Quick-launch work orders, job cards, and inventory modules.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Sync: 5m ago</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.mrp|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:portal' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-blue"><i class="bi bi-cpu"></i></div>
+                <h5 class="text-dark">Manufacturing</h5>
+                <p class="text-muted small">Plan products, BOMs, work orders, job cards, stock, QC, and shop-floor execution.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Native factory layer</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:purchase_workspace' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-primary-subtle text-primary"><i class="bi bi-cart-check"></i></div>
+                <h5 class="text-dark">Purchase</h5>
+                <p class="text-muted small">Convert shortages into purchase orders and receive material into stock.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">PR → PO → GRN</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:integration_hub' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-primary-subtle text-primary"><i class="bi bi-plug"></i></div>
+                <h5 class="text-dark">Integration Hub</h5>
+                <p class="text-muted small">Connect Tally, Zoho, Marg, BUSY, SAP B1, ERPNext, Odoo, Deskera, and factory software.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Read-first connectors</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:sales_workspace' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-info-subtle text-info"><i class="bi bi-receipt"></i></div>
+                <h5 class="text-dark">Sales</h5>
+                <p class="text-muted small">Capture sales orders and convert customer demand into work orders.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">SO → Work Order</span>
+                    <i class="bi bi-arrow-right text-info"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:inventory_workspace' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-success-subtle text-success"><i class="bi bi-boxes"></i></div>
+                <h5 class="text-dark">Inventory</h5>
+                <p class="text-muted small">Track warehouse stock, reservations, batches, lots, and serials.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Warehouse control</span>
+                    <i class="bi bi-arrow-right text-success"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:accounting_workspace' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-success-subtle text-success"><i class="bi bi-bank"></i></div>
+                <h5 class="text-dark">Accounting Lite</h5>
+                <p class="text-muted small">Track invoices, supplier bills, and payment status from ERP workflows.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Invoices + Bills</span>
+                    <i class="bi bi-arrow-right text-success"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:forecasts_workspace' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-amber"><i class="bi bi-graph-up-arrow"></i></div>
+                <h5 class="text-dark">Forecasts</h5>
+                <p class="text-muted small">Create demand forecasts and support forward production planning.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Planning signal</span>
+                    <i class="bi bi-arrow-right text-warning"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:quality_workspace' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-primary-subtle text-primary"><i class="bi bi-shield-check"></i></div>
+                <h5 class="text-dark">Quality</h5>
+                <p class="text-muted small">Review QC templates, inspection results, and production documents.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">QC checks</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'mrp:hr_workspace' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-dark-subtle text-dark"><i class="bi bi-people"></i></div>
+                <h5 class="text-dark">HR Lite</h5>
+                <p class="text-muted small">Manage operators, shifts, attendance, overtime, and job-card costing inputs.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Operators + shifts</span>
+                    <i class="bi bi-arrow-right text-dark"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="javascript:void(0)" onclick="openAiPortal('compounding')" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-red"><i class="bi bi-droplet-half"></i></div>
+                <h5 class="text-dark">Compounding</h5>
+                <p class="text-muted small">Plan Masterbatch/Finish-batch production and track shop-floor mixing.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    {% if dashboard_compounding_pending_count %}
+                    <span class="status-pill bg-red-subtle text-danger">{{ dashboard_compounding_pending_count }} Pending</span>
+                    <i class="bi bi-arrow-right text-danger"></i>
+                    {% else %}
+                    <span class="small text-muted">No production</span>
+                    <i class="bi bi-arrow-right text-muted"></i>
+                    {% endif %}
+                </div>
+            </div>
+        </a>
+    </div>
+    {% elif mw_service_access.compounding_production|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'compounding:production' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-red"><i class="bi bi-clipboard-plus"></i></div>
+                <h5 class="text-dark">Raise CRIN</h5>
+                <p class="text-muted small">Request compounds from Compounding and track each one until it is issued.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Production</span>
+                    <i class="bi bi-arrow-right text-muted"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.discussion|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="javascript:void(0)" onclick="openAiPortal('forum')" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-dark-subtle text-dark"><i class="bi bi-chat-dots-fill"></i></div>
+                <h5 class="text-dark">Discussion Forum</h5>
+                <p class="text-muted small">Collaborate with the team in channels and threads.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Team Workspace</span>
+                    <i class="bi bi-arrow-right text-dark"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.accounts|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="javascript:void(0)" onclick="openAiPortal('accounts')" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-success-subtle text-success"><i class="bi bi-bank2"></i></div>
+                <h5 class="text-dark">Accounts</h5>
+                <p class="text-muted small">Open the embedded accounts workspace and finance relay tools.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Tally Relay</span>
+                    <i class="bi bi-arrow-right text-success"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    {% if mw_service_access.document_scanner|default:False %}
+    <div class="col-md-6 col-xl-4">
+        <a href="{% url 'docscanner:list' %}" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box icon-blue"><i class="bi bi-folder2-open"></i></div>
+                <h5 class="text-dark">Documents</h5>
+                <p class="text-muted small">Scan rough paper documents, store them, and search them with Copilot.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">Camera + Copilot</span>
+                    <i class="bi bi-arrow-right text-primary"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endif %}
+
+    <div class="col-md-6 col-xl-4">
+        <a href="/settings" class="text-decoration-none">
+            <div class="copilot-card">
+                <div class="icon-box bg-secondary-subtle text-secondary"><i class="bi bi-gear-fill"></i></div>
+                <h5 class="text-dark">Workspace Settings</h5>
+                <p class="text-muted small">Manage API keys, user permissions, and ERP integrations.</p>
+                <div class="mt-4 pt-3 border-top border-secondary-subtle d-flex justify-content-between align-items-center">
+                    <span class="small text-muted">System V2.0</span>
+                    <i class="bi bi-arrow-right text-muted"></i>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const rotatingWord = document.querySelector('[data-words]');
+        if (!rotatingWord) {
+            return;
+        }
+
+        const words = rotatingWord.dataset.words.split('|').map((word) => word.trim()).filter(Boolean);
+        if (words.length < 2) {
+            return;
+        }
+
+        let index = 0;
+
+        window.setInterval(function () {
+            rotatingWord.classList.add('is-changing');
+            window.setTimeout(function () {
+                index = (index + 1) % words.length;
+                rotatingWord.textContent = words[index];
+                rotatingWord.classList.remove('is-changing');
+            }, 220);
+        }, 3000);
+    });
+</script>
+{% endblock %}

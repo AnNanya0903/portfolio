@@ -1,0 +1,431 @@
+{% comment %}The KYC form on ONE page, shared by the public page (after the OTP) and staff "Fill on behalf" / "Fill KYC
+   manually". Needs `form_config` (see link_fields.client_config + link_requests.form_data). The sections are those of
+   the Customer Registration Form: company, addresses ("Same as" ticks copy an address), tax, contacts (a ➕ for
+   Managing Director, Design / Technical, Accounts, Quality, Stores / Logistics), commercial, bank, documents
+   (uploaded as soon as chosen) and the declaration. "Save draft" saves every valid field; "Submit" saves, checks
+   everything and submits. Values are checked here and again on the server.{% endcomment %}
+<style>
+  .kf-section { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #003399;
+                border-bottom: 1px solid #e2e8f0; padding-bottom: .25rem; margin: 1.25rem 0 .75rem; }
+  .kf-field { margin-bottom: 1rem; }
+  .kf-field label { font-weight: 600; font-size: .9rem; margin-bottom: .25rem; }
+  .kf-hint { font-size: .78rem; color: #64748b; }
+  .kf-error { font-size: .8rem; color: #b91c1c; margin-top: .2rem; }
+  .kf-locked { background: #f8fafc; }
+  .kf-terms { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: .6rem .8rem; margin-bottom: 1rem; }
+  .kf-doc { border: 1px dashed #cbd5e1; border-radius: 10px; padding: .75rem; margin-bottom: .75rem; }
+  .kf-doc.has { border-style: solid; border-color: #86efac; background: #f0fdf4; }
+  .kf-gst { font-size: .78rem; color: #003399; font-weight: 600; }
+  .kf-declaration { font-size: .85rem; color: #334155; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: .6rem .8rem; margin-bottom: .75rem; }
+  .kf-contact { border: 1px solid #e2e8f0; border-radius: 10px; padding: .75rem; margin-bottom: .75rem; background: #fcfdff; }
+  .kf-stephead { font-size: 1.05rem; font-weight: 700; color: #0f172a; border-top: 2px solid #0d6efd; padding-top: .75rem; margin: 1.75rem 0 .75rem; }
+  .kf-stephead:first-child { margin-top: 0; }
+  .kf-actions { display: flex; gap: .5rem; justify-content: space-between; margin-top: 1.25rem; }
+  .kf-saved { font-size: .78rem; color: #64748b; align-self: center; }
+  @media (max-width: 575px) { .kf-actions .btn { flex: 1; } }
+</style>
+
+<div id="kycForm" aria-live="polite">
+  <div id="kfReason" class="alert alert-warning d-none"></div>
+  <form id="kfForm" novalidate autocomplete="off">
+    <div id="kfBody"></div>
+    <div id="kfAlert" class="alert alert-danger d-none mt-3" role="alert"></div>
+    <div class="kf-actions">
+      <button type="button" class="btn btn-outline-secondary" id="kfSave">Save draft</button>
+      <span class="kf-saved" id="kfSaved"></span>
+      <button type="submit" class="btn btn-primary" id="kfSubmit">Submit</button>
+    </div>
+  </form>
+</div>
+
+{{ form_config|json_script:"kycFormConfig" }}
+<script>
+(function () {
+  const cfg = JSON.parse(document.getElementById("kycFormConfig").textContent);
+  const ec = cfg.extraContacts;             // more contact persons, one per department (the ➕ in Contact details)
+  const state = { values: Object.assign({}, cfg.values), masked: Object.assign({}, cfg.masked),
+                  docs: Object.assign({}, cfg.uploaded), errors: {}, typed: {}, consent: !!cfg.consent, ask: false,
+                  contacts: (cfg.values[ec.key] || []).map((r) => Object.assign({}, r)), confirmEmail: cfg.confirmEmail || "" };
+  const editable = new Set(cfg.editable);
+  const total = cfg.steps.length;           // the 8 sections of the Customer Registration Form (documents, then the declaration)
+  const docsStep = total - 1;
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  const csrf = () => (document.cookie.split("; ").find((p) => p.startsWith("csrftoken=")) || "").split("=")[1] || "";
+  const fieldByKey = Object.fromEntries(cfg.fields.map((f) => [f.key, f]));
+  const stepFields = (n) => cfg.fields.filter((f) => f.step === n);
+  const splitEmails = (v) => String(v || "").toLowerCase().split(/[,;\s]+/).filter(Boolean);
+  const isContactKey = (k) => k === ec.key || k.startsWith(ec.key + ".");
+  const contactErrors = (errs) => Object.keys(errs || {}).filter(isContactKey);
+  const badgeFor = (locked) => cfg.rejectReason ? (locked ? ' <span class="badge text-bg-light">accepted</span>'
+                                                          : ' <span class="badge text-bg-warning">please correct</span>') : "";
+
+  if (cfg.rejectReason) {
+    $("kfReason").classList.remove("d-none");
+    $("kfReason").innerHTML = "<strong>Please correct the highlighted items.</strong><br>" + esc(cfg.rejectReason);
+  }
+
+  function isRequired(f) {
+    if (f.required) return true;
+    if (!f.requiredIf) return false;
+    const [other, wanted] = f.requiredIf;
+    const el = document.getElementById("kf_" + other);
+    return (el ? el.value : state.values[other]) === wanted;
+  }
+  function normalise(f, v) {
+    v = String(v || "").trim();
+    if (f.kind !== "textarea") v = v.replace(/\s+/g, " ");
+    if (f.upper) v = v.replace(/\s+/g, "").toUpperCase();
+    if (f.kind === "tel" || f.key === "account_number") v = v.replace(/[\s-]/g, "");
+    if (f.kind === "emails") v = [...new Set(splitEmails(v))].join(", ");
+    return v;
+  }
+  function check(f, v) {
+    if (!v) return "";
+    if (v.length > f.maxLength) return f.label + " is too long.";
+    if (f.kind === "select" && !f.choices.some((c) => c[0] === v)) return "Choose " + f.label.toLowerCase() + ".";
+    if (f.kind === "emails") {
+      const list = splitEmails(v);
+      if (list.length > cfg.maxEmails) return "Up to " + cfg.maxEmails + " email addresses.";
+      const bad = list.find((e) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+      if (bad) return "“" + bad + "” is not a valid email address.";
+    }
+    if (f.pattern && !(new RegExp(f.pattern)).test(v)) return "Enter a valid " + f.label + "." + (f.hint ? " (" + f.hint + ")" : "");
+    if (f.key === "udyam_aadhar_no" && /^\d{12}$/.test(v)) return "That looks like an Aadhaar number. Enter the Udyam registration number instead.";
+    return "";
+  }
+
+  async function call(url, opts) {
+    const headers = Object.assign({ "X-CSRFToken": csrf() }, opts.json ? { "Content-Type": "application/json" } : {});
+    let res;
+    try {
+      res = await fetch(url, { method: opts.method, credentials: "same-origin", headers,
+                               body: opts.json ? JSON.stringify(opts.json) : opts.body });
+    } catch (e) {
+      return { ok: false, status: 0, data: { error: "No connection. Please check your internet and try again." } };
+    }
+    let data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (res.status === 410 || (res.status === 403 && data.error === "otp_required")) { window.location.reload(); }
+    if (!res.ok && !data.error && !data.errors && !data.message) data.error = `Something went wrong (${res.status}). Please try again.`;
+    return { ok: res.ok, status: res.status, data };
+  }
+  function showAlert(msg) {
+    const a = $("kfAlert");
+    a.textContent = msg || "";
+    a.classList.toggle("d-none", !msg);
+  }
+  function scrollToFirstProblem() {
+    const el = document.querySelector("#kfBody .is-invalid, #kfBody .kf-error:not(:empty)") || $("kfAlert");
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  // ----- Drawing -----------------------------------------------------------------------------------------------
+
+  function fieldHtml(f) {
+    const locked = !editable.has(f.key);
+    const err = state.errors[f.key];
+    const id = "kf_" + f.key;
+    if (f.kind === "checkbox") {   // a "Same as ..." tick
+      return `<div class="form-check mb-3" id="wrap_${f.key}"><input class="form-check-input" type="checkbox" id="${id}" name="${f.key}" ${state.values[f.key] ? "checked" : ""} ${locked ? "disabled" : ""}>
+        <label class="form-check-label fw-semibold" for="${id}">${esc(f.label)}</label></div>`;
+    }
+    const req = isRequired(f);
+    const cls = `form-control${f.kind === "select" ? " form-select" : ""}${locked ? " kf-locked" : ""}${err ? " is-invalid" : ""}`;
+    const common = `id="${id}" name="${f.key}" class="${cls}" ${locked ? "disabled" : ""} ${req ? 'aria-required="true"' : ""} maxlength="${f.maxLength}"`;
+    let input;
+    if (f.kind === "textarea") {
+      input = `<textarea ${common} rows="3">${esc(state.values[f.key])}</textarea>`;
+    } else if (f.kind === "select") {
+      input = `<select ${common} data-recheck="1"><option value="">Choose…</option>` +
+        f.choices.map((c) => `<option value="${esc(c[0])}" ${state.values[f.key] === c[0] ? "selected" : ""}>${esc(c[1])}</option>`).join("") + `</select>`;
+    } else if (f.sensitive) {
+      // Saved PAN / account number never come back to the page: only the masked form is shown.
+      const m = state.masked[f.key];
+      input = `<input ${common} type="text" inputmode="${f.key === "account_number" ? "numeric" : "text"}" value="${esc(state.typed[f.key])}" placeholder="${m ? esc(m) + " (saved — type to change)" : ""}" autocomplete="off">`;
+    } else {
+      const mode = f.kind === "emails" ? 'inputmode="email"' : "";
+      input = `<input ${common} type="${f.kind === "tel" ? "tel" : "text"}" ${mode} value="${esc(state.values[f.key])}" ${f.upper ? 'style="text-transform:uppercase"' : ""}>`;
+    }
+    return (f.section ? `<div class="kf-section">${esc(f.section)}</div>` : "") +
+      `<div class="kf-field" id="wrap_${f.key}"><label for="${id}">${esc(f.label)}<span class="kf-star">${req ? " *" : ""}</span>${badgeFor(locked)}</label>${input}` +
+      (f.hint ? `<div class="kf-hint">${esc(f.hint)}</div>` : "") + (f.key === "gstin" ? '<div class="kf-gst" id="kfGstCode"></div>' : "") +
+      (err ? `<div class="kf-error">${esc(err)}</div>` : "") + `</div>`;
+  }
+
+  // One extra contact person's input. Ids: kfc_<row>_<field>.
+  function contactInputHtml(f, i, row, locked) {
+    const err = state.errors[`${ec.key}.${i}.${f.key}`], id = `kfc_${i}_${f.key}`;
+    const cls = `form-control${f.kind === "select" ? " form-select" : ""}${locked ? " kf-locked" : ""}${err ? " is-invalid" : ""}`;
+    const common = `id="${id}" data-contact="${i}" data-sub="${f.key}" class="${cls}" ${locked ? "disabled" : ""} maxlength="${f.maxLength}"`;
+    const v = row[f.key] || "";
+    const input = f.kind === "select"
+      ? `<select ${common}><option value="">Choose…</option>` +
+        f.choices.map((c) => `<option value="${esc(c[0])}" ${v === c[0] ? "selected" : ""}>${esc(c[1])}</option>`).join("") + `</select>`
+      : `<input ${common} type="${f.kind === "tel" ? "tel" : "text"}" ${f.kind === "emails" ? 'inputmode="email"' : ""} value="${esc(v)}">`;
+    return `<div class="kf-field" id="wrap_${id}"><label for="${id}">${esc(f.label)}${f.required ? " *" : ""}</label>${input}` +
+      (f.hint ? `<div class="kf-hint">${esc(f.hint)}</div>` : "") + `<div class="kf-error">${err ? esc(err) : ""}</div></div>`;
+  }
+
+  function contactsHtml() {
+    const locked = !editable.has(ec.key);
+    let html = `<div class="kf-section">${esc(ec.label)}${badgeFor(locked)}</div>` +
+      `<p class="kf-hint">Add people from other departments (for example Accounts or Technical) we should also contact.</p>`;
+    state.contacts.forEach((row, i) => {
+      html += `<div class="kf-contact"><div class="d-flex justify-content-between align-items-center mb-2">
+          <strong>Contact person ${i + 2}</strong>
+          ${locked ? "" : `<button type="button" class="btn btn-sm btn-outline-danger" data-remove="${i}" aria-label="Remove contact person ${i + 2}">✕ Remove</button>`}
+        </div>` + ec.fields.map((f) => contactInputHtml(f, i, row, locked)).join("") + `</div>`;
+    });
+    if (!locked && state.contacts.length < ec.max) {
+      html += `<button type="button" class="btn btn-outline-primary btn-sm mb-3" id="kfAddContact">➕ Add contact person</button>`;
+    }
+    if (state.errors[ec.key]) html += `<div class="kf-error">${esc(state.errors[ec.key])}</div>`;
+    return html;
+  }
+
+  function docsHtml() {
+    return `<p class="kf-hint mb-3">PDF, JPG or PNG, up to ${cfg.maxUploadMb} MB each. Please do not upload an Aadhaar card.</p>` +
+      cfg.documents.map((d) => {
+        const have = state.docs[d.key];
+        const locked = !editable.has(d.key);
+        const err = state.errors[d.key];
+        return `<div class="kf-doc ${have ? "has" : ""}" id="wrap_${d.key}"><div class="d-flex justify-content-between flex-wrap gap-2 align-items-center">
+          <div><strong>${esc(d.label)}${d.required ? " *" : ""}</strong><div class="kf-hint" id="kfUp_${d.key}">${have ? "Uploaded: " + esc(have.name || "file") : "Not uploaded yet"}</div></div>
+          ${locked ? '<span class="badge text-bg-light">accepted</span>' : `<label class="btn btn-sm btn-outline-primary mb-0">${have ? "Replace" : "Upload"}
+            <input type="file" class="d-none" data-doc="${d.key}" accept="application/pdf,image/jpeg,image/png"></label>`}
+        </div>${err ? `<div class="kf-error">${esc(err)}</div>` : ""}</div>`;
+      }).join("");
+  }
+
+  function consentHtml() {
+    let html = `<div class="kf-declaration">${esc(cfg.declaration || "")}</div>` +
+      `<div class="form-check"><input class="form-check-input${state.errors.consent ? " is-invalid" : ""}" type="checkbox" id="kfConsent" ${state.consent ? "checked" : ""}>
+      <label class="form-check-label" for="kfConsent">${esc(cfg.consentText)} *</label>${state.errors.consent ? `<div class="kf-error">${esc(state.errors.consent)}</div>` : ""}</div>`;
+    html += `<p class="kf-hint mt-2">After you submit, you can download this KYC form as a PDF to sign, stamp and upload.</p>`;
+    if (cfg.mode === "staff") {
+      html += `<div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="kfAskConfirm" ${state.ask ? "checked" : ""}>
+        <label class="form-check-label" for="kfAskConfirm">After submitting, email the customer a link to confirm these details</label></div>
+        <input type="email" id="kfConfirmEmail" class="form-control form-control-sm mt-1" style="max-width: 360px;" placeholder="Customer's email address"
+               value="${esc(state.confirmEmail)}" aria-label="Customer's email for the confirmation link">`;
+    }
+    return html;
+  }
+
+  function sectionHtml(n) {
+    let body = "";
+    if (n < docsStep) {
+      if (n === cfg.paymentStep) {
+        body += `<div class="kf-terms"><div class="kf-hint">Payment terms (set by AVIGIRI)</div><strong>${esc(cfg.paymentTerms || "To be confirmed by AVIGIRI")}</strong></div>`;
+      }
+      let run = [];   // fields that share a row (city / district / state / PIN, ...)
+      const flush = () => { if (run.length) { body += `<div class="row g-2">${run.join("")}</div>`; run = []; } };
+      for (const f of stepFields(n)) {
+        if (f.grid) run.push(`<div class="col-12 col-md-${f.grid}">${fieldHtml(f)}</div>`);
+        else { flush(); body += fieldHtml(f); }
+        if (n === ec.step && f.key === ec.after) { flush(); body += contactsHtml(); }
+      }
+      flush();
+    } else if (n === docsStep) body += docsHtml();
+    else body += consentHtml();
+    return body;
+  }
+
+  // "Same as ..." ticks: a ticked box makes the address below a locked copy of the one above it.
+  function applySame() {
+    for (const [flag, m] of Object.entries(cfg.sameAs || {})) {
+      const box = $("kf_" + flag);
+      if (!box) continue;
+      for (const part of m.parts) {
+        const src = $(`kf_${m.from}_${part}`), dst = $(`kf_${m.to}_${part}`);
+        if (!src || !dst || dst.disabled) continue;
+        if (box.checked) { dst.value = src.value; dst.readOnly = true; dst.classList.add("kf-locked"); }
+        else { dst.readOnly = false; dst.classList.remove("kf-locked"); }
+      }
+    }
+  }
+  function updateGst() {
+    const g = $("kf_gstin"), out = $("kfGstCode");
+    if (g && out) out.textContent = /^\d{2}/.test(g.value.trim()) ? "GST state code: " + g.value.trim().slice(0, 2) : "";
+  }
+
+  function render() {
+    $("kfBody").innerHTML = cfg.steps.map((s) =>
+      `<div class="kf-stephead">${s.number}. ${esc(s.number === total ? "Consent" : s.title)}</div>` + sectionHtml(s.number)).join("");
+    document.querySelectorAll("#kfBody input[type=file]").forEach((el) => el.addEventListener("change", upload));
+    document.querySelectorAll("#kfBody input, #kfBody textarea").forEach((el) => el.addEventListener("input", () => { applySame(); updateGst(); }));
+    document.querySelectorAll("#kfBody input[type=checkbox]").forEach((el) => el.addEventListener("change", applySame));
+    applySame();
+    updateGst();
+    // A choice can make another field required (MSME Yes -> Udyam No., Other -> transporter name).
+    document.querySelectorAll("#kfBody [data-recheck]").forEach((el) => el.addEventListener("change", () => {
+      cfg.fields.forEach((f) => {
+        const star = document.querySelector(`#wrap_${f.key} .kf-star`);
+        if (star) star.textContent = isRequired(f) ? " *" : "";
+      });
+    }));
+    const add = $("kfAddContact");
+    if (add) add.addEventListener("click", () => {
+      syncFromPage();
+      state.contacts.push({});
+      render();
+      const first = document.getElementById(`kfc_${state.contacts.length - 1}_department`);
+      if (first) first.focus();
+    });
+    document.querySelectorAll("#kfBody [data-remove]").forEach((el) => el.addEventListener("click", () => {
+      syncFromPage();
+      const i = Number(el.dataset.remove);
+      state.contacts.splice(i, 1);
+      // Errors of the rows below move up one row with them.
+      const moved = {};
+      for (const [k, v] of Object.entries(state.errors)) {
+        const m = k.match(/^(.+)\.(\d+)\.(\w+)$/);
+        if (!m || m[1] !== ec.key) { moved[k] = v; continue; }
+        const n = Number(m[2]);
+        if (n !== i) moved[`${ec.key}.${n > i ? n - 1 : n}.${m[3]}`] = v;
+      }
+      state.errors = moved;
+      render();
+    }));
+  }
+
+  // Keep everything typed (fields, PAN / account number, contact rows, ticks) before the page is drawn again.
+  function syncFromPage() {
+    for (const f of cfg.fields) {
+      const el = document.getElementById("kf_" + f.key);
+      if (!el || el.disabled) continue;
+      if (f.kind === "checkbox") state.values[f.key] = el.checked;
+      else if (f.sensitive) state.typed[f.key] = el.value; else state.values[f.key] = el.value;
+    }
+    document.querySelectorAll("#kfBody [data-contact]").forEach((el) => {
+      const row = state.contacts[Number(el.dataset.contact)];
+      if (row) row[el.dataset.sub] = el.value;
+    });
+    if ($("kfConsent")) state.consent = $("kfConsent").checked;
+    if ($("kfAskConfirm")) state.ask = $("kfAskConfirm").checked;
+    if ($("kfConfirmEmail")) state.confirmEmail = $("kfConfirmEmail").value.trim();
+  }
+
+  // ----- Saving --------------------------------------------------------------------------------------------------
+
+  // The contact rows to save: blank rows dropped, values tidied and checked like the server does.
+  function collectContacts() {
+    state.contacts = state.contacts.filter((r) => ec.fields.some((f) => String(r[f.key] || "").trim()));
+    const errors = {};
+    const rows = state.contacts.map((r, i) => {
+      const row = {};
+      for (const f of ec.fields) {
+        const v = f.key === "department" ? String(r[f.key] || "").trim() : normalise(f, r[f.key]);
+        row[f.key] = v;
+        const e = v ? check(f, v) : (f.required ? "This is required." : "");
+        if (e) errors[`${ec.key}.${i}.${f.key}`] = e;
+      }
+      return row;
+    });
+    state.contacts = rows.map((r) => Object.assign({}, r));
+    return { rows, errors };
+  }
+
+  // Save every valid field on the page. Returns false when the server could not be reached or refused.
+  async function saveAll() {
+    syncFromPage();
+    const out = {}, errors = {};
+    for (const f of cfg.fields) {
+      if (!editable.has(f.key)) continue;
+      if (f.kind === "checkbox") { out[f.key] = !!state.values[f.key]; continue; }
+      const v = normalise(f, f.sensitive ? state.typed[f.key] : state.values[f.key]);
+      if (f.sensitive && !v) continue;  // empty box: keep what is saved
+      const e = check(f, v);
+      if (e) errors[f.key] = e;
+      out[f.key] = v;
+    }
+    if (editable.has(ec.key)) {
+      const c = collectContacts();
+      Object.assign(errors, c.errors);
+      out[ec.key] = c.rows;
+    }
+    for (const k of Object.keys(state.errors)) if (fieldByKey[k] || isContactKey(k)) delete state.errors[k];
+    Object.assign(state.errors, errors);
+    // The contact rows are saved together, so they wait until every row is right.
+    const valid = Object.fromEntries(Object.entries(out).filter(([k]) =>
+      k === ec.key ? !contactErrors(errors).length : !errors[k]));
+    if (!Object.keys(valid).length) return true;
+    const r = await call(cfg.urls.save, { method: "PUT", json: { values: valid } });
+    if (!r.ok && !r.data.errors) { showAlert(r.data.error || r.data.message || "Could not save. Please try again."); return false; }
+    const serverErrors = r.data.errors || {};
+    Object.assign(state.errors, serverErrors);
+    for (const [k, v] of Object.entries(valid)) {
+      if (k === ec.key) { if (!contactErrors(serverErrors).length) state.values[k] = v; continue; }
+      if (serverErrors[k]) continue;
+      if (fieldByKey[k].sensitive) delete state.typed[k]; else state.values[k] = v;
+    }
+    if (r.data.masked) Object.assign(state.masked, Object.fromEntries(Object.entries(r.data.masked).filter(([, v]) => v)));
+    $("kfSaved").textContent = "Saved " + new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return true;
+  }
+
+  async function upload(ev) {
+    const input = ev.target, key = input.dataset.doc, file = input.files[0];
+    if (!file) return;
+    syncFromPage();
+    delete state.errors[key];
+    if (file.size > cfg.maxUploadMb * 1024 * 1024) state.errors[key] = `The file is larger than ${cfg.maxUploadMb} MB.`;
+    else if (!["application/pdf", "image/jpeg", "image/png"].includes(file.type)) state.errors[key] = "Only PDF, JPG and PNG files can be uploaded.";
+    if (state.errors[key]) { render(); return; }
+    $("kfUp_" + key).textContent = "Uploading " + file.name + "…";
+    input.closest("label").classList.add("disabled");
+    const fd = new FormData(); fd.append("doc_type", key); fd.append("file", file);
+    const r = await call(cfg.urls.upload, { method: "POST", body: fd });
+    syncFromPage();
+    if (r.ok) state.docs[key] = r.data.document;
+    else state.errors[key] = r.data.error || r.data.message || "Upload failed.";
+    render();
+  }
+
+  async function busy(work) {
+    showAlert("");
+    $("kfSave").disabled = $("kfSubmit").disabled = true;
+    try { await work(); } finally { $("kfSave").disabled = $("kfSubmit").disabled = false; }
+  }
+
+  $("kfSave").addEventListener("click", () => busy(async () => {
+    if (!(await saveAll())) return;
+    render();
+    if (Object.keys(state.errors).some((k) => fieldByKey[k] || isContactKey(k))) {
+      showAlert("Saved what is filled in. Please check the highlighted fields.");
+      scrollToFirstProblem();
+    }
+  }));
+
+  $("kfForm").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    busy(async () => {
+      if (!(await saveAll())) return;
+      for (const f of cfg.fields) {
+        if (f.kind !== "checkbox" && isRequired(f) && !state.errors[f.key] && !(f.sensitive ? state.masked[f.key] : state.values[f.key])) {
+          state.errors[f.key] = "This is required.";
+        }
+      }
+      for (const d of cfg.documents) {
+        if (d.required && !state.docs[d.key]) state.errors[d.key] = "Upload the " + d.label.toLowerCase() + ".";
+        else if (state.errors[d.key] && state.errors[d.key].startsWith("Upload the")) delete state.errors[d.key];
+      }
+      if (state.consent) delete state.errors.consent; else state.errors.consent = "Please tick to give your consent.";
+      if (Object.keys(state.errors).length) {
+        render();
+        showAlert("Please check the highlighted fields.");
+        scrollToFirstProblem();
+        return;
+      }
+      const r = await call(cfg.urls.submit, { method: "POST", json: { consent: state.consent, ask_customer_to_confirm: state.ask, confirm_email: state.confirmEmail } });
+      if (r.ok) { window.location.href = r.data.redirect || cfg.urls.done; return; }
+      state.errors = r.data.errors || {};
+      render();
+      showAlert(r.data.error || "Some details are missing or need a change.");
+      scrollToFirstProblem();
+    });
+  });
+
+  render();
+})();
+</script>

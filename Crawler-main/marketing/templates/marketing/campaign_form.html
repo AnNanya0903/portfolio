@@ -1,0 +1,98 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if campaign %}Edit campaign{% else %}New campaign{% endif %} - Marketing - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'marketing/_campaign_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% if campaign %}{% url 'marketing:campaign_detail' campaign.pk %}{% else %}{% url 'marketing:campaign_list' %}{% endif %}"
+       class="mk-muted text-decoration-none"><i class="bi bi-arrow-left"></i> {% if campaign %}Back to campaign{% else %}Campaigns{% endif %}</a>
+    <h2 class="page-title">{% if campaign %}Edit campaign{% else %}New campaign{% endif %}</h2>
+    <p class="page-subtitle">Saving creates a draft. Nothing is sent until you check the list of customers and press Send.</p>
+  </div>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="row g-4">
+    <div class="col-lg-8">
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">The email</h6></div>
+        <div class="card-body d-flex flex-column gap-3">
+          <div>
+            <label class="form-label small" for="{{ form.name.id_for_label }}">{{ form.name.label }} <span class="mk-muted">(only your team sees this)</span></label>
+            {{ form.name }}
+            {% for e in form.name.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          </div>
+          <div>
+            <label class="form-label small" for="starterTemplate">Start from a template</label>
+            <select id="starterTemplate" class="form-select form-select-sm">
+              <option value="">Keep what is written below</option>
+              {% for key, t in templates.items %}
+                <option value="{{ key }}" data-subject="{{ t.subject }}" data-body="{{ t.body }}">{{ t.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label class="form-label small" for="{{ form.subject.id_for_label }}">{{ form.subject.label }}</label>
+            {{ form.subject }}
+            {% for e in form.subject.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+          </div>
+          <div>
+            <label class="form-label small" for="{{ form.body.id_for_label }}">{{ form.body.label }}</label>
+            {{ form.body }}
+            {% for e in form.body.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            <div class="mk-muted mt-2">Added automatically at the end of every email:</div>
+            <div class="mk-muted fst-italic">{{ opt_out_line }}<br>Best regards, AVIGIRI Team</div>
+          </div>
+          <div class="mk-muted">
+            Words filled in for each customer:
+            {% for key, label in placeholders.items %}<code>{{ key }}</code> {{ label }}{% if not forloop.last %} · {% endif %}{% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Who gets it</h6></div>
+        <div class="card-body d-flex flex-column gap-3">
+          <p class="mk-muted mb-0">Only lost customers who are <strong>Ready to contact</strong>:
+            not Do not contact, not revived, and with an email address.</p>
+          {% for field in audience_fields %}
+            <div>
+              <label class="form-label small" for="{{ field.id_for_label }}">{{ field.label }}</label>
+              {{ field }}
+              {% for e in field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            </div>
+          {% endfor %}
+          <button type="submit" class="btn btn-primary">Save draft and check customers</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    var picker = document.getElementById('starterTemplate');
+    if (!picker) return;
+    picker.addEventListener('change', function () {
+      var option = picker.options[picker.selectedIndex];
+      if (!option.value) return;
+      var body = document.getElementById('{{ form.body.id_for_label }}');
+      var subject = document.getElementById('{{ form.subject.id_for_label }}');
+      if (body.value.trim() && !window.confirm('Replace the subject and text with this template?')) {
+        picker.value = '';
+        return;
+      }
+      subject.value = option.dataset.subject;
+      body.value = option.dataset.body;
+    });
+  })();
+</script>
+{% endblock %}

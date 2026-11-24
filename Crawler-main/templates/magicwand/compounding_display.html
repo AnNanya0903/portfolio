@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block title %}Compounding Board{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Production</p>
+      <h1 class="mb-1">Compounding Board</h1>
+      <div class="text-muted small">
+        <span class="me-3">Date: <strong>{{ plan.plan_date }}</strong></span>
+        <span>CJC#: <strong>{{ plan.cjc_number }}</strong></span>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+      <a href="{% url 'compounding:work_queue' %}" class="btn btn-primary"><i class="bi bi-list-check me-1"></i>Today's work</a>
+      {% if can_planning %}
+        <a href="{% url 'compounding:planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+          <i class="bi bi-grid-1x2 me-1"></i>Planning
+        </a>
+      {% else %}
+        <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary">
+          <i class="bi bi-grid-1x2 me-1"></i>Compounding
+        </a>
+      {% endif %}
+      {% if show_iot_dashboard %}
+        <a href="{% url 'compounding:iot_dashboard' %}" class="btn btn-outline-secondary">
+          <i class="bi bi-cpu me-1"></i>IOT dashboard
+        </a>
+      {% endif %}
+      <a href="{% url 'compounding:production_report' %}?period=daily&date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
+        <i class="bi bi-bar-chart-line me-1"></i>Reports
+      </a>
+      <div class="input-group">
+        <span class="input-group-text">Date</span>
+        <input id="cp-date" type="date" class="form-control" value="{{ plan.plan_date|date:'Y-m-d' }}">
+        <button id="cp-load-date" class="btn btn-outline-primary" type="button">Load</button>
+      </div>
+      <button id="cp-refresh" class="btn btn-outline-secondary" type="button">
+        <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+      </button>
+    </div>
+  </div>
+
+  {% include "magicwand/compounding_mb_alerts.html" %}
+
+  <div class="row g-3">
+    {% include "magicwand/compounding_board_section.html" with section_key="mb" section_title="MB (Master Batch)" section_rows=mb_rows %}
+    {% include "magicwand/compounding_board_section.html" with section_key="fb" section_title="FB (Final Batch)" section_rows=fb_rows %}
+    <div class="col-12">
+      <p class="text-muted small mb-0">Tip: Plan comes from MB/FB planning “Send to board”. Save can be done only once per row; remaining is sent back to planning on save.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const dateInput = document.getElementById('cp-date');
+    const loadBtn = document.getElementById('cp-load-date');
+    const refreshBtn = document.getElementById('cp-refresh');
+
+    const go = () => {
+      const value = (dateInput && dateInput.value) ? dateInput.value : '';
+      const url = new URL(window.location.href);
+      if (value) {
+        url.searchParams.set('date', value);
+      } else {
+        url.searchParams.delete('date');
+      }
+      window.location.href = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '');
+    };
+
+    if (loadBtn) loadBtn.addEventListener('click', go);
+    if (refreshBtn) refreshBtn.addEventListener('click', () => window.location.reload());
+
+    document.querySelectorAll('.js-actuals-form[data-mixed]').forEach((form) => {
+      form.addEventListener('submit', (event) => {
+        const mb = document.querySelector(`input[name="actual_mb"][form="${form.id}"]`);
+        const fb = document.querySelector(`input[name="actual_fb"][form="${form.id}"]`);
+        const message = `Save ${form.dataset.compound}: MB ${mb ? mb.value : 0} and FB ${fb ? fb.value : 0} batches? MB and FB on this row are saved together and cannot be edited.`;
+        if (!window.confirm(message)) event.preventDefault();
+      });
+    });
+  })();
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell {
+  width: 100%;
+}
+</style>
+{% endblock %}

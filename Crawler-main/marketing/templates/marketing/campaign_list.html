@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+
+{% block title %}Campaigns - Marketing - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'marketing/_campaign_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'marketing:board' %}" class="mk-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Marketing</a>
+    <h2 class="page-title">Campaigns</h2>
+    <p class="page-subtitle">Emails to groups of lost customers who are ready to be contacted again.</p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-primary shadow-sm" href="{% url 'marketing:campaign_new' %}"><i class="bi bi-plus-lg me-1"></i> New campaign</a>
+  </div>
+</div>
+
+{% if dry_run %}
+  <div class="mk-test-banner mb-4"><i class="bi bi-shield-check me-1"></i>
+    <strong>Test mode is on.</strong> Campaigns show who would get the email, but nothing is sent.
+    To send for real, set <code>MARKETING_CAMPAIGN_DRY_RUN=False</code>.</div>
+{% endif %}
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead>
+        <tr><th>Campaign</th><th>Status</th><th>Emails</th><th>Replies</th><th>Created</th><th>Sent</th></tr>
+      </thead>
+      <tbody>
+        {% for item in rows %}
+          {% with c=item.campaign %}
+          <tr>
+            <td>
+              <a class="fw-semibold text-decoration-none" href="{% url 'marketing:campaign_detail' c.pk %}">{{ c.name }}</a>
+              <div class="mk-muted text-truncate" style="max-width: 320px;">{{ c.subject }}</div>
+            </td>
+            <td><span class="mk-chip mk-chip--{{ c.status }}">{{ c.get_status_display }}</span></td>
+            <td class="text-nowrap">
+              {% if c.status == 'draft' %}—{% else %}
+                {{ item.sent }} sent{% if item.test %} · {{ item.test }} test{% endif %}{% if item.failed %} · <span class="text-danger">{{ item.failed }} failed</span>{% endif %}
+              {% endif %}
+            </td>
+            <td>{% if c.status == 'draft' %}—{% else %}{{ item.replied }}{% endif %}</td>
+            <td class="text-nowrap">{{ c.created_at|date:"d M Y" }}
+              {% if c.created_by %}<div class="mk-muted">{{ c.created_by.get_full_name|default:c.created_by.username }}</div>{% endif %}</td>
+            <td class="text-nowrap">{{ c.sent_at|date:"d M Y"|default:"—" }}</td>
+          </tr>
+          {% endwith %}
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-5">No campaigns yet.
+            <a href="{% url 'marketing:campaign_new' %}">Create the first one</a>.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

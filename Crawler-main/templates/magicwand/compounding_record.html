@@ -1,0 +1,455 @@
+{% extends 'base.html' %}
+{% load tz %}
+
+{% block title %}Compounding Production Record{% endblock %}
+
+{% block auth_content %}
+<div class="container-fluid px-3 px-lg-4 px-xxl-5 py-4 compounding-page-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <p class="text-uppercase text-muted small mb-1">Compounding</p>
+      <h1 class="mb-1">Production record</h1>
+      <p class="text-muted mb-0">{{ report.month|date:"F Y" }}. {% if report.record %}Imported from {{ report.record.source_filename|default:"Excel" }}. Edits here do not change live stock.{% else %}Type in the white cells. Grey cells come from saved board actuals and are locked.{% endif %}</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{% url 'compounding:compound_record_summary' %}" class="btn btn-outline-primary"><i class="bi bi-calculator me-1"></i>Compound totals</a>
+      <a href="{% url 'compounding:download_production_record' %}?month={{ month_value }}" class="btn btn-outline-success"><i class="bi bi-file-earmark-excel me-1"></i>Download Excel</a>
+      <a href="{% url 'compounding:stock_ledger' %}" class="btn btn-outline-secondary"><i class="bi bi-box-seam me-1"></i>Stock ledger</a>
+      <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back</a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <form method="get" class="col-12 col-lg-5 d-flex flex-wrap gap-2 align-items-end" id="recordFilter">
+          <div class="flex-grow-1">
+            <label class="form-label mb-1" for="recordMonth">Month</label>
+            <select id="recordMonth" class="form-select" name="month">
+              {% for option in month_options %}
+                <option value="{{ option.value }}" {% if option.value == month_value %}selected{% endif %}>{{ option.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="recordActive" name="show" value="active" {% if not show_all %}checked{% endif %}>
+            <label class="form-check-label" for="recordActive">Active compounds only</label>
+          </div>
+        </form>
+        {% if can_import %}
+          <form method="post" action="{% url 'compounding:import_production_record' %}" enctype="multipart/form-data" class="col-12 col-lg-7 d-flex flex-wrap gap-2 align-items-end justify-content-lg-end">
+            {% csrf_token %}
+            <input type="hidden" name="month" value="{{ month_value }}">
+            <div class="flex-grow-1" style="max-width: 420px;">
+              <label class="form-label mb-1" for="recordFile">Import Excel record (history only)</label>
+              <input id="recordFile" class="form-control" type="file" name="record_file" accept=".xlsx,.xlsm" required>
+            </div>
+            <button class="btn btn-outline-primary" type="submit" onclick="return window.confirm('Import this Excel file? Months in the file will replace any earlier import of the same month. Live stock will not change.');">Import</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if report.record %}
+    <div class="alert alert-info">
+      This month starts from the imported Excel file ({{ report.record.imported_at|date:"d M Y" }}).
+      {% if report.board_rows_included %}{{ report.board_rows_included }} board save{{ report.board_rows_included|pluralize }} not in the Excel file {{ report.board_rows_included|pluralize:"is,are" }} added and locked.{% endif %}
+      {% if report.board_rows_not_included %}{{ report.board_rows_not_included }} board save{{ report.board_rows_not_included|pluralize }} made before the import {{ report.board_rows_not_included|pluralize:"is,are" }} not added, because the Excel file already has batches for that compound on that day.{% endif %}
+    </div>
+  {% endif %}
+  {% if report.negative_rows %}
+    <div class="alert alert-danger" role="alert">
+      <span class="fw-semibold">Negative closing MB stock:</span>
+      {% for row in report.negative_rows %}{{ row.compound_code }} ({{ row.closing_kg|floatformat:"-3" }} kg){% if not forloop.last %}, {% endif %}{% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="record-savebar card shadow-sm mb-2">
+    <div class="card-body py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
+      <span id="recordStatus" class="small text-muted" role="status">No unsaved changes.</span>
+      <div class="d-flex gap-2">
+        <button id="recordUndo" class="btn btn-sm btn-outline-secondary" type="button" disabled>Undo changes</button>
+        <button id="recordSave" class="btn btn-sm btn-primary" type="button" disabled>Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body p-2">
+      <div class="record-scroll">
+        <table class="table table-sm table-bordered align-middle mb-0 record-table" id="recordGrid" data-save-url="{% url 'compounding:save_record_grid' %}" data-month="{{ month_value }}" data-can-edit="{% if can_edit_all %}1{% else %}0{% endif %}" data-imported="{% if report.record %}1{% else %}0{% endif %}">
+          <thead>
+            <tr>
+              <th class="sticky-sl">SL NO</th>
+              <th class="sticky-code">Compound Code</th>
+              <th class="sticky-desc">Description</th>
+              <th class="sticky-uom">Uom</th>
+              <th class="text-end">Previous bal. qty.</th>
+              {% for day in report.days %}<th class="text-center">{{ day }}</th>{% endfor %}
+              <th class="text-end">Total MB Mixing Qty</th>
+              <th class="text-end">MB Production Qty</th>
+              <th class="text-end">MB Opening Stock Qty</th>
+              {% if report.has_adjustments %}<th class="text-end">Stock count adj.</th>{% endif %}
+              <th class="text-end">MB Minimum Stock &amp; Closing Balance Qty</th>
+              <th class="text-end">Total FB Qty</th>
+              <th class="text-end">MB Batch Weight</th>
+              <th class="text-end">Final Chemical Weight</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in report.rows %}
+              <tr data-kg-row data-key="{{ row.key }}" data-board-prod-batches="{{ row.board_production_batches|floatformat:'-4u' }}" data-board-prod-kg="{{ row.board_production_kg|floatformat:'-4u' }}" data-opening-kg="{{ row.opening_kg|floatformat:'-4u' }}" data-adjustment="{{ row.adjustment_kg|floatformat:'-4u' }}">
+                <td class="sticky-sl text-center" rowspan="2">{{ forloop.counter }}</td>
+                <th class="sticky-code" rowspan="2">{{ row.compound_code }}</th>
+                <td class="sticky-desc">Compound</td>
+                <td class="sticky-uom text-muted">kgs</td>
+                <td class="p-0"><input class="record-input js-cell" data-field="previous" data-original="{{ row.previous_balance|floatformat:'-4u' }}" value="{% if row.previous_balance %}{{ row.previous_balance|floatformat:'-4u' }}{% endif %}" inputmode="decimal" aria-label="Previous balance for {{ row.compound_code }}"></td>
+                {% for cell in row.day_cells %}<td class="text-end js-day-kg" data-day="{{ cell.day }}">{% if cell.kg %}{{ cell.kg|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+                <td class="text-end fw-semibold js-mixing">{{ row.mixing_kg|floatformat:"-3" }}</td>
+                <td class="text-end js-production-kg">{{ row.production_kg|floatformat:"-3" }}</td>
+                <td class="text-end js-opening-kg">{{ row.opening_kg|floatformat:"-3" }}</td>
+                {% if report.has_adjustments %}<td class="text-end" rowspan="2">{% if row.adjustment_kg %}{{ row.adjustment_kg|floatformat:"-3" }}{% endif %}</td>{% endif %}
+                <td class="text-end fw-semibold js-closing-kg {% if row.is_negative %}record-negative{% endif %}">{{ row.closing_kg|floatformat:"-3" }}</td>
+                <td class="text-end fw-semibold js-fb">{{ row.fb_kg|floatformat:"-3" }}</td>
+                <td class="p-0" rowspan="2"><input class="record-input js-cell" data-field="mb_weight" data-original="{{ row.mb_weight|floatformat:'-4u' }}" value="{{ row.mb_weight|floatformat:'-4u' }}" inputmode="decimal" aria-label="MB batch weight for {{ row.compound_code }}"></td>
+                <td class="p-0" rowspan="2"><input class="record-input js-cell" data-field="chemical_weight" data-original="{{ row.chemical_weight|floatformat:'-4u' }}" value="{{ row.chemical_weight|floatformat:'-4u' }}" inputmode="decimal" aria-label="Chemical weight for {{ row.compound_code }}"></td>
+              </tr>
+              <tr class="record-batch" data-batch-row data-key="{{ row.key }}">
+                <td class="sticky-desc">Batch</td>
+                <td class="sticky-uom text-muted">Nos</td>
+                <td></td>
+                {% for cell in row.day_cells %}
+                  <td class="p-0">
+                    {% if cell.locked %}
+                      <span class="record-locked js-locked" data-day="{{ cell.day }}" data-batches="{{ cell.batches|floatformat:'-4u' }}" data-kg="{{ cell.kg|floatformat:'-4u' }}" data-fb="{{ cell.fb|floatformat:'-4u' }}" title="From saved board actuals">{{ cell.batches|floatformat:"-3" }}</span>
+                    {% else %}
+                      <input class="record-input js-cell js-day" data-field="day" data-day="{{ cell.day }}" data-original="{{ cell.batches|floatformat:'-4u' }}" value="{% if cell.batches %}{{ cell.batches|floatformat:'-4u' }}{% endif %}" inputmode="decimal" aria-label="{{ row.compound_code }} batches on day {{ cell.day }}">
+                    {% endif %}
+                  </td>
+                {% endfor %}
+                <td class="text-end js-batches">{{ row.batches|floatformat:"-3" }}</td>
+                <td class="p-0"><input class="record-input js-cell" data-field="production" data-original="{{ row.production_batches|floatformat:'-4u' }}" value="{% if row.production_batches %}{{ row.production_batches|floatformat:'-4u' }}{% endif %}" inputmode="decimal" aria-label="MB production batches for {{ row.compound_code }}"></td>
+                <td class="p-0"><input class="record-input js-cell" data-field="opening" data-original="{{ row.opening_batches|floatformat:'-4u' }}" value="{% if row.opening_batches %}{{ row.opening_batches|floatformat:'-4u' }}{% endif %}" inputmode="decimal" aria-label="MB opening batches for {{ row.compound_code }}"></td>
+                <td class="text-end js-closing-batches {% if row.is_negative %}record-negative{% endif %}">{{ row.closing_batches|floatformat:"-3" }}</td>
+                <td class="text-end js-fb-batches">{{ row.batches|floatformat:"-3" }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="{{ report.days|length|add:12 }}" class="text-center text-muted py-4">No compounds yet. Upload the master sheet in planning.</td></tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="record-total">
+              <th class="sticky-total" colspan="4">Total production</th>
+              <td class="text-end" id="totalPrevious">{{ report.totals.previous_balance|floatformat:"-3" }}</td>
+              {% for item in report.day_totals %}<td class="text-end js-total-kg" data-day="{{ item.day }}">{% if item.kg %}{{ item.kg|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+              <td class="text-end" id="totalMixing">{{ report.totals.mixing_kg|floatformat:"-3" }}</td>
+              <td class="text-end" id="totalProduction">{{ report.totals.production_kg|floatformat:"-3" }}</td>
+              <td class="text-end" id="totalOpening">{{ report.totals.opening_kg|floatformat:"-3" }}</td>
+              {% if report.has_adjustments %}<td class="text-end">{{ report.totals.adjustment_kg|floatformat:"-3" }}</td>{% endif %}
+              <td class="text-end" id="totalClosing">{{ report.totals.closing_kg|floatformat:"-3" }}</td>
+              <td class="text-end" id="totalFbPrevious" title="Includes previous balance">{{ report.totals.fb_with_previous|floatformat:"-3" }}</td>
+              <td colspan="2" class="small">FB includes previous bal.</td>
+            </tr>
+            <tr class="record-scrap-row">
+              <th class="sticky-total" colspan="4">Total scrap</th>
+              <td></td>
+              {% for item in report.day_totals %}
+                <td class="p-0"><input class="record-input js-cell js-scrap" data-field="scrap" data-day="{{ item.day }}" data-original="{% if item.scrap is not None %}{{ item.scrap|floatformat:'-4u' }}{% else %}0{% endif %}" value="{% if item.scrap is not None %}{{ item.scrap|floatformat:'-4u' }}{% endif %}" inputmode="decimal" aria-label="Scrap on day {{ item.day }}"></td>
+              {% endfor %}
+              <td class="text-end fw-semibold" id="totalScrap">{{ report.totals.scrap|floatformat:"-3" }}</td>
+              <td colspan="{% if report.has_adjustments %}7{% else %}6{% endif %}"></td>
+            </tr>
+            <tr>
+              <th class="sticky-total" colspan="4">Rejection in percentage</th>
+              <td></td>
+              {% for item in report.day_totals %}<td class="text-end js-total-rejection" data-day="{{ item.day }}">{% if item.rejection %}{{ item.rejection|floatformat:2 }}{% endif %}</td>{% endfor %}
+              <td class="text-end fw-semibold" id="totalRejection">{{ report.totals.rejection|floatformat:2 }}</td>
+              <td colspan="{% if report.has_adjustments %}7{% else %}6{% endif %}"></td>
+            </tr>
+            <tr class="record-total">
+              <th class="sticky-total" colspan="4">Total batches</th>
+              <td></td>
+              {% for item in report.day_totals %}<td class="text-end js-total-batches" data-day="{{ item.day }}">{% if item.batches %}{{ item.batches|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+              <td class="text-end" id="totalBatches">{{ report.totals.batches|floatformat:"-3" }}</td>
+              <td class="text-end" id="totalProductionBatches">{{ report.totals.production_batches|floatformat:"-3" }}</td>
+              <td class="text-end" id="totalOpeningBatches">{{ report.totals.opening_batches|floatformat:"-3" }}</td>
+              {% if report.has_adjustments %}<td></td>{% endif %}
+              <td class="text-end" id="totalClosingBatches">{{ report.totals.closing_batches|floatformat:"-3" }}</td>
+              <td class="text-end" id="totalFbBatches">{{ report.totals.batches|floatformat:"-3" }}</td>
+              <td colspan="2"></td>
+            </tr>
+            <tr class="record-total">
+              <th class="sticky-total" colspan="4">Total FB qty (MB + chemical)</th>
+              <td></td>
+              {% for item in report.day_totals %}<td class="text-end js-total-fb" data-day="{{ item.day }}">{% if item.fb %}{{ item.fb|floatformat:"-3" }}{% endif %}</td>{% endfor %}
+              <td class="text-end" id="totalFb">{{ report.totals.fb_kg|floatformat:"-3" }}</td>
+              <td colspan="{% if report.has_adjustments %}7{% else %}6{% endif %}"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {% if not show_all %}<p class="small text-muted mt-2 mb-0">Totals include every compound, including the ones hidden by this filter.</p>{% endif %}
+    </div>
+  </div>
+
+  {% if report.changes %}
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Recent changes</h2>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 small">
+            <thead><tr><th>Changed (IST)</th><th>Compound</th><th>Field</th><th>Day</th><th class="text-end">From</th><th class="text-end">To</th><th>By</th></tr></thead>
+            <tbody>
+              {% for change in report.changes %}
+                <tr>
+                  <td class="text-nowrap">{{ change.changed_at|timezone:"Asia/Kolkata"|date:"Y-m-d H:i" }}</td>
+                  <td>{{ change.compound_code }}</td>
+                  <td>{{ change.field }}</td>
+                  <td>{{ change.day|default_if_none:"—" }}</td>
+                  <td class="text-end">{{ change.old_value }}</td>
+                  <td class="text-end">{{ change.new_value }}</td>
+                  <td>{{ change.changed_by.get_username|default:"—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var grid = document.getElementById("recordGrid");
+  var saveButton = document.getElementById("recordSave");
+  var undoButton = document.getElementById("recordUndo");
+  var status = document.getElementById("recordStatus");
+  var canEdit = grid.dataset.canEdit === "1";
+  var imported = grid.dataset.imported === "1";
+  var hasUnsaved = false;
+  var saving = false;
+
+  document.querySelectorAll("#recordFilter select, #recordFilter input").forEach(function (control) {
+    control.addEventListener("change", function () {
+      if (hasUnsaved && !window.confirm("You have unsaved changes. Leave without saving?")) { window.location.reload(); return; }
+      hasUnsaved = false;
+      control.form.submit();
+    });
+  });
+
+  var inputs = Array.prototype.slice.call(grid.querySelectorAll(".js-cell"));
+  inputs.forEach(function (input) {
+    if (!canEdit && input.dataset.field !== "scrap") { input.readOnly = true; input.tabIndex = -1; input.classList.add("record-readonly"); }
+  });
+
+  function number(value) {
+    var parsed = Number(String(value === undefined || value === null ? "" : value).trim());
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  function text(value, blankZero) {
+    var rounded = Math.round(value * 1000) / 1000;
+    if (blankZero && rounded === 0) { return ""; }
+    return String(rounded === 0 ? 0 : rounded);
+  }
+  function fieldInput(row, field) { return row.querySelector('.js-cell[data-field="' + field + '"]'); }
+  function validValue(input) {
+    var raw = input.value.trim();
+    if (!raw) { return true; }
+    var places = input.dataset.field === "mb_weight" || input.dataset.field === "chemical_weight" ? 4 : 3;
+    return new RegExp("^\\d+(\\.\\d{1," + places + "})?$").test(raw) && Number(raw) <= 9999999;
+  }
+
+  var rows = Array.prototype.map.call(grid.querySelectorAll("tr[data-kg-row]"), function (kgRow) {
+    var batchRow = kgRow.nextElementSibling;
+    var dayKg = {};
+    kgRow.querySelectorAll(".js-day-kg").forEach(function (cell) { dayKg[cell.dataset.day] = cell; });
+    return { kgRow: kgRow, batchRow: batchRow, dayKg: dayKg, days: {} };
+  });
+
+  function calculate() {
+    var dayTotals = {}, totals = { previous: 0, mixing: 0, production: 0, opening: 0, closing: 0, fb: 0, batches: 0, prodBatches: 0, openBatches: 0, closeBatches: 0 };
+    function day(key) { return dayTotals[key] || (dayTotals[key] = { kg: 0, batches: 0, fb: 0 }); }
+    rows.forEach(function (row) {
+      var weight = number(fieldInput(row.kgRow, "mb_weight").value);
+      var chemical = number(fieldInput(row.kgRow, "chemical_weight").value);
+      var batches = 0, mixing = 0, fb = 0;
+      row.batchRow.querySelectorAll(".js-day, .js-locked").forEach(function (cell) {
+        var key = cell.dataset.day, b, kg, cellFb;
+        if (cell.classList.contains("js-locked")) {
+          b = number(cell.dataset.batches); kg = number(cell.dataset.kg); cellFb = number(cell.dataset.fb);
+        } else {
+          b = number(cell.value); kg = b * weight; cellFb = b * (weight + chemical);
+        }
+        batches += b; mixing += kg; fb += cellFb;
+        var bucket = day(key); bucket.kg += kg; bucket.batches += b; bucket.fb += cellFb;
+        row.dayKg[key].textContent = text(kg, true);
+      });
+      var productionInput = fieldInput(row.batchRow, "production");
+      var openingInput = fieldInput(row.batchRow, "opening");
+      var productionBatches = number(productionInput.value);
+      var boardBatches = number(row.kgRow.dataset.boardProdBatches);
+      var productionKg = imported ? productionBatches * weight : number(row.kgRow.dataset.boardProdKg) + (productionBatches - boardBatches) * weight;
+      var openingBatches = number(openingInput.value);
+      var openingChanged = Math.abs(openingBatches - number(openingInput.dataset.original)) > 0.00001;
+      // A live opening stays at its stock kg until the opening batches are edited.
+      var openingKg = imported || openingChanged ? openingBatches * weight : number(row.kgRow.dataset.openingKg);
+      var adjustment = number(row.kgRow.dataset.adjustment);
+      var closingKg = openingKg + adjustment + productionKg - mixing;
+      var closingBatches = weight > 0 ? closingKg / weight : openingBatches + productionBatches - batches;
+      var previous = number(fieldInput(row.kgRow, "previous").value);
+      row.kgRow.querySelector(".js-mixing").textContent = text(mixing);
+      row.kgRow.querySelector(".js-production-kg").textContent = text(productionKg);
+      row.kgRow.querySelector(".js-opening-kg").textContent = text(openingKg);
+      row.kgRow.querySelector(".js-fb").textContent = text(fb);
+      row.batchRow.querySelector(".js-batches").textContent = text(batches);
+      row.batchRow.querySelector(".js-fb-batches").textContent = text(batches);
+      [[row.kgRow.querySelector(".js-closing-kg"), closingKg], [row.batchRow.querySelector(".js-closing-batches"), closingBatches]].forEach(function (pair) {
+        pair[0].textContent = text(pair[1]);
+        pair[0].classList.toggle("record-negative", closingKg < -0.0005 || closingBatches < -0.0005);
+      });
+      totals.previous += previous; totals.mixing += mixing; totals.production += productionKg; totals.opening += openingKg;
+      totals.closing += closingKg; totals.fb += fb; totals.batches += batches; totals.prodBatches += productionBatches;
+      totals.openBatches += openingBatches; totals.closeBatches += closingBatches;
+    });
+    return { dayTotals: dayTotals, totals: totals };
+  }
+
+  function refreshFooter() {
+    var result = calculate(), t = result.totals, scrapTotal = 0;
+    var showingAll = {{ show_all|yesno:"true,false" }};
+    grid.querySelectorAll(".js-scrap").forEach(function (input) {
+      var key = input.dataset.day, scrap = number(input.value), bucket = result.dayTotals[key] || { kg: 0, batches: 0, fb: 0 };
+      scrapTotal += scrap;
+      if (showingAll) {
+        grid.querySelector('.js-total-kg[data-day="' + key + '"]').textContent = text(bucket.kg, true);
+        grid.querySelector('.js-total-batches[data-day="' + key + '"]').textContent = text(bucket.batches, true);
+        grid.querySelector('.js-total-fb[data-day="' + key + '"]').textContent = text(bucket.fb, true);
+        grid.querySelector('.js-total-rejection[data-day="' + key + '"]').textContent = bucket.kg && scrap ? (scrap / bucket.kg * 100).toFixed(2) : "";
+      }
+    });
+    document.getElementById("totalScrap").textContent = text(scrapTotal);
+    if (!showingAll) { return; }
+    [["totalPrevious", t.previous], ["totalMixing", t.mixing], ["totalProduction", t.production], ["totalOpening", t.opening],
+     ["totalClosing", t.closing], ["totalFbPrevious", t.fb + t.previous], ["totalBatches", t.batches], ["totalProductionBatches", t.prodBatches],
+     ["totalOpeningBatches", t.openBatches], ["totalClosingBatches", t.closeBatches], ["totalFbBatches", t.batches], ["totalFb", t.fb]].forEach(function (pair) {
+      document.getElementById(pair[0]).textContent = text(pair[1]);
+    });
+    document.getElementById("totalRejection").textContent = (t.mixing ? scrapTotal / t.mixing * 100 : 0).toFixed(2);
+  }
+
+  function changedInputs() {
+    return inputs.filter(function (input) { return !input.readOnly && Math.abs(number(input.value) - number(input.dataset.original)) > 0.00001; });
+  }
+  function refreshState() {
+    var changed = changedInputs(), invalid = inputs.filter(function (input) { return !validValue(input); });
+    inputs.forEach(function (input) {
+      input.classList.toggle("record-changed", changed.indexOf(input) !== -1);
+      input.classList.toggle("record-invalid", invalid.indexOf(input) !== -1);
+    });
+    hasUnsaved = changed.length > 0;
+    saveButton.disabled = saving || !changed.length || invalid.length > 0;
+    undoButton.disabled = saving || !changed.length;
+    status.className = "small " + (invalid.length ? "text-danger" : changed.length ? "text-warning-emphasis" : "text-muted");
+    status.textContent = invalid.length ? "Fix the red cells: use numbers of 0 or more." : changed.length ? changed.length + " unsaved change" + (changed.length === 1 ? "" : "s") + "." : "No unsaved changes.";
+  }
+
+  grid.addEventListener("input", function (event) {
+    if (!event.target.classList.contains("js-cell")) { return; }
+    refreshFooter();
+    refreshState();
+  });
+  grid.addEventListener("keydown", function (event) {
+    if (!event.target.classList.contains("js-cell")) { return; }
+    var moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], Enter: [1, 0] };
+    if (event.target.selectionStart === event.target.value.length) { moves.ArrowRight = [0, 1]; }
+    if (event.target.selectionEnd === 0) { moves.ArrowLeft = [0, -1]; }
+    var move = moves[event.key];
+    if (!move) { return; }
+    var td = event.target.closest("td"), rect = td.getBoundingClientRect(), candidates = inputs.filter(function (input) { return !input.readOnly && input !== event.target; }), best = null, bestScore = Infinity;
+    candidates.forEach(function (input) {
+      var r = input.getBoundingClientRect(), dx = r.left - rect.left, dy = r.top - rect.top;
+      if (move[0] && (Math.sign(dy) !== move[0] || Math.abs(dx) > 4)) { return; }
+      if (move[1] && (Math.sign(dx) !== move[1] || Math.abs(dy) > 4)) { return; }
+      var score = Math.abs(dx) + Math.abs(dy);
+      if (score < bestScore) { best = input; bestScore = score; }
+    });
+    if (best) { event.preventDefault(); best.focus(); best.select(); }
+  });
+  grid.addEventListener("focusin", function (event) {
+    if (event.target.classList.contains("js-cell") && !event.target.readOnly) { event.target.select(); }
+  });
+
+  undoButton.addEventListener("click", function () {
+    inputs.forEach(function (input) {
+      var original = input.dataset.original;
+      input.value = number(original) === 0 && input.dataset.field !== "mb_weight" && input.dataset.field !== "chemical_weight" ? "" : original;
+    });
+    refreshFooter();
+    refreshState();
+  });
+
+  saveButton.addEventListener("click", function () {
+    var changes = changedInputs().map(function (input) {
+      var row = input.closest("tr[data-key]");
+      return { key: row ? row.dataset.key : "", field: input.dataset.field, day: input.dataset.day ? Number(input.dataset.day) : null, value: input.value.trim(), old: input.dataset.original };
+    });
+    saving = true;
+    refreshState();
+    status.textContent = "Saving...";
+    var csrf = document.querySelector("#recordFilter ~ form input[name=csrfmiddlewaretoken]") || document.querySelector("input[name=csrfmiddlewaretoken]");
+    fetch(grid.dataset.saveUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrf ? csrf.value : "{{ csrf_token }}" },
+      body: JSON.stringify({ month: grid.dataset.month, changes: changes })
+    }).then(function (response) {
+      return response.json().catch(function () { return { error: "The server did not save the changes." }; }).then(function (data) {
+        if (!response.ok || !data.ok) { throw new Error(data.error || data.message || "The changes were not saved."); }
+        hasUnsaved = false;
+        window.location.reload();
+      });
+    }).catch(function (error) {
+      saving = false;
+      refreshState();
+      status.className = "small text-danger";
+      status.textContent = error.message + " Nothing was saved.";
+    });
+  });
+
+  window.addEventListener("beforeunload", function (event) {
+    if (hasUnsaved) { event.preventDefault(); event.returnValue = ""; }
+  });
+  refreshState();
+});
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.compounding-page-shell { width: 100%; }
+.record-savebar { position: sticky; top: .25rem; z-index: 20; }
+.record-scroll { max-height: 72vh; overflow: auto; }
+.record-table { min-width: max-content; font-size: .8rem; border-collapse: separate; border-spacing: 0; }
+.record-table th, .record-table td { white-space: nowrap; }
+.record-table td { min-width: 62px; height: 26px; }
+.record-table thead th { position: sticky; top: 0; z-index: 5; background: var(--bs-tertiary-bg); white-space: normal; min-width: 62px; max-width: 110px; vertical-align: middle; }
+.record-table .sticky-sl, .record-table .sticky-code, .record-table .sticky-desc, .record-table .sticky-uom, .record-table .sticky-total { position: sticky; z-index: 3; background: var(--bs-body-bg); }
+.record-table .sticky-sl { left: 0; min-width: 44px; width: 44px; }
+.record-table .sticky-code { left: 44px; min-width: 145px; width: 145px; }
+.record-table .sticky-desc { left: 189px; min-width: 76px; width: 76px; }
+.record-table .sticky-uom { left: 265px; min-width: 44px; width: 44px; }
+.record-table .sticky-total { left: 0; min-width: 309px; }
+.record-table thead .sticky-sl, .record-table thead .sticky-code, .record-table thead .sticky-desc, .record-table thead .sticky-uom { z-index: 7; background: var(--bs-tertiary-bg); }
+.record-batch td:not(.sticky-desc):not(.sticky-uom) { background: var(--bs-tertiary-bg); }
+.record-total td, .record-total th { font-weight: 600; background: var(--bs-secondary-bg) !important; }
+.record-negative { color: var(--bs-danger) !important; background: var(--bs-danger-bg-subtle) !important; }
+.record-input { display: block; width: 72px; min-width: 100%; height: 26px; border: 0; padding: 0 .3rem; text-align: right; background: var(--bs-body-bg); color: var(--bs-body-color); font-size: inherit; }
+.record-input:focus { outline: 2px solid var(--bs-primary); outline-offset: -2px; }
+.record-input.record-readonly { background: transparent; cursor: default; }
+.record-input.record-changed { background: var(--bs-warning-bg-subtle); font-weight: 600; }
+.record-input.record-invalid { background: var(--bs-danger-bg-subtle); outline: 2px solid var(--bs-danger); outline-offset: -2px; }
+.record-locked { display: block; height: 26px; line-height: 26px; padding: 0 .3rem; text-align: right; color: var(--bs-secondary-color); background: var(--bs-secondary-bg); cursor: not-allowed; }
+</style>
+{% endblock %}

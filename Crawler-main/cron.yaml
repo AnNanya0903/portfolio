@@ -1,0 +1,15 @@
+# Scheduled jobs for MagicWand. Deploy with: gcloud app deploy cron.yaml
+#
+# Once an hour (the same as the old n8n workflow), App Engine calls the live site, which runs the automatic
+# follow-ups, the closing emails, and the reply checks for Marketing campaigns
+# (enquiries/scheduler.py). Only App Engine can call this URL. Whether anything is really sent is still decided
+# by FOLLOW_UP_AUTO_ENABLED and FOLLOW_UP_AUTO_DRY_RUN in app-live.yaml.
+#
+# Only the live service is scheduled: staging never sends customer emails on its own.
+cron:
+- description: "MagicWand automations: follow-ups, customer emails, reply checks"
+  url: /enquiries/api/cron/automations/
+  schedule: every 1 hours
+  target: magicwand-backend
+  retry_parameters:
+    job_retry_limit: 0

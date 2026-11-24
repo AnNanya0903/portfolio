@@ -1,0 +1,108 @@
+{% extends 'base.html' %}
+
+{% block title %}Check the details - KYC - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:list' %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> KYC</a>
+    <h2 class="page-title">Check the details</h2>
+    <p class="page-subtitle">Compare every field with the document, give the customer code, then save. Nothing is saved until you press Save customer.</p>
+  </div>
+  <form method="post" action="{% url 'kyc:import_discard' document.pk %}"
+        onsubmit="return confirm('Discard this document? Nothing will be saved.');">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-outline-danger"><i class="bi bi-trash me-1"></i> Discard</button>
+  </form>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">The document</h6>
+        {% if document.file %}<a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener"
+           href="{% url 'kyc:document_file' document.pk %}"><i class="bi bi-box-arrow-up-right"></i> Open</a>{% endif %}
+      </div>
+      <div class="card-body">
+        {% if document.file and document.is_image %}
+          <img src="{% url 'kyc:document_file' document.pk %}" alt="Uploaded KYC document" class="img-fluid rounded border">
+        {% elif document.file %}
+          <div class="kyc-value"><i class="bi bi-file-earmark-pdf me-1"></i>{{ document.original_name }}</div>
+          <div class="kyc-muted">Use Open to see it in a new tab.</div>
+        {% endif %}
+        {% if document.pasted_text %}
+          <div class="kyc-label {% if document.file %}mt-3{% endif %}">Pasted text</div>
+          <pre class="kyc-pasted mb-0">{{ document.pasted_text }}</pre>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <form method="post" novalidate class="d-flex flex-column gap-4">
+      {% csrf_token %}
+      {{ contacts.management_form }}
+      {% if form.non_field_errors %}<div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div>{% endif %}
+      {% if contacts.non_form_errors %}<div class="alert alert-danger mb-0">{{ contacts.non_form_errors }}</div>{% endif %}
+
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Customer</h6></div>
+        <div class="card-body">
+          <div class="row g-3">
+            {% for field in main_fields %}
+              <div class="{% if field.name == 'address' or field.name == 'name' %}col-12{% else %}col-sm-6{% endif %}">{% include 'kyc/_field.html' %}</div>
+            {% endfor %}
+            {% for field in tax_fields %}
+              <div class="{% if field.name == 'notes' %}col-12{% else %}col-sm-6{% endif %}">{% include 'kyc/_field.html' %}</div>
+            {% endfor %}
+            <div class="col-12">{% include 'kyc/_team_field.html' %}</div>
+            <div class="col-12">{% include 'kyc/_duplicate_notice.html' %}</div>
+          </div>
+
+          <h6 class="mt-4 mb-3">Transportation &amp; MSME Details</h6>
+          {% include 'kyc/_transport_fields.html' %}
+        </div>
+      </div>
+
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom">
+          <h6 class="mb-0">Contacts read from the document <span class="kyc-muted">({{ contacts.forms|length }})</span></h6>
+        </div>
+        <div>
+          {% for contact in contacts %}
+            <div class="kyc-contact">
+              {% if contact.non_field_errors %}<div class="text-danger small mb-2">{{ contact.non_field_errors }}</div>{% endif %}
+              <div class="row g-3">
+                <div class="col-sm-6">{% include 'kyc/_field.html' with field=contact.name %}</div>
+                <div class="col-sm-6">{% include 'kyc/_field.html' with field=contact.category %}</div>
+                <div class="col-sm-6">{% include 'kyc/_field.html' with field=contact.designation %}</div>
+                <div class="col-sm-6">{% include 'kyc/_field.html' with field=contact.email %}</div>
+                <div class="col-sm-6">{% include 'kyc/_field.html' with field=contact.phone %}</div>
+                <div class="col-sm-6">{% include 'kyc/_field.html' with field=contact.notes %}</div>
+                <div class="col-12 d-flex gap-4 flex-wrap">
+                  <div class="form-check">
+                    {{ contact.is_purchaser }}
+                    <label class="form-check-label" for="{{ contact.is_purchaser.id_for_label }}">Purchaser</label>
+                  </div>
+                  <div class="form-check">
+                    <input type="checkbox" class="form-check-input" name="{{ contact.DELETE.html_name }}"
+                           id="{{ contact.DELETE.id_for_label }}" {% if contact.DELETE.value %}checked{% endif %}>
+                    <label class="form-check-label" for="{{ contact.DELETE.id_for_label }}">Do not save this contact</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          {% empty %}
+            <div class="kyc-contact kyc-muted">No contacts were read. You can add them on the customer page after saving.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary align-self-start">Save customer</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,177 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ enquiry_id }} negotiation - Enquiries - MagicWand 2.0{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'enquiries:board' %}" class="text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Enquiries</a>
+    <h2 class="page-title">{{ enquiry_id }}{% if enquiry.customer_name %} · {{ enquiry.customer_name }}{% endif %}</h2>
+    <p class="page-subtitle">Enquiry status: <strong>{{ enquiry.status|default:"—" }}</strong></p>
+    {% if contact.follow_up_flag %}<p class="text-danger mb-1" data-follow-up-flag="{{ contact.follow_up_flag }}"><i class="bi bi-exclamation-triangle me-1"></i>{% if contact.follow_up_flag == 'thread_not_found' %}Gmail thread not found — check customer email / subject{% else %}{{ contact.get_follow_up_flag_display }}{% endif %}</p>{% endif %}
+    {% if contact.close_reason == 'no_response' and contact.moved_to_marketing_at %}<p class="mb-1" data-moved-to-marketing>Closed – No response · moved to Marketing on {{ contact.moved_to_marketing_at|date:"d M Y" }} · <a href="{% url 'marketing:detail' enquiry_id %}">Marketing lead</a></p>{% endif %}
+  </div>
+  {% if can_forward %}<div><button class="btn btn-primary shadow-sm" type="button" data-bs-toggle="modal" data-bs-target="#forwardModal"><i class="bi bi-send me-1"></i> Forward to Department</button></div>{% endif %}
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    {% if mw_service_access.quotations|default:False %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center"><h6 class="mb-0">Quotations</h6>
+        <a class="small text-decoration-none" href="{% url 'quotations:new' %}?enquiry={{ enquiry_id|urlencode }}"><i class="bi bi-plus-lg"></i> New</a></div>
+      <div class="card-body d-flex flex-column gap-1">
+        {% for q in quotations %}<div><a href="{% url 'quotations:detail' q.pk %}" class="text-decoration-none">{{ q.number }}</a> <span class="small text-muted">{{ q.title|truncatechars:40 }} · {{ q.get_status_display }}</span></div>
+        {% empty %}<div class="text-muted">No quotation recorded for this enquiry.</div>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Negotiation status</h6></div>
+      <form method="post" action="{% url 'enquiries:negotiation_stage' enquiry_id %}" class="card-body d-flex flex-column gap-2">
+        {% csrf_token %}
+        <select name="stage" class="form-select form-select-sm" aria-label="Negotiation status">
+          {% for key, label in stage_choices %}<option value="{{ key }}" {% if stage == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        <input name="note" class="form-control form-control-sm" maxlength="500" placeholder="Note, e.g. customer asked for a cost breakup (optional)">
+        <button class="btn btn-sm btn-primary align-self-start" type="submit">Save status</button>
+        <div class="small text-muted">Use this when the customer neither accepts nor rejects the quotation but asks a question.
+          Accepting, rejecting and converting stay where they are on the board.</div>
+      </form>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Follow-ups</h6></div>
+      <div class="card-body d-flex flex-column gap-3">
+        {% for f in followups %}
+          <div class="{% if f.is_due %}border border-warning rounded p-2{% endif %}">
+            <div class="fw-semibold">{{ f.get_followup_type_display }}{% if f.department %} · {{ f.department.name }}{% endif %}
+              {% if f.is_due %}<span class="badge text-bg-warning">Follow-up due</span>{% endif %}</div>
+            <div>{{ f.note|linebreaksbr }}</div>
+            <div class="small text-muted">{{ f.user.get_full_name|default:f.user.username|default:"" }} · {{ f.created_at|date:"d M Y" }}
+              {% if f.next_followup_date %}· next {{ f.next_followup_date|date:"d M Y" }}{% endif %}</div>
+            {% if f.is_due %}<form method="post" action="{% url 'enquiries:followup_done' f.pk %}" class="mt-1">{% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="btn btn-sm btn-outline-success" type="submit">Mark as done</button></form>{% endif %}
+          </div>
+        {% empty %}<div class="text-muted">No follow-ups yet.</div>{% endfor %}
+        <form method="post" action="{% url 'enquiries:followup_add' enquiry_id %}" enctype="multipart/form-data" class="border-top pt-3 d-flex flex-column gap-2">
+          {% csrf_token %}
+          <div class="fw-semibold small">Add Follow-up</div>
+          <div class="d-flex gap-2">
+            <select name="followup_type" class="form-select form-select-sm" aria-label="Type">{% for key, label in followup_types %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+            <input type="date" name="next_followup_date" class="form-control form-control-sm" aria-label="Next follow-up date" title="Next follow-up date">
+          </div>
+          {% if open_tasks %}<select name="assignment" class="form-select form-select-sm" aria-label="Task">
+            <option value="">Not for a particular task</option>{% for a in open_tasks %}<option value="{{ a.pk }}">For the {{ a.to_department.name }} task of {{ a.created_at|date:"d M" }}</option>{% endfor %}</select>{% endif %}
+          <textarea name="note" class="form-control form-control-sm" rows="2" required placeholder="What was done, e.g. Sent breakup sheet via email"></textarea>
+          <div class="d-flex gap-2"><input type="file" name="file" class="form-control form-control-sm" aria-label="Attachment">
+            <select name="category" class="form-select form-select-sm" style="max-width:170px" aria-label="Category">{% for key, label in attachment_categories %}<option value="{{ key }}" {% if key == "OTHER" %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+          <button class="btn btn-sm btn-primary align-self-start" type="submit">Add follow-up</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Attachments</h6></div>
+      <div class="card-body d-flex flex-column gap-2">
+        {% for a in attachments %}
+          <div><i class="bi bi-paperclip me-1"></i><a href="{% url 'enquiries:attachment_download' a.pk %}">{{ a.file_name }}</a>
+            <span class="small text-muted">· {{ a.get_category_display }} · {{ a.size_bytes|filesizeformat }} · {{ a.created_at|date:"d M Y" }}</span></div>
+        {% empty %}<div class="text-muted">No files attached.</div>{% endfor %}
+        <form method="post" action="{% url 'enquiries:attachment_add' enquiry_id %}" enctype="multipart/form-data" class="border-top pt-3 d-flex flex-column gap-2">
+          {% csrf_token %}
+          <div class="d-flex gap-2"><input type="file" name="file" class="form-control form-control-sm" required aria-label="File">
+            <select name="category" class="form-select form-select-sm" style="max-width:170px" aria-label="Category">{% for key, label in attachment_categories %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+          <div class="small text-muted">PDF, images, Excel, Word, CSV, text or email files, up to 10 MB.</div>
+          <button class="btn btn-sm btn-outline-primary align-self-start" type="submit">Attach file</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Forwarded to departments</h6></div>
+      <div class="card-body d-flex flex-column gap-3">
+        {% for a in assignments %}
+          <div class="{% if a.is_overdue %}border border-danger rounded p-2{% endif %}">
+            <div class="fw-semibold">{{ a.to_department.name }}{% if a.assigned_to %} · {{ a.assigned_to.get_full_name|default:a.assigned_to.username }}{% endif %}
+              <span class="badge text-bg-secondary ms-1">{{ a.get_status_display }}</span>
+              {% if a.is_overdue %}<span class="badge text-bg-danger">Overdue</span>{% endif %}</div>
+            <div>{{ a.comment|linebreaksbr }}</div>
+            <div class="small text-muted">Priority {{ a.get_priority_display|lower }}{% if a.due_date %} · due {{ a.due_date|date:"d M Y" }}{% endif %}</div>
+          </div>
+        {% empty %}<div class="text-muted">Not forwarded to any department.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Timeline</h6></div>
+      <div class="card-body d-flex flex-column gap-3">
+        {% for item in timeline %}
+          <div class="d-flex gap-3">
+            <i class="bi {{ item.icon }} text-primary mt-1"></i>
+            <div>
+              <div>{{ item.text }}</div>
+              {% if item.detail %}<div class="text-muted">{{ item.detail|linebreaksbr }}</div>{% endif %}
+              {% if item.attachment_id %}<a class="small" href="{% url 'enquiries:attachment_download' item.attachment_id %}">Download</a>{% endif %}
+              <div class="small text-muted">{{ item.by }} · {{ item.at|date:"d M Y, g:i A" }}</div>
+            </div>
+          </div>
+        {% empty %}<div class="text-muted">Nothing recorded yet.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if can_forward %}
+<div class="modal fade" id="forwardModal" tabindex="-1" aria-labelledby="forwardTitle" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" enctype="multipart/form-data" action="{% url 'enquiries:negotiation_forward' enquiry_id %}">
+      {% csrf_token %}
+      <div class="modal-header"><h5 class="modal-title" id="forwardTitle">Forward to Department</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+      <div class="modal-body d-flex flex-column gap-3">
+        <div><label class="form-label small" for="fwDepartment">Department <span class="text-danger">*</span></label>
+          <select id="fwDepartment" name="department" class="form-select form-select-sm" required>
+            <option value="">Choose…</option>{% for d in departments %}<option value="{{ d.pk }}">{{ d.name }}</option>{% endfor %}</select></div>
+        <div><label class="form-label small" for="fwAssignee">Assign to a person (optional)</label>
+          <select id="fwAssignee" name="assigned_to" class="form-select form-select-sm">
+            <option value="">Anyone in the department</option>
+            {% for m in members %}<option value="{{ m.id }}" data-department="{{ m.department }}">{{ m.name }}</option>{% endfor %}</select></div>
+        <div><label class="form-label small" for="fwComment">Comment <span class="text-danger">*</span></label>
+          <textarea id="fwComment" name="comment" class="form-control form-control-sm" rows="4" required
+            placeholder="What should they do? e.g. Customer says price is higher than current supplier. Prepare a detailed cost breakup sheet and follow up."></textarea></div>
+        <div class="row g-2">
+          <div class="col"><label class="form-label small" for="fwDue">Due date</label><input id="fwDue" type="date" name="due_date" class="form-control form-control-sm"></div>
+          <div class="col"><label class="form-label small" for="fwPriority">Priority</label>
+            <select id="fwPriority" name="priority" class="form-select form-select-sm">
+              {% for key, label in priorities %}<option value="{{ key }}" {% if key == "MEDIUM" %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+        </div>
+        <div><label class="form-label small" for="fwFile">Attach a file (optional)</label>
+          <div class="d-flex gap-2"><input id="fwFile" type="file" name="file" class="form-control form-control-sm">
+            <select name="category" class="form-select form-select-sm" style="max-width:170px" aria-label="Category">{% for key, label in attachment_categories %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary">Forward</button></div>
+    </form>
+  </div>
+</div>
+<script>
+  (function () {
+    var dept = document.getElementById('fwDepartment'), who = document.getElementById('fwAssignee');
+    if (!dept || !who) return;
+    function sync() {
+      Array.prototype.forEach.call(who.options, function (o) {
+        if (!o.value) return;
+        var show = o.getAttribute('data-department') === dept.value;
+        o.hidden = !show; o.disabled = !show;
+      });
+      who.value = '';
+    }
+    dept.addEventListener('change', sync); sync();
+  })();
+</script>
+{% endif %}
+{% endblock %}

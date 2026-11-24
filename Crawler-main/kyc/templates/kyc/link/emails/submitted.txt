@@ -1,0 +1,6 @@
+{% autoescape off %}KYC details for {{ customer.name }} ({{ customer.customer_code|default:customer.code }}) were submitted{% if req.source == "staff" %} by staff on the customer's behalf{% else %} by the customer{% endif %}.
+
+Please review and approve or reject them (Accounts or Top Management):
+{{ detail_url }}
+
+{{ signature }}{% endautoescape %}

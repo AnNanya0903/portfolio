@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+
+{% block title %}KYC - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <h2 class="page-title">KYC</h2>
+    <p class="page-subtitle">Every customer, with its customer code and the contacts for each team.</p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary" href="{% url 'kyc:link_list' %}"><i class="bi bi-ui-checks me-1"></i> KYC requests</a>
+    <a class="btn btn-outline-secondary" href="{% url 'kyc:departments' %}"><i class="bi bi-people me-1"></i> Contact departments</a>
+    <a class="btn btn-outline-secondary" href="{% url 'kyc:import_sheet' %}"><i class="bi bi-file-earmark-spreadsheet me-1"></i> Import from Excel</a>
+    <a class="btn btn-outline-secondary" href="{% url 'kyc:import_new' %}"><i class="bi bi-camera me-1"></i> Import from a document</a>
+    <a class="btn btn-primary shadow-sm" href="{% url 'kyc:new' %}"><i class="bi bi-plus-lg me-1"></i> New customer</a>
+  </div>
+</div>
+
+<form method="get" class="d-flex gap-2 mb-3" role="search">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="max-width: 360px;"
+         placeholder="Customer code (AVG1001TA), name, GSTIN, city or contact" aria-label="Search customers">
+  <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
+  {% if q %}<a class="btn btn-sm btn-link" href="{% url 'kyc:list' %}">Clear</a>{% endif %}
+</form>
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead>
+        <tr>
+          <th class="text-nowrap"><a class="text-decoration-none" href="?q={{ q|urlencode }}&sort={% if sort == 'customer_code' %}customer_code_desc{% else %}customer_code{% endif %}">Customer code{% if sort == 'customer_code' %} <i class="bi bi-sort-down"></i>{% elif sort == 'customer_code_desc' %} <i class="bi bi-sort-up"></i>{% endif %}</a></th>
+          <th><a class="text-decoration-none" href="?q={{ q|urlencode }}&sort=name">Customer</a></th>
+          <th>Your code</th><th>City</th><th>Team</th><th>Contacts</th><th>KYC</th>
+          <th><a class="text-decoration-none" href="?q={{ q|urlencode }}&sort=updated">Updated</a></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in page %}
+          <tr>
+            <td class="text-nowrap"><a class="kyc-code text-decoration-none" href="{% url 'kyc:detail' c.pk %}">{{ c.customer_code }}</a></td>
+            <td class="text-nowrap kyc-muted">{{ c.code }}</td>
+            <td>
+              <a class="fw-semibold text-decoration-none" href="{% url 'kyc:detail' c.pk %}">{{ c.name }}</a>
+              {% if c.gstin %}<div class="kyc-muted">GSTIN {{ c.gstin }}</div>{% endif %}
+            </td>
+            <td>{{ c.city|default:"—" }}</td>
+            <td>{% for d in c.departments.all %}<span class="kyc-chip kyc-chip--draft me-1 mb-1">{{ d.name }}</span>{% empty %}—{% endfor %}</td>
+            <td class="text-nowrap">
+              {{ c.contact_count }}
+              {% if not c.purchaser_count %}<span class="kyc-chip kyc-chip--warn ms-1">No purchaser</span>{% endif %}
+            </td>
+            <td><span class="kyc-chip kyc-chip--{{ c.kyc_status }}">{{ c.get_kyc_status_display }}</span></td>
+            <td class="text-nowrap">{{ c.updated_at|date:"d M Y" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8" class="text-center text-muted py-5">
+            {% if q %}No customer matches “{{ q }}”.{% else %}No customers yet.
+              <a href="{% url 'kyc:new' %}">Add the first one</a>.{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mt-3 kyc-muted">
+  <span>{{ total }} customer{{ total|pluralize }}</span>
+  {% if page.has_other_pages %}
+    <span class="d-flex gap-2 align-items-center">
+      {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?q={{ q|urlencode }}&page={{ page.previous_page_number }}">Previous</a>{% endif %}
+      Page {{ page.number }} of {{ page.paginator.num_pages }}
+      {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?q={{ q|urlencode }}&page={{ page.next_page_number }}">Next</a>{% endif %}
+    </span>
+  {% endif %}
+</div>
+{% endblock %}

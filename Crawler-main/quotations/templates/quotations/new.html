@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+
+{% block title %}Upload quotation - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'quotations/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'quotations:list' %}" class="qt-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Quotations</a>
+    <h2 class="page-title">Upload quotation</h2>
+    <p class="page-subtitle">Upload the PDF for the customer and the Excel working. Management approves it before it can be sent.</p>
+  </div>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="card border-0 shadow-sm p-4" style="max-width: 760px;" novalidate>
+  {% csrf_token %}
+  {% for e in form.non_field_errors %}<div class="alert alert-danger py-2">{{ e }}</div>{% endfor %}
+  <div class="row g-3">
+    <div class="col-sm-4">{% include 'quotations/_field.html' with field=form.customer_code %}</div>
+    <div class="col-sm-8">{% include 'quotations/_field.html' with field=form.customer_name %}
+      <div class="form-text">Filled from KYC when you pick a customer code.</div></div>
+    <div class="col-sm-8">{% include 'quotations/_field.html' with field=form.title %}</div>
+    <div class="col-sm-4">{% include 'quotations/_field.html' with field=form.enquiry_id %}</div>
+    <div class="col-sm-6">{% include 'quotations/_field.html' with field=form.pdf %}
+      <div class="form-text">This is what the customer will receive.</div></div>
+    <div class="col-sm-6">{% include 'quotations/_field.html' with field=form.excel %}
+      <div class="form-text">Seen only by costing and management.</div></div>
+    <div class="col-12">{% include 'quotations/_field.html' with field=form.price_note %}</div>
+    <div class="col-12">{% include 'quotations/_field.html' with field=form.note %}</div>
+  </div>
+  <datalist id="kycCustomerOptions"></datalist>
+  <div class="d-flex gap-2 mt-4">
+    <button type="submit" class="btn btn-primary"><i class="bi bi-upload me-1"></i> Upload for approval</button>
+    <a class="btn btn-outline-secondary" href="{% url 'quotations:list' %}">Cancel</a>
+  </div>
+</form>
+
+<script>
+(function () {
+    // Customer code picker: suggestions from KYC, and the name is filled in for a known code.
+    const code = document.getElementById('{{ form.customer_code.id_for_label }}');
+    const name = document.getElementById('{{ form.customer_name.id_for_label }}');
+    const list = document.getElementById('kycCustomerOptions');
+    if (!code || !name || !list) return;
+    let known = {};
+    let timer = null;
+    const load = () => {
+        fetch('{% url "kyc:customer_search" %}?q=' + encodeURIComponent(code.value.trim()), {credentials: 'same-origin'})
+            .then((r) => (r.ok ? r.json() : {customers: []}))
+            .then((data) => {
+                list.innerHTML = '';
+                (data.customers || []).forEach((c) => {
+                    known[c.code] = c;
+                    const option = document.createElement('option');
+                    option.value = c.code;
+                    option.label = c.name + (c.city ? ' (' + c.city + ')' : '');
+                    list.appendChild(option);
+                });
+                fill();
+            })
+            .catch(() => {});
+    };
+    const fill = () => {
+        const match = known[code.value.replace(/\s+/g, '').toUpperCase()];
+        if (match && !name.value.trim()) name.value = match.name;
+    };
+    code.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 200); });
+    code.addEventListener('change', fill);
+    load();
+})();
+</script>
+{% endblock %}

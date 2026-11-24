@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if customer %}Add document - {{ customer.code }}{% else %}Import from a document{% endif %} - KYC - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% if customer %}{% url 'kyc:detail' customer.pk %}{% else %}{% url 'kyc:list' %}{% endif %}"
+       class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> {% if customer %}Back to {{ customer.code }}{% else %}KYC{% endif %}</a>
+    <h2 class="page-title">{% if customer %}Add a document{% else %}Import from a document{% endif %}</h2>
+    <p class="page-subtitle">
+      {% if customer %}The document is filed under {{ customer.name }}. Its details are not read.
+      {% else %}Take a photo of an existing KYC form, upload a PDF, or paste the text. The details are read for you, and you check them before anything is saved.{% endif %}
+    </p>
+  </div>
+</div>
+
+<form method="post" enctype="multipart/form-data" novalidate id="kycImportForm">
+  {% csrf_token %}
+  {% if customer %}<input type="hidden" name="customer" value="{{ customer.pk }}">{% endif %}
+  <div class="card border-0 shadow-sm" style="max-width: 640px;">
+    <div class="card-body d-flex flex-column gap-3">
+      {% if form.non_field_errors %}<div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div>{% endif %}
+      {% include 'kyc/_field.html' with field=form.document %}
+      <div class="kyc-muted">JPG, PNG, WEBP, HEIC or PDF, up to 15 MB. On a phone, this opens the camera.</div>
+      {% include 'kyc/_field.html' with field=form.pasted_text %}
+      <button type="submit" class="btn btn-primary align-self-start" id="kycImportSubmit">
+        {% if customer %}Add document{% else %}Read the details{% endif %}</button>
+      {% if not customer %}<div class="kyc-muted">Reading can take up to a minute. The document is sent to Google Gemini to be read, the same as the Document scanner.</div>{% endif %}
+
+    </div>
+  </div>
+</form>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  (function () {
+    var form = document.getElementById('kycImportForm');
+    var button = document.getElementById('kycImportSubmit');
+    if (!form || !button) return;
+    form.addEventListener('submit', function () {
+      button.disabled = true;
+      button.textContent = 'Working…';
+    });
+  })();
+</script>
+{% endblock %}

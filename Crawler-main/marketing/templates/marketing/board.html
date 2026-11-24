@@ -1,0 +1,205 @@
+{% extends 'base.html' %}
+
+{% block title %}Marketing - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}
+<style>
+  .mk-stat {
+    background: white; border: 1px solid var(--brand-border); border-radius: 12px;
+    padding: 1rem 1.25rem; height: 100%; display: block; color: inherit; text-decoration: none;
+  }
+  a.mk-stat:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+  .mk-stat-label { font-size: 0.8rem; color: var(--brand-muted, #64748b); }
+  .mk-stat-value { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .mk-chip { display: inline-flex; align-items: center; font-size: 0.72rem; font-weight: 600;
+             padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .mk-chip--rejected { background: #fef2f2; color: #b91c1c; }
+  .mk-chip--no_response { background: #f1f5f9; color: #475569; }
+  .mk-chip--ready { background: #ecfdf5; color: #047857; }
+  .mk-chip--do_not_contact { background: #f1f5f9; color: #334155; text-decoration: line-through; }
+  .mk-chip--revived { background: #eff6ff; color: #1d4ed8; }
+  .mk-reason-row { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem; padding: 4px 0; }
+  .mk-muted { font-size: 0.75rem; color: var(--brand-muted, #64748b); }
+  .mk-row-link { color: inherit; text-decoration: none; }
+  .mk-row-link:hover { text-decoration: underline; }
+</style>
+{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <h2 class="page-title">Marketing</h2>
+    <p class="page-subtitle">Every Rejected and No response enquiry, so lost customers can be won back.</p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-primary shadow-sm" href="{% url 'enquiries:board' %}">
+      <i class="bi bi-journal-text me-1"></i> Enquiries
+    </a>
+    <a class="btn btn-outline-primary shadow-sm" href="{% url 'marketing:campaign_list' %}">
+      <i class="bi bi-envelope-paper me-1"></i> Campaigns
+    </a>
+    <a class="btn btn-primary shadow-sm" href="{% url 'marketing:campaign_new' %}?{{ campaign_query }}">
+      <i class="bi bi-send me-1"></i> Email these customers
+    </a>
+  </div>
+</div>
+
+{% if load_error %}
+  <div class="alert alert-warning">{{ load_error }}</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg">
+    <a class="mk-stat" href="{% url 'marketing:board' %}">
+      <div class="mk-stat-label">All lost enquiries</div>
+      <div class="mk-stat-value">{{ summary.total }}</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="mk-stat" href="?kind=rejected">
+      <div class="mk-stat-label">Rejected</div>
+      <div class="mk-stat-value">{{ summary.rejected }}</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="mk-stat" href="?kind=no_response">
+      <div class="mk-stat-label">No response</div>
+      <div class="mk-stat-value">{{ summary.no_response }}</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="mk-stat" href="?stage=ready">
+      <div class="mk-stat-label">Ready to contact</div>
+      <div class="mk-stat-value text-success">{{ summary.ready }}</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="mk-stat" href="?stage=revived">
+      <div class="mk-stat-label">Revived</div>
+      <div class="mk-stat-value text-primary">{{ summary.revived }}</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <a class="mk-stat" href="?stage=do_not_contact" title="Customers who asked not to be contacted, or were marked Do not contact. They never get campaign emails.">
+      <div class="mk-stat-label">Do not contact</div>
+      <div class="mk-stat-value text-danger">{{ summary.do_not_contact }}</div>
+    </a>
+  </div>
+  <div class="col-6 col-lg">
+    <div class="mk-stat" title="Lost enquiries that marketing marked as accepted. They are now in the Enquiries portal.">
+      <div class="mk-stat-label">Accepted (won back)</div>
+      <div class="mk-stat-value text-success">{{ accepted_count }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-xl-9">
+    <div class="card border-0 shadow-sm overflow-hidden">
+      <div class="card-header bg-white py-3 border-bottom">
+        <form method="get" action="{% url 'marketing:board' %}" class="d-flex flex-wrap align-items-center gap-2">
+          <input type="search" name="q" value="{{ chosen.q }}" class="form-control form-control-sm"
+                 style="max-width: 220px;" placeholder="Search customer, enquiry, email" aria-label="Search">
+          <select name="kind" class="form-select form-select-sm" style="width:auto;" aria-label="Lead source">
+            <option value="">All lead sources</option>
+            {% for key, label in kind_choices %}
+              <option value="{{ key }}"{% if chosen.kind == key %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <select name="reason" class="form-select form-select-sm" style="width:auto;" aria-label="Reason">
+            <option value="">All reasons</option>
+            {% for key, label in reason_choices %}
+              <option value="{{ key }}"{% if chosen.reason == key %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+            <option value="none"{% if chosen.reason == 'none' %} selected{% endif %}>Reason not recorded</option>
+          </select>
+          <select name="stage" class="form-select form-select-sm" style="width:auto;" aria-label="Stage">
+            <option value="">All stages</option>
+            {% for key, label in stage_choices %}
+              <option value="{{ key }}"{% if chosen.stage == key %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <select name="fin_year" class="form-select form-select-sm" style="width:auto;" aria-label="Financial year">
+            <option value="">All years</option>
+            {% for fy in fin_years %}
+              <option value="{{ fy }}"{% if chosen.fin_year == fy %} selected{% endif %}>FY {{ fy }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-primary btn-sm" type="submit">Filter</button>
+          {% if has_filters %}
+            <a class="btn btn-light btn-sm border" href="{% url 'marketing:board' %}">Clear</a>
+          {% endif %}
+          <span class="ms-auto mk-muted">{{ filtered_count }} shown</span>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+          <thead>
+            <tr>
+              <th>Customer</th>
+              <th>Enquiry</th>
+              <th>Status</th>
+              <th>Reason</th>
+              <th>Quoted price</th>
+              <th>Lost on</th>
+              <th>Follow-ups</th>
+              <th>Stage</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td>
+                  <a class="mk-row-link fw-semibold" href="{% url 'marketing:detail' row.enquiry_id %}">{% if row.customer_name %}{{ row.customer_name }}{% else %}<span class="text-muted fw-normal">Name not recorded</span>{% endif %}</a>
+                  {% if row.customer_name_source == 'email' %}<div class="mk-muted">from email address</div>{% endif %}
+                  {% if row.kyc_code %}<div class="mk-muted">KYC {% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' row.kyc_customer.pk %}" class="text-decoration-none" data-kyc-code-link>{{ row.kyc_code }}</a>{% else %}{{ row.kyc_code }}{% endif %}</div>{% endif %}
+                  {% if row.customer_email %}<div class="mk-muted">{{ row.customer_email }}{% if row.other_emails %} <span title="{{ row.other_emails|join:', ' }}">+{{ row.other_emails|length }}</span>{% endif %}</div>{% endif %}
+                </td>
+                <td>
+                  <a class="mk-row-link" href="{% url 'marketing:detail' row.enquiry_id %}">{{ row.enquiry_id }}</a>
+                  <div class="mk-muted text-truncate" style="max-width: 220px;">{{ row.subject }}</div>
+                </td>
+                <td><span class="mk-chip mk-chip--{{ row.kind }}" data-lead-source="{{ row.kind }}">{{ row.source_badge }}</span></td>
+                <td>
+                  {{ row.reason_label|default:"—" }}
+                  {% if row.customer_reason %}<div class="mk-muted text-truncate" style="max-width: 200px;" title="{{ row.customer_reason }}">“{{ row.customer_reason }}”</div>{% endif %}
+                </td>
+                <td class="text-nowrap">{{ row.price|default:"—" }}</td>
+                <td class="text-nowrap">{{ row.lost_on|date:"d M Y"|default:"—" }}</td>
+                <td>{{ row.follow_up_count }}{% if row.last_follow_up %}<div class="mk-muted small">Last: {{ row.last_follow_up|date:"d M Y" }} ({{ row.last_follow_up_type }})</div>{% endif %}</td>
+                <td>
+                  <span class="mk-chip mk-chip--{{ row.stage }}">{{ row.stage_label }}</span>
+                  {% if row.stage == 'ready' and row.ready_since %}<div class="mk-muted">Ready since {{ row.ready_since|date:"d M Y" }}</div>{% endif %}
+                  {% if row.auto_follow_up %}<div class="mk-muted" data-auto-follow-up="{{ row.auto_follow_up.state }}" title="Marketing's automatic follow-ups, in their own email thread">Auto: {{ row.auto_follow_up.label }}</div>{% endif %}
+                  {% if row.auto_follow_up.next_on %}<div class="mk-muted" data-next-follow-up>Next follow-up due {{ row.auto_follow_up.next_on|date:"d M Y" }}</div>{% endif %}
+                  {% if row.flag %}<div class="text-danger small" data-lead-flag="{{ row.flag }}">{% if row.flag == 'thread_not_found' %}Gmail thread not found — check customer email / subject{% else %}{{ row.flag_label }}{% endif %}</div>{% endif %}
+                  <div class="small"><a href="{% url 'enquiries:negotiation' row.enquiry_id %}" data-enquiry-link>Original enquiry</a></div>
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="8" class="text-center text-muted py-5">
+                  {% if has_filters %}No lost enquiries match these filters.{% else %}No Rejected or No response enquiries yet.{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-3">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Why enquiries were lost</h6></div>
+      <div class="card-body">
+        {% for label, count in summary.by_reason %}
+          <div class="mk-reason-row"><span>{{ label }}</span><span class="fw-semibold">{{ count }}</span></div>
+        {% empty %}
+          <p class="mk-muted mb-0">Nothing to show yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

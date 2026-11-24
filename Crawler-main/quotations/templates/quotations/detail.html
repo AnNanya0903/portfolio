@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ quotation.number }} - Quotations - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'quotations/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'quotations:list' %}" class="qt-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Quotations</a>
+    <h2 class="page-title">{{ quotation.title }}</h2>
+    <p class="page-subtitle">
+      <span class="qt-code">{{ quotation.number }}</span> · {{ quotation.customer_name }}
+      {% if quotation.customer %}(code {% if mw_service_access.kyc|default:False %}<a class="qt-code text-decoration-none" href="{% url 'kyc:detail' quotation.customer.pk %}" title="Open in KYC">{{ quotation.customer.code }}</a>{% else %}<span class="qt-code">{{ quotation.customer.code }}</span>{% endif %}){% endif %}
+      {% if quotation.enquiry_id %} · {% if mw_service_access.enquiries|default:False %}<a class="text-decoration-none" href="{% url 'enquiries:detail' quotation.enquiry_id %}" title="Open the enquiry">Enquiry #{{ quotation.enquiry_id }}</a>{% else %}Enquiry #{{ quotation.enquiry_id }}{% endif %}{% endif %}
+      <span class="qt-chip qt-chip--{{ quotation.status }} ms-2">{{ quotation.get_status_display }}</span>
+    </p>
+  </div>
+</div>
+
+{# The one PDF that may go to the customer. This is all that customer relations sees. #}
+{% if active %}
+  <div class="qt-active mb-4" data-active-pdf>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+      <div>
+        <div class="qt-label">PDF to send to the customer</div>
+        <div class="fw-semibold"><i class="bi bi-file-earmark-pdf me-1"></i>{{ active.pdf_name|default:"Quotation PDF" }}</div>
+        <div class="qt-muted">Version {{ active.number }}, approved {{ active.decided_at|date:"d M Y" }}{% if active.decided_by %} by {{ active.decided_by.get_full_name|default:active.decided_by.username }}{% endif %}</div>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a class="btn btn-success" href="{% url 'quotations:version_pdf' active.pk %}" target="_blank" rel="noopener"><i class="bi bi-eye me-1"></i> Open PDF</a>
+        {% if quotation.status != 'sent' %}
+        <form method="post" action="{% url 'quotations:mark_sent' quotation.pk %}">{% csrf_token %}
+          <button type="submit" class="btn btn-outline-success"><i class="bi bi-send-check me-1"></i> Mark as sent to customer</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% else %}
+  <div class="qt-waiting mb-4" data-no-active-pdf>
+    <div class="fw-semibold"><i class="bi bi-hourglass-split me-1"></i>No PDF to send yet</div>
+    <div class="qt-muted">
+      {% if quotation.status == 'revision' %}Management asked for a revision. The new PDF will appear here once it is uploaded and approved.
+      {% else %}The latest version is waiting for management approval. Do not send an older PDF.{% endif %}
+    </div>
+  </div>
+{% endif %}
+
+{% if sees_workings %}
+<div class="row g-4">
+  <div class="col-lg-7">
+
+    {% if can_approve and awaiting_decision %}
+    <div class="card border-0 shadow-sm p-4 mb-4" data-decision-card>
+      <h5 class="mb-1">Decision on version {{ latest.number }}</h5>
+      <p class="qt-muted mb-3">
+        <a href="{% url 'quotations:version_pdf' latest.pk %}" target="_blank" rel="noopener">Open the PDF</a>{% if latest.excel %} ·
+        <a href="{% url 'quotations:version_excel' latest.pk %}">Download the Excel working</a>{% endif %}
+        {% if latest.price_note %} · Quoted price: {{ latest.price_note }}{% endif %}
+      </p>
+      <form method="post" action="{% url 'quotations:decide' quotation.pk %}" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="hidden" name="version" value="{{ latest.pk }}">
+        <div class="mb-3">
+          <label class="form-label small" for="{{ decision_form.comment.id_for_label }}">Comment</label>
+          {{ decision_form.comment }}
+        </div>
+        <div class="mb-3">
+          <label class="form-label small" for="{{ decision_form.corrected_excel.id_for_label }}">Corrected Excel (optional, with a revision)</label>
+          {{ decision_form.corrected_excel }}
+          <div class="form-text">Attach your corrected Excel and costing will make the new PDF from it.</div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="submit" name="decision" value="approve" class="btn btn-success"><i class="bi bi-check2-circle me-1"></i> Price is good, OK to send</button>
+          <button type="submit" name="decision" value="revise" class="btn btn-outline-danger"><i class="bi bi-arrow-repeat me-1"></i> Price needs revision</button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm overflow-hidden mb-4">
+      <div class="px-4 pt-3"><h5 class="mb-2">Versions</h5></div>
+      <div class="table-responsive">
+        <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+          <thead><tr><th>Version</th><th>Files</th><th>Quoted price</th><th>Status</th><th>Uploaded</th></tr></thead>
+          <tbody>
+            {% for v in versions %}
+            <tr>
+              <td class="fw-semibold">v{{ v.number }}</td>
+              <td class="text-nowrap">
+                <a href="{% url 'quotations:version_pdf' v.pk %}" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf"></i> PDF</a>
+                {% if v.excel %} · <a href="{% url 'quotations:version_excel' v.pk %}"><i class="bi bi-file-earmark-spreadsheet"></i> Excel</a>{% endif %}
+              </td>
+              <td>{{ v.price_note|default:"—" }}</td>
+              <td><span class="qt-chip qt-chip--{{ v.status }}">{{ v.get_status_display }}</span></td>
+              <td class="qt-muted text-nowrap">{{ v.created_at|date:"d M Y, H:i" }}{% if v.uploaded_by %}<br>{{ v.uploaded_by.get_full_name|default:v.uploaded_by.username }}{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if can_cost %}
+    <div class="card border-0 shadow-sm p-4" data-upload-card>
+      <h5 class="mb-1">Upload a new version</h5>
+      <p class="qt-muted mb-3">The new version replaces every earlier one and goes to management for approval.</p>
+      <form method="post" action="{% url 'quotations:version_new' quotation.pk %}" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div class="row g-3">
+          <div class="col-sm-6">{% include 'quotations/_field.html' with field=version_form.pdf %}</div>
+          <div class="col-sm-6">{% include 'quotations/_field.html' with field=version_form.excel %}</div>
+          <div class="col-12">{% include 'quotations/_field.html' with field=version_form.price_note %}</div>
+          <div class="col-12">{% include 'quotations/_field.html' with field=version_form.note %}</div>
+        </div>
+        <button type="submit" class="btn btn-primary mt-3"><i class="bi bi-upload me-1"></i> Upload for approval</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card border-0 shadow-sm overflow-hidden" data-tracker>
+      <div class="px-4 pt-3"><h5 class="mb-2">Tracker</h5></div>
+      {% for event in events %}
+        <div class="qt-event">
+          <div class="d-flex justify-content-between gap-2 flex-wrap">
+            <span class="qt-chip qt-chip--{{ event.action }}">{{ event.get_action_display }}</span>
+            <span class="qt-muted">{{ event.created_at|date:"d M Y, H:i" }}</span>
+          </div>
+          <div class="qt-muted mt-1">
+            {% if event.version %}Version {{ event.version.number }}{% endif %}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}
+          </div>
+          {% if event.comment %}<div class="qt-comment mt-1">{{ event.comment }}</div>{% endif %}
+          {% if event.file %}<div class="mt-1"><a href="{% url 'quotations:event_file' event.pk %}"><i class="bi bi-file-earmark-spreadsheet"></i> {{ event.file_name|default:"Corrected Excel" }}</a></div>{% endif %}
+        </div>
+      {% empty %}
+        <div class="qt-event qt-muted">Nothing yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if can_cost %}
+<div class="card border-danger-subtle shadow-sm mt-4" data-delete-quotation>
+  <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0 text-danger">Delete this quotation</h6></div>
+  <div class="card-body">
+    <p class="small mb-2">This removes <strong>{{ quotation.number }} - {{ quotation.title }}</strong> for good, with its
+      {{ quotation.versions.count }} version{{ quotation.versions.count|pluralize }}, the approval history and every stored file.
+      The customer and the enquiry are not changed.</p>
+    <form method="post" action="{% url 'quotations:delete' quotation.pk %}" class="d-flex flex-wrap align-items-end gap-2"
+          onsubmit="return confirm('Delete quotation {{ quotation.number|escapejs }} for good? This cannot be undone.');">
+      {% csrf_token %}
+      <div>
+        <label class="form-label small mb-1" for="confirmNumber">Type the quotation number <strong>{{ quotation.number }}</strong> to confirm</label>
+        <input id="confirmNumber" name="confirm_number" class="form-control form-control-sm" autocomplete="off" required>
+      </div>
+      <button type="submit" class="btn btn-sm btn-outline-danger">Delete quotation</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

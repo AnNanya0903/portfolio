@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+
+{% block title %}Contact departments - KYC - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:list' %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> KYC</a>
+    <h2 class="page-title">Contact departments</h2>
+    <p class="page-subtitle">Who to write to in each department. The primary address is listed first.</p>
+  </div>
+  {% if is_admin %}<div><a class="btn btn-outline-secondary" href="{% url 'kyc:departments_manage' %}"><i class="bi bi-gear me-1"></i> Manage departments</a></div>{% endif %}
+</div>
+
+<div class="row g-4">
+  {% for d in departments %}
+    <div class="col-md-6 col-xl-4">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">{{ d.name }}</h6></div>
+        <div class="card-body d-flex flex-column gap-2">
+          {% if d.description %}<div class="kyc-muted">{{ d.description }}</div>{% endif %}
+          {% for c in d.contacts.all %}
+            <div><i class="bi bi-envelope me-1"></i><a href="mailto:{{ c.email }}">{{ c.email }}</a>
+              {% if c.is_primary %}<span class="kyc-chip kyc-chip--verified ms-1">Primary</span>{% endif %}</div>
+          {% empty %}<div class="kyc-muted">No email address yet.</div>{% endfor %}
+        </div>
+      </div>
+    </div>
+  {% empty %}
+    <div class="col-12 text-muted">No departments yet.{% if is_admin %} <a href="{% url 'kyc:departments_manage' %}">Add one</a>.{% endif %}</div>
+  {% endfor %}
+</div>
+{% endblock %}

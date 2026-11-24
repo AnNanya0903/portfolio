@@ -1,0 +1,20 @@
+{% load tz %}{% autoescape off %}Dear Sir / Madam,
+
+To set up {{ customer.name }} as a customer of AVIGIRI, please fill in your KYC details and upload the documents on this private page:
+
+{{ link }}
+
+What you will need (our KYC form, DA/AC/01, plus bank details):
+- Company, billing and delivery addresses, GSTIN, MSME / Udyam number
+- Transport and delivery preferences
+- A contact person's name, email and phone
+- PAN and bank account details (account number, IFSC)
+- GST certificate, PAN card and a cancelled cheque (PDF, JPG or PNG, up to 5 MB each)
+
+After you submit, you can download the completed form as a PDF to sign, stamp and upload on the same page.
+
+When you open the page we will email a 6-digit code to {{ req.recipient_email }}. Your answers are saved after each step, so you can come back later with the same link.
+
+The link is private to your company and works until {{ valid_until|timezone:"Asia/Kolkata"|date:"j F Y, g:i A" }} (IST). Please do not forward it.
+
+{{ signature }}{% endautoescape %}

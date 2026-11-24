@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+
+{% block title %}Choose conversation - MagicWand 2.0{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <h2 class="page-title">Follow-up for enquiry #{{ enquiry_id }}</h2>
+    <p class="page-subtitle">
+      Confirm which Gmail conversation belongs to this enquiry.
+      {% if enquiry.subject %}Enquiry subject: <strong>{{ enquiry.subject }}</strong>{% endif %}
+    </p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary shadow-sm" href="{% url 'enquiries:board' %}">
+      <i class="bi bi-arrow-left me-1"></i> Back to enquiries
+    </a>
+  </div>
+</div>
+
+<div class="alert alert-warning">
+  {% if conversations|length > 1 %}
+    {{ conversations|length }} Gmail conversations look similar. Pick the one with this customer, or go back if none is right.
+  {% else %}
+    One Gmail conversation was found by subject only. Check that it is with this customer before continuing.
+  {% endif %}
+  Nothing is sent until you review the reply and click Send.
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Conversation subject</th>
+          <th>Customer</th>
+          <th>Last message</th>
+          <th class="text-end"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for convo in conversations %}
+        <tr data-follow-up-candidate="{{ convo.thread_id }}">
+          <td>
+            <div class="fw-medium">{{ convo.subject|default:'(No Subject)' }}</div>
+            <div class="small text-muted">{{ convo.snippet|truncatechars:120 }}</div>
+          </td>
+          <td>{{ convo.customer_email|default:'Unknown' }}</td>
+          <td class="small text-muted">
+            {% if convo.last_date %}{{ convo.last_date|date:'d M Y, H:i' }}{% else %}—{% endif %}
+            <div>{{ convo.message_count }} message{{ convo.message_count|pluralize }}</div>
+          </td>
+          <td class="text-end">
+            {% if convo.customer_email %}
+            <a class="btn btn-sm btn-primary" href="{% url 'enquiries:follow_up' enquiry_id %}?thread={{ convo.thread_id|urlencode }}">
+              Use this conversation
+            </a>
+            {% else %}
+            <span class="small text-muted">No customer address found</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

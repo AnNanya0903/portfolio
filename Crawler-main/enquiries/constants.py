@@ -1,0 +1,363 @@
+"""Shared constants for the enquiries Django integration."""
+
+from collections import OrderedDict
+
+CHANNEL_CHOICES = (
+    ("email", "Email"),
+    ("phone", "Phone"),
+    ("portal", "Portal"),
+    ("onsite", "On-site"),
+    ("other", "Other"),
+)
+
+PRIORITY_CHOICES = (
+    ("high", "High"),
+    ("medium", "Medium"),
+    ("low", "Low"),
+)
+
+STATUS_CHOICES = (
+    ("open", "Open"),
+    ("closed", "Closed"),
+    ("accepted", "Accepted"),
+    ("converted", "Converted"),
+    ("rejected", "Rejected"),
+)
+
+CURRENCY_CHOICES = (
+    ("USD", "USD ($)"),
+    ("EUR", "EUR (€)"),
+    ("INR", "INR (₹)"),
+    ("GBP", "GBP (£)"),
+)
+
+CURRENCY_SYMBOLS = {
+    "USD": "$",
+    "EUR": "€",
+    "INR": "₹",
+    "GBP": "£",
+}
+
+CURRENCY_COST_FIELDS = {
+    "die_development_charge",
+    "die_tool_development_charge_usd",
+    "die_development_charge_internal",
+    "supplier_mold_cost",
+    "supplier_cost_per_piece",
+    "mold_development_cost",
+    "mold_development_charge_usd",
+    "mold_development_charge_internal",
+    "price_per_kg",
+    "price_per_piece",
+    "digital_cutting_price",
+    "dsa_tape_application_charge",
+    "secondary_operation_charge",
+    "total_price_per_piece",
+    "final_price_per_piece",
+    "price_per_meter",
+    "total_price_per_meter",
+    "final_price_per_meter",
+    # New currency-valued fields for create form
+    "final_price_per_pack_meters",
+    "final_price_per_pack_pcs",
+    "total_die_development_charge",
+    "total_mold_development_charge",
+}
+
+NUMERIC_FIELDS = {
+    "required_trials_meters",
+    "die_development_charge",
+    "die_tool_development_charge_usd",
+    "die_development_charge_internal",
+    "supplier_mold_cost",
+    "supplier_cost_per_piece",
+    "mold_development_cost",
+    "mold_development_charge_usd",
+    "mold_development_charge_internal",
+    "weight_per_meter_g",
+    "weight_per_meter_pricing",
+    "weight_per_piece_g",
+    "price_per_kg",
+    "price_per_piece",
+    "specific_gravity",
+    "digital_cutting_price",
+    "width_of_tape_required",
+    "dsa_tape_application_charge",
+    "secondary_operation_charge",
+    "total_price_per_piece",
+    "x20_percent",
+    "scrap_percent",
+    "final_price_per_piece",
+    "conversion_rate",
+    "additional_dev_percent",
+    "price_per_meter",
+    "total_price_per_meter",
+    "final_price_per_meter",
+    
+    # New numeric fields
+    "supplier_metal_percent",
+    "supplier_cost_per_piece_percent",
+    "incoterms_percent",
+    "packing_percent",
+    "final_price_per_pack_meters",
+    "final_price_per_pack_pcs",
+    "total_die_development_charge",
+    "total_mold_development_charge",
+    "supplier_mold_development_percent",
+}
+
+INTEGER_FIELDS = {
+    "minimum_order_quantity",
+    "extrusion_die_count",
+    "mold_count",
+}
+
+DETAIL_FIELD_LABELS = OrderedDict([
+    ("material_customer", "Material (Customer)"),
+    ("feasibility", "Feasibility"),
+    ("required_trials_meters", "Req Trials (01 Trial = 10 Mtrs)"),
+    ("die_development_charge", "Die Development Charge"),
+    ("die_development_charge_internal", "Die Development Charge (Internal)"),
+    ("die_tool_development_charge_usd", "Die Tool Development Charge"),
+    ("supplier_mold_cost", "Supplier Mold Cost"),
+    ("supplier_cost_per_piece", "Supplier Cost / Piece"),
+    ("additional_dev_percent", "Additional Development %"),
+    ("mold_development_cost", "Mold Development Cost"),
+    ("mold_development_charge_usd", "Mold Development Charge"),
+    ("mold_development_charge_internal", "Mold Development Charge (Internal)"),
+    ("manufacturing_process", "Manufacturing Process"),
+    ("manufacturing_process_internal", "Manufacturing Process (Internal)"),
+    ("surface_treatment", "Surface Treatment"),
+    ("area_or_volume", "Area / Volume"),
+    ("gasket_thickness_length_mm", "Gasket Thickness / Length (mm)"),
+    ("pack_size", "Pack Size"),
+    ("die_number", "Die Number"),
+    ("hardness_or_material", "Hardness / Material"),
+    ("weight_per_meter_g", "Weight/Meter (In gms)"),
+    ("weight_per_meter_pricing", "Wt/m Considered for Pricing"),
+    ("weight_per_piece_g", "Weight/Pcs (In gms)"),
+    ("price_per_kg", "Price per KG"),
+    ("minimum_order_quantity", "MOQ"),
+    ("price_per_piece", "Price per pc"),
+    ("price_per_meter", "Price per meter"),
+    ("customer_reference", "Customer Reference"),
+    ("extrusion_die_count", "# of Extrusion Dies"),
+    ("mold_count", "# of Molds"),
+    ("test_standard", "Test Standard"),
+    ("specific_gravity", "Sp. Gravity"),
+    ("project_name", "Project Name"),
+    ("digital_cutting_price", "Digital Cutting Price"),
+    ("width_of_tape_required", "DSA Tape Width"),
+    ("dsa_tape_application_charge", "DSA Tape Application Charge"),
+    ("secondary_operation_charge", "Secondary Operation Charge"),
+    ("total_price_per_piece", "Total Price per Pc"),
+    ("total_price_per_meter", "Total Price per Meter"),
+    ("x20_percent", "Additional %"),
+    ("scrap_percent", "Scrap %"),
+    ("final_price_per_piece", "($) Final Price per Piece"),
+    ("final_price_per_meter", "($) Final Price per Meter"),
+    
+    # Added fields
+    ("enquiry_date", "Date"),
+    ("enq_number", "ENQ#"),
+    ("customer_part_number", "Customer Part#"),
+    ("warranty_period", "Warranty Period"),
+    ("die_development_lead_time", "Die Development Lead Time"),
+    ("production_lead_time", "Production Lead Time"),
+    ("avigiri_part_number", "AVIGIRI Part #"),
+    ("material_specification", "Material  Specificaiton"),
+    ("supplier_metal_percent", "Supplier Metal %"),
+    ("supplier_cost_per_piece_percent", "Supplier Cost per Pc %"),
+    ("incoterms_percent", "(Incoterms = F7) %"),
+    ("packing_percent", "Packing %"),
+    ("final_price_per_pack_meters", "($) Final Price per Pack (m)"),
+    ("final_price_per_pack_pcs", "($) Final Price per Pack (pcs)"),
+    ("total_die_development_charge", "($) Total Die Development Charge"),
+    ("total_mold_development_charge", "($) Total Mold Development Charge"),
+    ("supplier_mold_development_percent", "Supplier Mold Development %"),
+    ("nrc_payment_terms", "NRC Payment Terms"),
+    ("rc_payment_terms", "RC Payment Terms"),
+    ("currency", "Currency"),
+    ("conversion_rate", "Conversion Rate"),
+    ("remarks", "Remarks"),
+])
+
+DESIGN_FIELD_ORDER = [
+    "die_development_charge_internal",
+    "die_development_charge",
+    "supplier_mold_cost",
+    "supplier_cost_per_piece",
+    "additional_dev_percent",
+    "required_trials_meters",
+    "mold_development_charge_internal",
+    "mold_development_cost",
+    "surface_treatment",
+    "area_or_volume",
+    "gasket_thickness_length_mm",
+    "pack_size",
+    "width_of_tape_required",
+    "die_number",
+    "weight_per_meter_g",
+    "weight_per_meter_pricing",
+    "weight_per_piece_g",
+]
+
+DESIGN_FIELD_LAYOUT = {
+    "die_development_charge_internal": "col-md-6 col-xl-4",
+    "die_development_charge": "col-md-6 col-xl-4",
+    "supplier_mold_cost": "col-md-4",
+    "supplier_cost_per_piece": "col-md-4",
+    "additional_dev_percent": "col-md-4",
+    "required_trials_meters": "col-md-4 col-xl-3",
+    "mold_development_charge_internal": "col-md-6 col-xl-4",
+    "mold_development_cost": "col-md-6 col-xl-4",
+    "surface_treatment": "col-md-4",
+    "area_or_volume": "col-md-4",
+    "gasket_thickness_length_mm": "col-md-4",
+    "pack_size": "col-md-4",
+    "width_of_tape_required": "col-md-4",
+    "die_number": "col-md-4",
+    "weight_per_meter_g": "col-md-4",
+    "weight_per_meter_pricing": "col-md-4",
+    "weight_per_piece_g": "col-md-4",
+}
+
+COMPOUNDING_FIELD_ORDER = [
+    "hardness_or_material",
+    "test_standard",
+    "specific_gravity",
+]
+
+COMPOUNDING_FIELD_LAYOUT = {
+    "hardness_or_material": "col-md-4",
+    "test_standard": "col-md-4",
+    "specific_gravity": "col-md-4",
+}
+
+PRODUCTION_FIELD_ORDER = [
+    "manufacturing_process",
+    "manufacturing_process_internal",
+    "feasibility",
+]
+
+PRODUCTION_FIELD_LAYOUT = {
+    "manufacturing_process": "col-md-6 col-xl-4",
+    "manufacturing_process_internal": "col-md-6 col-xl-4",
+    "feasibility": "col-md-4",
+}
+
+COSTING_FIELD_ORDER = [
+    "price_per_kg",
+    "minimum_order_quantity",
+    "price_per_piece",
+    "price_per_meter",
+    "secondary_operation_charge",
+    "digital_cutting_price",
+    "dsa_tape_application_charge",
+    "total_price_per_piece",
+    "total_price_per_meter",
+    "x20_percent",
+    "scrap_percent",
+    "final_price_per_piece",
+    "final_price_per_meter",
+    "final_price_per_pack_meters",
+    "final_price_per_pack_pcs",
+]
+
+COSTING_FIELD_LAYOUT = {
+    "price_per_kg": "col-md-4",
+    "minimum_order_quantity": "col-md-4",
+    "price_per_piece": "col-md-4",
+    "price_per_meter": "col-md-4",
+    "secondary_operation_charge": "col-md-4",
+    "digital_cutting_price": "col-md-4",
+    "dsa_tape_application_charge": "col-md-4",
+    "total_price_per_piece": "col-md-4",
+    "total_price_per_meter": "col-md-4",
+    "x20_percent": "col-md-4",
+    "scrap_percent": "col-md-4",
+    "final_price_per_piece": "col-md-4",
+    "final_price_per_meter": "col-md-4",
+    "final_price_per_pack_meters": "col-md-4",
+    "final_price_per_pack_pcs": "col-md-4",
+}
+
+TEXTAREA_FIELDS = {
+    "description",
+    "remarks",
+}
+
+PRIMARY_CREATE_FIELDS = [
+    "enquiry_date",
+    "customer_name",
+    "project_name",
+    "enq_number",
+    "customer_part_number",
+    "avigiri_part_number",
+    "warranty_period",
+    "die_development_lead_time",
+    "production_lead_time",
+    "manufacturing_process",
+    "surface_treatment",
+    "minimum_order_quantity",
+    "pack_size",
+    "material_specification",
+    "price_per_kg",
+    "supplier_metal_percent",
+    "supplier_cost_per_piece_percent",
+    "price_per_meter",
+    "price_per_piece",
+    "total_price_per_meter",
+    "total_price_per_piece",
+    "incoterms_percent",
+    "packing_percent",
+    "scrap_percent",
+    "x20_percent",
+    "currency",
+    "conversion_rate",
+    "final_price_per_meter",
+    "final_price_per_piece",
+    "final_price_per_pack_meters",
+    "final_price_per_pack_pcs",
+    "total_die_development_charge",
+    "total_mold_development_charge",
+    "supplier_mold_development_percent",
+    "nrc_payment_terms",
+    "rc_payment_terms",
+]
+
+PRIMARY_UPDATE_FIELDS = ["status"] + PRIMARY_CREATE_FIELDS
+
+COLUMN_MATRIX_ROWS = [
+    {"key": "customer_reference", "label": "Customer Reference", "type": "text"},
+    {"key": "description", "label": "Description", "type": "textarea"},
+    {"key": "hardness", "label": "Hardness - Polymer", "type": "text"},
+    {"key": "compound_code", "label": "AG Compound Code", "type": "text"},
+    {"key": "specific_gravity", "label": "Sp. Gravity", "type": "number"},
+    {"key": "area", "label": "Area", "type": "number"},
+    {"key": "gasket_length_mm", "label": "Gasket Thk / Length (mm)", "type": "number"},
+    {"key": "weight_per_meter", "label": "Weight / Meter (g/m)", "type": "number"},
+    {"key": "weight_per_piece", "label": "Weight / Pc (g/pc)", "type": "number"},
+    {"key": "dsa_tape_width", "label": "DSA Tape Width", "type": "number"},
+    {"key": "supplier_metal_cost", "label": "Supplier Metal Cost", "type": "currency"},
+    {"key": "supplier_metal_percent", "label": "Supplier Metal %", "type": "percent"},
+    {"key": "supplier_cost_per_piece", "label": "Supplier Cost per Pc", "type": "currency"},
+    {"key": "die_number", "label": "Die #", "type": "text"},
+    {"key": "mold_number", "label": "Mold #", "type": "text"},
+    {"key": "die_development_charge", "label": "Die Development Charge", "type": "currency"},
+    {"key": "mold_development_charge", "label": "Mold / Jig Development Charge", "type": "currency"},
+    {"key": "supplier_mold_development_charge", "label": "Supplier Mold Development Charge", "type": "currency"},
+    {"key": "dsa_tape_charge", "label": "DSA Tape Charge", "type": "currency"},
+    {"key": "laser_cutting_charge", "label": "Laser Cutting Charge", "type": "currency"},
+    {"key": "secondary_operations_charge", "label": "Secondary Operations Charge", "type": "currency"},
+    {"key": "price_per_meter", "label": "Price per Meter", "type": "currency"},
+    {"key": "price_per_piece", "label": "Price per Piece", "type": "currency"},
+    {"key": "total_price_per_meter", "label": "Total Price per Meter", "type": "currency"},
+    {"key": "total_price_per_piece", "label": "Total Price per Piece", "type": "currency"},
+    {"key": "additional_percent", "label": "Additional %", "type": "percent"},
+    {"key": "scrap_percent", "label": "Scrap %", "type": "percent"},
+    {"key": "final_price_per_meter", "label": "Final Price per Meter", "type": "currency"},
+    {"key": "final_price_per_piece", "label": "Final Price per Piece", "type": "currency"},
+    
+    {"key": "notes", "label": "Notes", "type": "textarea"},
+]

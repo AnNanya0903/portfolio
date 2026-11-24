@@ -1,0 +1,310 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ customer.customer_code|default:customer.code }} - KYC - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:list' %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> KYC</a>
+    <h2 class="page-title">{{ customer.name }}</h2>
+    <p class="page-subtitle">
+      Customer code <span class="kyc-code">{{ customer.customer_code }}</span>
+      <span class="kyc-muted ms-2">Your code {{ customer.code }}</span>
+      <span class="kyc-chip kyc-chip--{{ customer.kyc_status }} ms-2">{{ customer.get_kyc_status_display }}</span>
+    </p>
+    <p class="mb-1"><span class="kyc-muted me-1">Team:</span>{% for t in team_departments %}<span class="kyc-chip kyc-chip--draft me-1">{{ t.department.name }}</span>{% empty %}<span class="kyc-muted">Not assigned</span>{% endfor %}</p>
+    {% for t in team_departments %}{% if t.emails %}<p class="kyc-muted mb-0"><i class="bi bi-envelope me-1"></i>{{ t.department.name }}:
+      {% for email in t.emails %}<a href="mailto:{{ email }}">{{ email }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}{% endfor %}
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary" target="_blank" rel="noopener" href="{% url 'kyc:customer_pdf' customer.pk %}"><i class="bi bi-filetype-pdf me-1"></i> Registration form (PDF)</a>
+    <a class="btn btn-outline-secondary" href="{% url 'kyc:edit' customer.pk %}"><i class="bi bi-pencil me-1"></i> Edit details</a>
+    <a class="btn btn-primary shadow-sm" href="{% url 'kyc:contact_new' customer.pk %}"><i class="bi bi-plus-lg me-1"></i> Add contact</a>
+  </div>
+</div>
+
+{% if not has_purchaser or missing_teams %}
+  <div class="kyc-note mb-4">
+    {% if not has_purchaser %}<div><i class="bi bi-exclamation-triangle me-1"></i>
+      <strong>No purchaser yet.</strong> Enquiry emails go to the purchaser, so mark one contact as the purchaser.</div>{% endif %}
+    {% if missing_teams %}<div><i class="bi bi-envelope me-1"></i>
+      No email address yet for: {{ missing_teams|join:", " }}.</div>{% endif %}
+  </div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Company details</h6></div>
+      <div class="card-body d-flex flex-column gap-3">
+        <div><div class="kyc-label">Address</div>
+          <div class="kyc-value">{% if customer.address %}{{ customer.address|linebreaksbr }}{% else %}—{% endif %}</div>
+          <div class="kyc-value">{{ customer.city }}{% if customer.city and customer.state %}, {% endif %}{{ customer.state }} {{ customer.pincode }}</div>
+          <div class="kyc-value">{{ customer.country }}</div></div>
+        <div><div class="kyc-label">GSTIN</div><div class="kyc-value">{{ customer.gstin|default:"—" }}</div></div>
+        <div><div class="kyc-label">PAN</div><div class="kyc-value">{{ pan_display|default:"—" }}</div></div>
+        <div><div class="kyc-label">Company phone</div><div class="kyc-value">{{ customer.phone|default:"—" }}</div></div>
+        <div><div class="kyc-label">Website</div><div class="kyc-value">{{ customer.website|default:"—" }}</div></div>
+        {% if customer.notes %}<div><div class="kyc-label">Notes</div><div class="kyc-value">{{ customer.notes|linebreaksbr }}</div></div>{% endif %}
+
+        <div class="border-top pt-3 mt-1">
+          <div class="kyc-label mb-2">Transportation &amp; MSME</div>
+          <div class="d-flex flex-column gap-2">
+            <div><div class="kyc-label">Transportation</div><div class="kyc-value">{{ customer.transportation|default:"—" }}</div></div>
+            <div><div class="kyc-label">Preferred transporter</div><div class="kyc-value">
+              {% if customer.preferred_transporter == 'OTHER' %}{{ customer.other_transporter|default:"Other" }}
+              {% else %}{{ customer.get_preferred_transporter_display|default:"ARC" }}{% endif %}</div></div>
+            <div><div class="kyc-label">Door / Go-Down delivery</div><div class="kyc-value">{{ customer.get_delivery_type_display|default:"—" }}</div></div>
+            <div><div class="kyc-label">MSME applicable</div><div class="kyc-value">{{ customer.msme_applicable|yesno:"Yes,No,—" }}</div></div>
+            {% if customer.msme_applicable or customer.udyam_aadhar_no %}
+              <div><div class="kyc-label">Udyam Aadhaar No.</div><div class="kyc-value">{{ customer.udyam_aadhar_no|default:"—" }}</div></div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="kyc-muted border-top pt-3">
+          Updated {{ customer.updated_at|date:"d M Y" }}{% if customer.updated_by %} by {{ customer.updated_by.get_full_name|default:customer.updated_by.username }}{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Verification by customer</h6>
+        {% if has_email %}
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:verification_send' customer.pk %}">
+            <i class="bi bi-envelope"></i> {% if verifications %}Send again{% else %}Send{% endif %}</a>
+        {% endif %}
+      </div>
+      <div>
+        {% for item in verifications %}
+          {% with v=item.row %}
+          <div class="kyc-contact">
+            <div>
+              {% if v.response %}<span class="kyc-chip kyc-chip--{{ v.response }}">{{ v.get_response_display }}</span>
+              {% else %}<span class="kyc-chip kyc-chip--{{ v.status }}">{{ v.get_status_display }}</span>
+                {% if item.state == 'open' %}<span class="kyc-muted ms-1">waiting for the customer</span>{% endif %}
+                {% if item.state == 'expired' and v.status == 'sent' %}<span class="kyc-muted ms-1">link no longer works</span>{% endif %}
+              {% endif %}
+            </div>
+            <div class="kyc-muted">{{ v.created_at|date:"d M Y" }}{% if v.sent_by %} · {{ v.sent_by.get_full_name|default:v.sent_by.username }}{% endif %}{% if v.sent_to %} · to {{ v.sent_to }}{% endif %}</div>
+            {% if v.responded_at %}<div class="kyc-muted">Answered {{ v.responded_at|date:"d M Y" }}</div>{% endif %}
+            {% if v.response_comment %}<div class="kyc-value small mt-1">“{{ v.response_comment|linebreaksbr }}”</div>{% endif %}
+            {% if v.note and not v.response %}<div class="kyc-muted">{{ v.note }}</div>{% endif %}
+            {% if item.state == 'preview' %}<a class="small" target="_blank" rel="noopener" href="{% url 'kyc:verify' v.token %}">See the page the customer would get</a>{% endif %}
+          </div>
+          {% endwith %}
+        {% empty %}
+          <div class="kyc-contact kyc-muted">{% if has_email %}Not sent to the customer yet.{% else %}Add a contact with an email address to send the details for verification.{% endif %}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">KYC form by link</h6>
+        {% if kyc_link.active %}
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:link_detail' kyc_link.active.pk %}">Open</a>
+        {% elif can_send_kyc_link %}
+          <span class="d-flex gap-2 flex-wrap justify-content-end">
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'kyc:link_new' customer.pk %}"><i class="bi bi-send"></i> Send KYC Link</a>
+            <form method="post" action="{% url 'kyc:link_manual' customer.pk %}" class="m-0">{% csrf_token %}
+              <button class="btn btn-sm btn-outline-secondary" title="Fill the form yourself, for example while the customer is on the phone. No link or email is sent."><i class="bi bi-pencil-square"></i> Fill KYC manually</button>
+            </form>
+          </span>
+        {% endif %}
+      </div>
+      <div>
+        {% for r in kyc_link.requests %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center gap-2">
+            <span><a class="text-decoration-none" href="{% url 'kyc:link_detail' r.pk %}"><span class="kyc-chip kyc-chip--{{ r.status }}">{{ r.get_status_display }}</span></a>
+              {% if r.source == 'staff' and r.filled_by %}<span class="kyc-muted">Filled by {{ r.filled_by.get_full_name|default:r.filled_by.username }}{% if r.filled_at %} on {{ r.filled_at|date:"d M Y" }}{% endif %}</span>{% endif %}</span>
+            <span class="kyc-muted">{{ r.created_at|date:"d M Y" }}</span>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No KYC form sent yet. The customer fills it in through a private link, with documents.</div>
+        {% endfor %}
+      </div>
+      {% if kyc_link.approved %}
+        <div class="border-top p-3">
+          <div class="kyc-label mb-2">Approved KYC {% if kyc_link.approved.reviewed_at %}· {{ kyc_link.approved.reviewed_at|date:"d M Y" }}{% endif %}</div>
+          <dl class="row mb-0 small">
+            {% for row in kyc_link.approved_rows %}<dt class="col-5 fw-normal kyc-muted">{{ row.label }}</dt><dd class="col-7 mb-1" style="white-space: pre-line;">{{ row.value }}</dd>{% endfor %}
+          </dl>
+          <a class="small" href="{% url 'kyc:link_detail' kyc_link.approved.pk %}">Documents and full review</a>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if mw_service_access.quotations|default:False %}
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Quotations <span class="kyc-muted">({{ quotations|length }})</span></h6>
+        <span class="d-flex gap-3 small">
+          <a class="text-decoration-none" href="{% url 'quotations:list' %}?customer={{ customer.code|urlencode }}">All</a>
+          <a class="text-decoration-none" href="{% url 'quotations:new' %}?customer={{ customer.code|urlencode }}"><i class="bi bi-plus-lg"></i> New</a>
+        </span>
+      </div>
+      <div>
+        {% for q in quotations %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center">
+            <span><a class="text-decoration-none" href="{% url 'quotations:detail' q.pk %}">{{ q.number }}</a>
+              <span class="kyc-muted">{{ q.title|truncatechars:40 }}{% if q.enquiry_id %} · enquiry #{{ q.enquiry_id }}{% endif %}</span></span>
+            <span class="kyc-muted">{{ q.get_status_display }}</span>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No quotations for this customer yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Enquiries <span class="kyc-muted">({{ enquiry_link_count }})</span></h6></div>
+      <div>
+        {% for link in enquiry_links %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center">
+            <a class="text-decoration-none" href="{% url 'enquiries:detail' link.enquiry_id %}">Enquiry #{{ link.enquiry_id }}</a>
+            <span class="kyc-muted">linked {{ link.created_at|date:"d M Y" }}</span>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No enquiries linked yet. Pick this customer code on the Enquiries board.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4" data-kyc-marketing>
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Marketing</h6></div>
+      <div>
+        {% for lead in marketing.leads %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center gap-2">
+            <span>
+              {% if mw_service_access.marketing|default:False %}<a class="text-decoration-none" href="{% url 'marketing:detail' lead.enquiry_id %}">Lost enquiry #{{ lead.enquiry_id }}</a>{% else %}Lost enquiry #{{ lead.enquiry_id }}{% endif %}
+              {% if lead.lost_reason %}<span class="kyc-muted">· {{ lead.get_lost_reason_display }}</span>{% endif %}
+            </span>
+            <span class="kyc-muted">{% if lead.accepted_at %}Won back {{ lead.accepted_at|date:"d M Y" }}{% elif lead.revived_enquiry_id %}Revived as #{{ lead.revived_enquiry_id }}{% elif lead.do_not_contact %}Do not contact{% else %}In marketing{% endif %}</span>
+          </div>
+        {% endfor %}
+        {% for email in marketing.emails %}
+          <div class="kyc-contact d-flex justify-content-between align-items-center gap-2">
+            <span>Campaign "{{ email.campaign.name }}" <span class="kyc-muted">to {{ email.customer_email }}</span></span>
+            <span class="kyc-muted">{{ email.get_status_display }}{% if email.sent_at %} {{ email.sent_at|date:"d M Y" }}{% endif %}{% if email.replied_at %} · replied {{ email.replied_at|date:"d M Y" }}{% endif %}</span>
+          </div>
+        {% endfor %}
+        {% if not marketing.leads and not marketing.emails %}
+          <div class="kyc-contact kyc-muted">No marketing activity for this customer's enquiries.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Documents <span class="kyc-muted">({{ documents|length }})</span></h6>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:import_new' %}?customer={{ customer.pk }}"
+           aria-label="Add a document"><i class="bi bi-plus-lg"></i> Add</a>
+      </div>
+      <div>
+        {% for document in documents %}
+          <div class="kyc-contact">
+            {% if document.file %}
+              <a class="text-decoration-none kyc-value" target="_blank" rel="noopener" href="{% url 'kyc:document_file' document.pk %}">
+                <i class="bi bi-paperclip"></i> {{ document.original_name|default:"Document" }}</a>
+            {% else %}
+              <span class="kyc-value"><i class="bi bi-text-paragraph"></i> Pasted text</span>
+            {% endif %}
+            <div class="kyc-muted">{{ document.created_at|date:"d M Y" }}{% if document.uploaded_by %} · {{ document.uploaded_by.get_full_name|default:document.uploaded_by.username }}{% endif %}</div>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No documents yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Email history <span class="kyc-muted">({{ email_history|length }})</span></h6></div>
+      <div>
+        {% for mail in email_history %}
+          <div class="kyc-contact">
+            <div class="kyc-value">{{ mail.subject }}{% if mail.status == "failed" %} <span class="kyc-chip kyc-chip--warn ms-1">Not sent</span>{% endif %}</div>
+            <div class="kyc-muted">{{ mail.sent_at|date:"d M Y, H:i" }}{% if mail.sent_by %} · {{ mail.sent_by.get_full_name|default:mail.sent_by.username }}{% endif %}</div>
+            <div class="kyc-muted small">To {{ mail.to }}{% if mail.cc %} · CC {{ mail.cc }}{% endif %}{% if mail.enquiry_id %} · Enquiry {{ mail.enquiry_id }}{% endif %}</div>
+          </div>
+        {% empty %}
+          <div class="kyc-contact kyc-muted">No emails sent to this customer from the portals yet.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8 d-flex flex-column gap-4">
+    {% for group in department_groups %}
+      <div class="card border-0 shadow-sm" data-department-section="{{ group.department.name }}">
+        <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <div>
+            <h6 class="mb-0">{{ group.department.name }} <span class="kyc-muted">({{ group.contacts|length }})</span>
+              {% if group.assigned %}<span class="kyc-chip kyc-chip--draft ms-1">Handles this customer</span>{% endif %}</h6>
+            {% if group.emails %}<div class="small kyc-muted mt-1"><i class="bi bi-envelope me-1"></i>{% for e in group.emails %}<a href="mailto:{{ e }}" class="text-decoration-none">{{ e }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+          </div>
+          {% if group.category %}
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:contact_new' customer.pk %}?category={{ group.category }}"
+             aria-label="Add contact to {{ group.department.name }}"><i class="bi bi-plus-lg"></i> Add</a>
+          {% endif %}
+        </div>
+        <div>
+          {% for contact in group.contacts %}
+            <div class="kyc-contact d-flex justify-content-between align-items-start gap-3">
+              <div class="kyc-value">
+                <div class="fw-semibold">{{ contact.name }}
+                  {% if contact.is_purchaser %}<span class="kyc-chip kyc-chip--purchaser ms-1">Purchaser</span>{% endif %}</div>
+                {% if contact.designation %}<div class="kyc-muted">{{ contact.designation }}</div>{% endif %}
+                <div class="small">
+                  {% if contact.email %}<a href="mailto:{{ contact.email }}" class="text-decoration-none">{{ contact.email }}</a>{% endif %}
+                  {% if contact.email and contact.phone %} · {% endif %}{% if contact.phone %}Mobile {{ contact.phone }}{% endif %}
+                  {% if contact.alternate_phone %} · Alt. {{ contact.alternate_phone }}{% endif %}
+                </div>
+                {% if contact.notes %}<div class="kyc-muted">Remarks: {{ contact.notes }}</div>{% endif %}
+              </div>
+              <div class="d-flex gap-1 flex-shrink-0">
+                <a class="btn btn-sm btn-outline-secondary" href="{% url 'kyc:contact_edit' customer.pk contact.pk %}"
+                   aria-label="Edit {{ contact.name }}"><i class="bi bi-pencil"></i></a>
+                <form method="post" action="{% url 'kyc:contact_delete' customer.pk contact.pk %}"
+                      onsubmit="return confirm('Remove {{ contact.name|escapejs }} from this customer?');">
+                  {% csrf_token %}
+                  <button type="submit" class="btn btn-sm btn-outline-danger" aria-label="Remove {{ contact.name }}"><i class="bi bi-trash"></i></button>
+                </form>
+              </div>
+            </div>
+          {% empty %}
+            <div class="kyc-contact kyc-muted">No contact for this department yet.</div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card border-danger-subtle shadow-sm mt-4" data-delete-customer>
+  <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0 text-danger">Delete this customer</h6></div>
+  <div class="card-body">
+    <p class="small mb-2">This removes <strong>{{ customer.code }} - {{ customer.name }}</strong> for good, together with:</p>
+    <ul class="small mb-3">
+      <li>{{ delete_summary.contacts }} contact{{ delete_summary.contacts|pluralize }}</li>
+      <li>{{ delete_summary.documents }} uploaded KYC document{{ delete_summary.documents|pluralize }} (the files too)</li>
+      <li>{{ delete_summary.verifications }} verification request{{ delete_summary.verifications|pluralize }}; links already sent to the customer stop working</li>
+      <li>the link to {{ delete_summary.enquiries }} enquir{{ delete_summary.enquiries|pluralize:"y,ies" }}. The enquiries themselves stay in the Enquiries portal, without this customer code.</li>
+    </ul>
+    <form method="post" action="{% url 'kyc:delete' customer.pk %}" class="d-flex flex-wrap align-items-end gap-2"
+          onsubmit="return confirm('Delete customer {{ customer.code|escapejs }} for good? This cannot be undone.');">
+      {% csrf_token %}
+      <div>
+        <label class="form-label small mb-1" for="confirmCode">Type the customer code <strong>{{ customer.code }}</strong> to confirm</label>
+        <input id="confirmCode" name="confirm_code" class="form-control form-control-sm" autocomplete="off" required
+               placeholder="{{ customer.code }}">
+      </div>
+      <button type="submit" class="btn btn-danger btn-sm"><i class="bi bi-trash me-1"></i> Delete customer</button>
+    </form>
+    <p class="small text-muted mt-2 mb-0">This cannot be undone.</p>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,13 @@
+{% load tz %}{% autoescape off %}Dear Sir / Madam,
+
+Thank you for sending your KYC details for {{ customer.name }}. Our team needs a few of them corrected before we can approve them.
+
+Reason: {{ req.reject_reason }}
+
+Please open this private page. Only the items that need a change are open for editing, and the reason is shown at the top:
+
+{{ link }}
+
+The link works until {{ valid_until|timezone:"Asia/Kolkata"|date:"j F Y, g:i A" }} (IST).
+
+{{ signature }}{% endautoescape %}

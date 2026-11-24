@@ -1,0 +1,27 @@
+{# The Team multi-select: every department ticked by default, with an "All departments" box on top. #}
+<div id="kycTeam">
+  <input type="hidden" name="departments_present" value="1">
+  <label class="form-label small">Team <span class="text-danger">*</span></label>
+  <div class="form-check mb-1">
+    {{ all_departments_field }}
+    <label class="form-check-label fw-semibold" for="{{ all_departments_field.id_for_label }}">Select all / All departments</label>
+  </div>
+  <div class="d-flex flex-wrap gap-3 ps-1">
+    {% for box in departments_field %}
+      <div class="form-check">{{ box.tag }}<label class="form-check-label" for="{{ box.id_for_label }}">{{ box.choice_label }}</label></div>
+    {% endfor %}
+  </div>
+  {% for e in departments_field.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+  <div class="kyc-muted small mt-1">The teams that handle this customer. Every department can still see the customer.</div>
+</div>
+<script>
+(function () {
+  var box = document.getElementById("kycTeam");
+  var all = box.querySelector('input[name="all_departments"]');
+  var depts = box.querySelectorAll('input[name="departments"]');
+  all.addEventListener("change", function () { depts.forEach(function (d) { d.checked = all.checked; }); });
+  depts.forEach(function (d) {
+    d.addEventListener("change", function () { all.checked = Array.prototype.every.call(depts, function (x) { return x.checked; }); });
+  });
+})();
+</script>

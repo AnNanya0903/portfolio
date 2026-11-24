@@ -1,0 +1,23 @@
+{% comment %}Shown under the customer fields when another customer has the same GSTIN or company name.{% endcomment %}
+{% if form.gstin_customer %}
+  <div class="alert alert-danger small mb-0" data-duplicate-gstin>
+    GSTIN {{ form.cleaned_data.gstin }} belongs to
+    <a href="{% url 'kyc:detail' form.gstin_customer.pk %}" target="_blank" rel="noopener">{{ form.gstin_customer.code }} – {{ form.gstin_customer.name }}</a>.
+    Open that customer instead of adding a new one.
+  </div>
+{% endif %}
+{% if form.same_name_customers %}
+  <div class="alert alert-warning small mb-0" data-duplicate-name>
+    <div class="fw-semibold mb-1">Customers with the same company name:</div>
+    <ul class="mb-2 ps-3">
+      {% for other in form.same_name_customers %}
+        <li><a href="{% url 'kyc:detail' other.pk %}" target="_blank" rel="noopener">{{ other.code }}</a>
+          – {{ other.name }}{% if other.city %}, {{ other.city }}{% endif %}{% if other.gstin %} · GSTIN {{ other.gstin }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+    <div class="form-check">
+      {{ form.same_name_ok }}
+      <label class="form-check-label" for="{{ form.same_name_ok.id_for_label }}">{{ form.same_name_ok.label }}</label>
+    </div>
+  </div>
+{% endif %}

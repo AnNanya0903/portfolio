@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if contact %}Edit contact{% else %}Add contact{% endif %} - {{ customer.code }} - KYC - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:detail' customer.pk %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Back to {{ customer.code }}</a>
+    <h2 class="page-title">{% if contact %}Edit contact{% else %}Add contact{% endif %}</h2>
+    <p class="page-subtitle">{{ customer.name }}. The team decides which automatic emails this person gets.</p>
+  </div>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  <div class="card border-0 shadow-sm" style="max-width: 640px;">
+    <div class="card-body d-flex flex-column gap-3">
+      {% if form.non_field_errors %}<div class="alert alert-danger mb-0">{{ form.non_field_errors }}</div>{% endif %}
+      {% for field in text_fields %}
+        {% include 'kyc/_field.html' %}
+        {% if field.name == "designation" %}
+          <div id="designationOtherWrap" {% if form.designation.value != "Other" %}hidden{% endif %}>
+            {% include 'kyc/_field.html' with field=other_designation_field %}
+          </div>
+        {% endif %}
+      {% endfor %}
+      <div class="form-check">
+        {{ form.is_purchaser }}
+        <label class="form-check-label" for="{{ form.is_purchaser.id_for_label }}">Primary contact</label>
+        <div class="kyc-muted">Enquiry and quotation emails go to the primary contact. A customer has only one: marking this person makes the previous primary contact not primary.</div>
+      </div>
+      <script>
+        (function () {
+          var select = document.getElementById("{{ form.designation.id_for_label }}");
+          var wrap = document.getElementById("designationOtherWrap");
+          if (!select || !wrap) return;
+          function sync() { wrap.hidden = select.value !== "Other"; }
+          select.addEventListener("change", sync);
+          sync();
+        })();
+      </script>
+      <button type="submit" class="btn btn-primary align-self-start">{% if contact %}Save changes{% else %}Add contact{% endif %}</button>
+    </div>
+  </div>
+</form>
+{% endblock %}

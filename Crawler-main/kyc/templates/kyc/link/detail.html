@@ -1,0 +1,218 @@
+{% extends 'base.html' %}
+{% load tz %}
+{% block title %}KYC request - {{ customer.name }} - MagicWand 2.0{% endblock %}
+{% block extra_css %}{% include 'kyc/link/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:link_list' %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> KYC requests</a>
+    <h2 class="page-title">KYC: <a class="text-decoration-none" href="{% url 'kyc:detail' customer.pk %}">{{ customer.name }}</a></h2>
+    <p class="page-subtitle d-flex flex-wrap gap-2 align-items-center">
+      <span class="kyc-chip kyc-chip--{{ req.status }}">{{ req.get_status_display }}</span>
+      {% if req.source == 'staff' and req.filled_by %}
+        <span class="kyc-chip kyc-chip--warn"><i class="bi bi-person-badge me-1"></i>Filled by {{ req.filled_by.get_full_name|default:req.filled_by.username }}{% if req.filled_at %} on {{ req.filled_at|timezone:"Asia/Kolkata"|date:"d M Y" }}{% else %} (in progress){% endif %}</span>
+      {% endif %}
+      {% if req.confirmed_by_customer_at %}<span class="kyc-chip kyc-chip--approved">Confirmed by customer {{ req.confirmed_by_customer_at|timezone:"Asia/Kolkata"|date:"d M Y" }}</span>
+      {% elif req.confirmation_requested_at %}<span class="kyc-chip kyc-chip--sent">Waiting for customer confirmation</span>{% endif %}
+      <span class="kyc-muted">Sent to {{ req.recipient_email|default:"—" }}</span>
+      {% if req.link_active %}<span class="kyc-muted">· link <span class="kl-countdown" data-expires="{{ req.expires_at|date:'c' }}"></span></span>{% endif %}
+    </p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    {% if can_send and can_resend %}
+      <form method="post" action="{% url 'kyc:link_resend' req.pk %}">{% csrf_token %}
+        <button class="btn btn-outline-secondary" title="Ends the current link and emails a new one, valid for 3 days"><i class="bi bi-arrow-repeat me-1"></i> Resend</button></form>
+    {% endif %}
+    {% if can_send and req.link_active %}
+      <form method="post" action="{% url 'kyc:link_revoke' req.pk %}" onsubmit="return confirm('Revoke this link? The customer will no longer be able to open the form.');">{% csrf_token %}
+        <button class="btn btn-outline-danger"><i class="bi bi-x-octagon me-1"></i> Revoke</button></form>
+    {% endif %}
+    {% if can_send and can_fill %}
+      {% if req.source == 'staff' and req.status == 'in_progress' and req.filled_by_id == request.user.pk %}
+        <a class="btn btn-primary" href="{% url 'kyc:link_fill' req.pk %}"><i class="bi bi-pencil-square me-1"></i> Continue filling</a>
+      {% else %}
+        <form method="post" action="{% url 'kyc:link_fill' req.pk %}" onsubmit="return confirm('Fill this form on behalf of the customer? Their link stops working so you do not both edit it.');">{% csrf_token %}
+          <button class="btn btn-primary"><i class="bi bi-pencil-square me-1"></i> Fill on behalf of customer</button></form>
+      {% endif %}
+    {% endif %}
+    {% if req.status == 'submitted' or req.status == 'approved' %}
+      <a class="btn btn-outline-secondary" target="_blank" rel="noopener" href="{% url 'kyc:link_request_pdf' req.pk %}"><i class="bi bi-filetype-pdf me-1"></i> Registration form (PDF)</a>
+    {% endif %}
+    {% if can_send and req.source == 'staff' and req.status == 'submitted' and not req.confirmed_by_customer_at %}
+      <form method="post" action="{% url 'kyc:link_confirmation' req.pk %}">{% csrf_token %}
+        <button class="btn btn-outline-primary"><i class="bi bi-envelope-check me-1"></i> Ask customer to confirm</button></form>
+    {% endif %}
+  </div>
+</div>
+
+{% if req.reject_reason and req.status != 'approved' %}
+  <div class="kyc-note mb-3"><strong>Rejected{% if req.reviewed_by %} by {{ req.reviewed_by.get_full_name|default:req.reviewed_by.username }}{% endif %}:</strong> {{ req.reject_reason }}
+    {% if req.rejected_fields %}<div class="kyc-muted mt-1">Reopened: {% for k in req.rejected_fields %}{% for key, label in reopenable %}{% if key == k %}{{ label }}{% endif %}{% endfor %}{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+  </div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-lg-8">
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-body d-flex flex-wrap gap-3 align-items-center justify-content-between">
+        <div><div class="kyc-label">Payment terms (set by AVIGIRI)</div><div class="fw-semibold">{{ req.payment_terms|default:"Not set yet" }}</div></div>
+        {% if can_set_terms %}
+        <form method="post" action="{% url 'kyc:link_payment_terms' req.pk %}" class="d-flex gap-2">{% csrf_token %}
+          <input type="text" name="payment_terms" class="form-control form-control-sm" value="{{ req.payment_terms }}" maxlength="200"
+                 list="paymentTermsList" placeholder="e.g. 100 % Advance" style="min-width: 220px;" aria-label="Payment terms">
+          <datalist id="paymentTermsList">{% for t in payment_suggestions %}<option value="{{ t }}">{% endfor %}</datalist>
+          <button class="btn btn-sm btn-outline-primary">Save</button>
+        </form>
+        {% endif %}
+      </div>
+      {% if can_review or req.credit_limit is not None %}
+      <div class="card-body border-top d-flex flex-wrap gap-3 align-items-center justify-content-between">
+        <div><div class="kyc-label">Credit limit (Rs.) · internal, not shown to the customer</div>
+          <div class="fw-semibold">{% if req.credit_limit is not None %}{{ req.credit_limit|floatformat:2 }}{% else %}Not set yet{% endif %}</div></div>
+        {% if can_set_credit %}
+        <form method="post" action="{% url 'kyc:link_credit_limit' req.pk %}" class="d-flex gap-2">{% csrf_token %}
+          <input type="text" name="credit_limit" inputmode="decimal" class="form-control form-control-sm" value="{% if req.credit_limit is not None %}{{ req.credit_limit|stringformat:'s' }}{% endif %}"
+                 placeholder="e.g. 500000" style="min-width: 180px;" aria-label="Credit limit in rupees">
+          <button class="btn btn-sm btn-outline-primary">Save</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    {% for number, title, rows in steps %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">{{ title }}</h6></div>
+      <div class="card-body"><dl class="row mb-0">
+        {% for row in rows %}
+          <dt class="col-sm-4 kyc-label pt-1">{{ row.label }}</dt>
+          <dd class="col-sm-8 {% if row.reopened %}kl-reopened{% endif %}" style="white-space: pre-line;">
+            <span id="val_{{ row.key }}">{{ row.value|default:"—" }}</span>
+            {% if row.sensitive and row.value and can_reveal %}
+              <button type="button" class="btn btn-link btn-sm p-0 ms-2 kl-reveal" data-field="{{ row.key }}">Reveal</button>
+            {% endif %}
+          </dd>
+        {% endfor %}
+      </dl></div>
+    </div>
+    {% endfor %}
+
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Documents</h6></div>
+      <ul class="list-group list-group-flush">
+        {% for doc in documents %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <div><strong>{{ doc.get_doc_type_display }}</strong>
+              <div class="kyc-muted">{{ doc.original_name }} · {{ doc.size|filesizeformat }} · {{ doc.uploaded_at|timezone:"Asia/Kolkata"|date:"d M Y, H:i" }}</div></div>
+            <a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener" href="{% url 'kyc:link_document' doc.pk %}"><i class="bi bi-eye"></i> Open</a>
+          </li>
+        {% endfor %}
+        {% for label in missing_docs %}<li class="list-group-item kyc-muted">{{ label }}: not uploaded</li>{% endfor %}
+      </ul>
+    </div>
+
+    {% if req.status == 'submitted' or req.status == 'approved' %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">Sign &amp; Seal</h6>
+        <a class="small" target="_blank" rel="noopener" href="{% url 'kyc:link_request_pdf' req.pk %}">Download registration form (PDF)</a>
+      </div>
+      {% if form_versions %}
+      <div class="card-body border-bottom py-2">
+        <div class="kyc-label mb-1">Stored registration forms (every submit and the approval keep one)</div>
+        {% for v in form_versions %}
+          <div class="d-flex justify-content-between kyc-muted small">
+            <a target="_blank" rel="noopener" href="{% url 'kyc:link_pdf_version' req.pk v.pk %}">{{ v.original_name }}</a>
+            <span>{{ v.uploaded_at|timezone:"Asia/Kolkata"|date:"d M Y, H:i" }}{% if v.is_latest %} · latest{% endif %}</span>
+          </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="card-body d-flex flex-wrap gap-3 align-items-center justify-content-between">
+        {% if signed_form %}
+          <div><strong>Signed copy uploaded</strong>
+            <div class="kyc-muted">{{ signed_form.original_name }} · {{ signed_form.uploaded_at|timezone:"Asia/Kolkata"|date:"d M Y, H:i" }}</div></div>
+          <a class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener" href="{% url 'kyc:link_document' signed_form.pk %}"><i class="bi bi-eye"></i> Open</a>
+        {% else %}
+          <span class="kyc-muted">The customer has not uploaded the signed and stamped form yet. They can do it on their link after submitting.</span>
+        {% endif %}
+        {% if can_upload_signed %}
+          <form method="post" enctype="multipart/form-data" action="{% url 'kyc:link_signed_upload' req.pk %}" class="d-flex gap-2 align-items-center">{% csrf_token %}
+            <input type="file" name="file" class="form-control form-control-sm" accept="application/pdf,image/jpeg,image/png" required aria-label="Signed KYC form">
+            <button class="btn btn-sm btn-outline-primary text-nowrap">Upload signed copy</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if req.status == 'submitted' %}
+    <div class="card border-0 shadow-sm mb-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Review</h6></div>
+      <div class="card-body">
+      {% if not can_review %}
+        <p class="kyc-muted mb-0">Accounts or Top Management review submitted KYC.</p>
+      {% else %}
+        {% if details.consent_given_at %}<p class="kyc-muted">Consent given {{ details.consent_given_at|timezone:"Asia/Kolkata"|date:"d M Y, H:i" }}: “{{ consent_text }}”.</p>{% endif %}
+        {% if can_approve %}
+          <form method="post" action="{% url 'kyc:link_review' req.pk %}" class="mb-4" onsubmit="return confirm('Approve this KYC? The customer's empty fields (GSTIN, PAN, address, transport, delivery, MSME, Udyam) are filled in from it.');">{% csrf_token %}
+            <input type="hidden" name="decision" value="approve">
+            <button class="btn btn-success"><i class="bi bi-check2-circle me-1"></i> Approve</button>
+            <span class="kyc-muted ms-2">Fills only the customer's empty fields (GSTIN, PAN, address, transport, delivery, MSME, Udyam), adds the contact person if new, and marks the customer verified.</span>
+          </form>
+        {% else %}
+          <div class="kyc-note mb-3">You filled in this form, so another reviewer must approve it.</div>
+        {% endif %}
+        <form method="post" action="{% url 'kyc:link_review' req.pk %}">{% csrf_token %}
+          <input type="hidden" name="decision" value="reject">
+          <label class="form-label fw-semibold" for="reason">Reject: reason (shown to the customer)</label>
+          <textarea class="form-control mb-2" id="reason" name="reason" rows="2" required maxlength="2000"></textarea>
+          <div class="kyc-label mb-1">Reopen for the customer</div>
+          <div class="d-flex flex-wrap gap-3 mb-3">
+            {% for key, label in reopenable %}
+              <div class="form-check"><input class="form-check-input" type="checkbox" name="fields" value="{{ key }}" id="f_{{ key }}">
+                <label class="form-check-label small" for="f_{{ key }}">{{ label }}</label></div>
+            {% endfor %}
+          </div>
+          <button class="btn btn-outline-danger"><i class="bi bi-x-circle me-1"></i> Reject and send a new link</button>
+        </form>
+      {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">History</h6></div>
+      <ul class="list-group list-group-flush kl-audit">
+        {% for row in audit %}
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between"><strong>{{ row.label }}</strong>
+              <span class="kyc-muted">{{ row.created_at|timezone:"Asia/Kolkata"|date:"d M, H:i" }}</span></div>
+            <div class="kyc-muted">{{ row.get_actor_type_display }}{% if row.actor %}: {{ row.actor.get_full_name|default:row.actor.username }}{% endif %}{% if row.ip %} · {{ row.ip }}{% endif %}
+              {% if row.metadata.field %} · {{ row.metadata.field }}{% endif %}{% if row.metadata.delivery %} · {{ row.metadata.delivery }}{% endif %}{% if row.metadata.doc_type %} · {{ row.metadata.doc_type }}{% endif %}</div>
+          </li>
+        {% empty %}<li class="list-group-item kyc-muted">Nothing yet.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+{% if can_reveal %}
+<script>
+document.querySelectorAll(".kl-reveal").forEach(function (btn) {
+  btn.addEventListener("click", async function () {
+    if (!confirm("Show the full number? This is recorded in the history.")) return;
+    const csrf = (document.cookie.split("; ").find((p) => p.startsWith("csrftoken=")) || "").split("=")[1] || "";
+    const res = await fetch("{% url 'kyc:link_reveal' req.pk %}", { method: "POST", credentials: "same-origin",
+      headers: { "X-CSRFToken": csrf, "Content-Type": "application/json" }, body: JSON.stringify({ field: btn.dataset.field }) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) { document.getElementById("val_" + btn.dataset.field).textContent = data.value; btn.remove(); }
+    else alert(data.error || "Could not show the number.");
+  });
+});
+</script>
+{% endif %}
+{% endblock %}

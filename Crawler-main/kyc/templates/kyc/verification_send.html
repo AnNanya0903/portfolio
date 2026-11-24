@@ -1,0 +1,68 @@
+{% extends 'base.html' %}
+
+{% block title %}Send for verification - {{ customer.code }} - KYC - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'kyc/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'kyc:detail' customer.pk %}" class="kyc-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Back to {{ customer.code }}</a>
+    <h2 class="page-title">Send for verification</h2>
+    <p class="page-subtitle">{{ customer.name }} gets an email with a private link, checks the details below and answers: all correct, changes needed, or reject.</p>
+  </div>
+</div>
+
+{% if dry_run %}
+  <div class="kyc-test-banner mb-4"><i class="bi bi-shield-check me-1"></i>
+    <strong>Test mode is on.</strong> The email is recorded but not sent, and you can preview the customer's page.
+    To send for real, set <code>KYC_VERIFICATION_DRY_RUN=False</code>.</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <form method="post" novalidate>
+      {% csrf_token %}
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">Send to</h6></div>
+        <div class="card-body d-flex flex-column gap-3">
+          {% if has_email %}
+            <fieldset>
+              <legend class="visually-hidden">Contacts who get the email</legend>
+              {% for choice in form.recipients %}
+                <div class="form-check">
+                  {{ choice.tag }}
+                  <label class="form-check-label small" for="{{ choice.id_for_label }}">{{ choice.choice_label }}</label>
+                </div>
+              {% endfor %}
+            </fieldset>
+            {% for e in form.recipients.errors %}<div class="text-danger small">{{ e }}</div>{% endfor %}
+            {% if cc %}<div class="kyc-muted">CC: {{ cc|join:", " }}</div>{% endif %}
+            <div class="kyc-muted">The email goes from your own Gmail account. Sending again makes the earlier link stop working.</div>
+            <button type="submit" class="btn btn-primary align-self-start">{% if dry_run %}Record in test mode{% else %}Send email{% endif %}</button>
+          {% else %}
+            <div class="kyc-muted">No contact of this customer has an email address. Add one first.</div>
+            <a class="btn btn-outline-secondary align-self-start" href="{% url 'kyc:contact_new' customer.pk %}">Add contact</a>
+          {% endif %}
+        </div>
+      </div>
+    </form>
+
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">The email</h6></div>
+      <div class="card-body">
+        <div class="kyc-label">Subject</div>
+        <div class="kyc-value mb-3">{{ subject }}</div>
+        <div class="kyc-email-body">{{ body }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white py-3 border-bottom"><h6 class="mb-0">What the customer will be shown</h6></div>
+      <div class="card-body">{% include 'kyc/_verify_details.html' %}</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
