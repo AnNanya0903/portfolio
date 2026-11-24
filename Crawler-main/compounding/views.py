@@ -134,6 +134,19 @@ def _iot_run_compound_options(plan: CompoundingPlan) -> List[Dict[str, str]]:
     return options
 
 
+def _iot_run_duration_text(started_at, ended_at) -> str:
+    """How long a compound took on the machine, e.g. "1 h 30 min"."""
+    if not started_at or not ended_at or ended_at <= started_at:
+        return "-"
+    total_minutes = int((ended_at - started_at).total_seconds() // 60)
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours} h {minutes} min"
+    if hours:
+        return f"{hours} h"
+    return f"{minutes} min"
+
+
 def _get_or_create_plan(plan_date: date, *, user) -> CompoundingPlan:
     plan = CompoundingPlan.objects.filter(plan_date=plan_date).first()
     if plan:
@@ -2321,6 +2334,16 @@ def iot_dashboard(request):
     plan = _get_or_create_plan(plan_date, user=request.user)
     machine_id = _iot_dashboard_machine_id()
     compound_options = _iot_run_compound_options(plan)
+    iot_runs = [
+        {
+            "compound_code": run.compound_code,
+            "started_at": run.started_at,
+            "ended_at": run.ended_at,
+            "time_taken": _iot_run_duration_text(run.started_at, run.ended_at),
+            "stock_quality": run.get_stock_quality_display(),
+        }
+        for run in plan.iot_runs.all().order_by("-started_at", "-id")[:50]
+    ]
     return render(
         request,
         "magicwand/iot_dashboard.html",
@@ -2342,6 +2365,7 @@ def iot_dashboard(request):
             "plan_date": plan.plan_date.isoformat(),
             "iot_machine_id": machine_id,
             "iot_run_compound_options": compound_options,
+            "iot_runs": iot_runs,
             "iot_run_quality_choices": CompoundingIoTRun.QUALITY_CHOICES,
             "iot_time_zone": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),
             "iot_time_zone_label": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),

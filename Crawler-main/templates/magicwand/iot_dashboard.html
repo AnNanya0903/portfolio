@@ -1,0 +1,1569 @@
+{% extends "base.html" %}
+
+{% block title %}IoT Dashboard{% endblock %}
+
+{% block auth_content %}
+<style>
+  .iot-chart-shell {
+    position: relative;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .iot-chart-shell.is-expanded {
+    position: fixed;
+    inset: 1rem;
+    z-index: 1085;
+    margin: 0;
+  }
+
+  .iot-chart-shell.is-expanded .card {
+    height: 100%;
+    border-radius: 1.25rem;
+    box-shadow: 0 1.75rem 4rem rgba(15, 23, 42, 0.24);
+  }
+
+  .iot-chart-shell.is-expanded .card-body {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .iot-chart-shell.is-expanded .iot-chart-canvas-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto !important;
+  }
+
+  .iot-chart-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.48);
+    backdrop-filter: blur(6px);
+    z-index: 1080;
+  }
+
+  body.iot-chart-expanded {
+    overflow: hidden;
+  }
+
+  @media (max-width: 767.98px) {
+    .iot-chart-shell.is-expanded {
+      inset: 0.5rem;
+    }
+  }
+</style>
+
+<section class="py-5">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-start mb-4">
+          <div>
+            <div class="text-uppercase text-muted small fw-semibold mb-2">{{ page_kicker|default:"Telemetry" }}</div>
+            <h1 class="display-6 fw-bold mb-2">{{ page_title|default:"IoT Dashboard" }}</h1>
+            <p class="text-muted mb-0">
+              {{ page_description|default:"Polls Django for normalized machine telemetry every second." }}
+            </p>
+          </div>
+          <a class="btn btn-outline-primary" href="{{ back_url|default:'/' }}">{{ back_label|default:"Back to Home" }}</a>
+        </div>
+
+        <div class="card shadow-sm border-0 mb-4">
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-4">
+                <div class="border rounded-3 p-3 h-100">
+                  <div class="text-uppercase text-muted small fw-semibold mb-2">Machine ID</div>
+                  <div id="iot-machine-id" class="fs-5 fw-semibold">No data yet</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="border rounded-3 p-3 h-100">
+                  <div class="text-uppercase text-muted small fw-semibold mb-2">Timestamp</div>
+                  <div id="iot-timestamp" class="fs-6 fw-semibold">—</div>
+                </div>
+              </div>
+              <div class="col-md-4">
+                <div class="border rounded-3 p-3 h-100">
+                  <div class="text-uppercase text-muted small fw-semibold mb-2">Register Count</div>
+                  <div id="iot-register-count" class="fs-5 fw-semibold">0</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-4 mb-4">
+          <div class="col-12">
+            <div class="card shadow-sm border-0 h-100">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+                  <div>
+                    <h2 class="h4 mb-1">Production Context</h2>
+                  </div>
+                  <span class="badge text-bg-light border">Plan {{ plan.plan_date|date:"d M Y" }}</span>
+                </div>
+                <form method="post" action="{% url 'compounding:save_iot_run' %}" class="row g-3">
+                  {% csrf_token %}
+                  <input type="hidden" name="plan_date" value="{{ plan_date }}">
+                  <div class="col-md-6">
+                    <label for="iotRunCompound" class="form-label">Which compound</label>
+                    <select id="iotRunCompound" name="compound_code" class="form-select" required>
+                      <option value="">Select compound...</option>
+                      {% for option in iot_run_compound_options %}
+                      <option value="{{ option.value }}">{{ option.label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="iotRunQuality" class="form-label">Quality of stock produced</label>
+                    <select id="iotRunQuality" name="stock_quality" class="form-select" required>
+                      <option value="">Select quality...</option>
+                      {% for value, label in iot_run_quality_choices %}
+                      <option value="{{ value }}">{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="iotRunStart" class="form-label">Start time</label>
+                    <input id="iotRunStart" type="datetime-local" name="started_at" class="form-control" required>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="iotRunEnd" class="form-label">End time</label>
+                    <input id="iotRunEnd" type="datetime-local" name="ended_at" class="form-control" required>
+                  </div>
+                  <div class="col-md-6">
+                    <label for="iotRunTimeTaken" class="form-label">Time taken</label>
+                    <input id="iotRunTimeTaken" type="text" class="form-control" value="-" readonly tabindex="-1" aria-describedby="iotRunTimeTakenHelp">
+                    <div id="iotRunTimeTakenHelp" class="form-text">Worked out from the start and end time.</div>
+                  </div>
+                  <div class="col-12">
+                    <label for="iotRunNotes" class="form-label">Description / operator notes</label>
+                    <textarea id="iotRunNotes" name="notes" class="form-control" rows="3" placeholder="Anything relevant about the run, stock produced, settings, or observed issues."></textarea>
+                  </div>
+                  <div class="col-12 d-flex justify-content-between align-items-center gap-3 flex-wrap">
+                    <div class="text-muted small">Machine mapped to <strong>{{ iot_machine_id }}</strong>.</div>
+                    <button type="submit" class="btn btn-primary">
+                      <i class="bi bi-save me-1"></i>Save Production Context
+                    </button>
+                  </div>
+                </form>
+
+                <h3 class="h6 text-uppercase text-muted fw-semibold mt-4 mb-2">Compounds run on {{ plan.plan_date|date:"d M Y" }}</h3>
+                {% if iot_runs %}
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0" id="iotRunsTable">
+                    <thead>
+                      <tr>
+                        <th scope="col">Compound</th>
+                        <th scope="col">Time taken</th>
+                        <th scope="col">Start</th>
+                        <th scope="col">End</th>
+                        <th scope="col">Quality</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for run in iot_runs %}
+                      <tr>
+                        <td class="fw-semibold">{{ run.compound_code }}</td>
+                        <td>{{ run.time_taken }}</td>
+                        <td>{{ run.started_at|date:"d M, H:i" }}</td>
+                        <td>{{ run.ended_at|date:"d M, H:i" }}</td>
+                        <td>{{ run.stock_quality }}</td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                {% else %}
+                <p class="text-muted small mb-0">No compounds saved for this date yet.</p>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+        <script>
+          (function () {
+            const startInput = document.getElementById("iotRunStart");
+            const endInput = document.getElementById("iotRunEnd");
+            const output = document.getElementById("iotRunTimeTaken");
+            if (!startInput || !endInput || !output) return;
+            function updateTimeTaken() {
+              const start = startInput.value ? new Date(startInput.value) : null;
+              const end = endInput.value ? new Date(endInput.value) : null;
+              output.classList.remove("is-invalid");
+              if (!start || !end || isNaN(start) || isNaN(end)) { output.value = "-"; return; }
+              const minutes = Math.floor((end - start) / 60000);
+              if (minutes <= 0) { output.value = "End must be after start"; output.classList.add("is-invalid"); return; }
+              const h = Math.floor(minutes / 60), m = minutes % 60;
+              output.value = h && m ? h + " h " + m + " min" : h ? h + " h" : m + " min";
+            }
+            startInput.addEventListener("input", updateTimeTaken);
+            endInput.addEventListener("input", updateTimeTaken);
+          })();
+        </script>
+
+        <div id="iot-chart-shell" class="iot-chart-shell">
+        <div class="card shadow-sm border-0">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <h2 class="h4 mb-0">Live Current & Temperature Graph</h2>
+              <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 small fw-semibold">
+                <span class="d-inline-flex align-items-center gap-2">
+                  <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#2cff63;"></span>
+                  Average Current
+                </span>
+                <span class="d-inline-flex align-items-center gap-2">
+                  <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#ff6b6b;"></span>
+                  CH-1 Temperature
+                </span>
+                <span class="d-inline-flex align-items-center gap-2">
+                  <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:#59b6ff;"></span>
+                  CH-2 Temperature
+                </span>
+                <button
+                  id="iot-summary-open"
+                  class="btn btn-sm btn-outline-dark"
+                  type="button"
+                  data-bs-toggle="modal"
+                  data-bs-target="#iotSummaryModal"
+                  data-summary-url="{{ iot_summary_url|default:'/api/iot-dashboard-summary/'|escape }}"
+                >
+                  <i class="bi bi-stars me-1"></i>AI Summary
+                </button>
+                <button id="iot-chart-maximize" class="btn btn-sm btn-outline-dark" type="button" aria-pressed="false">
+                  <i class="bi bi-arrows-fullscreen me-1"></i><span>Maximize</span>
+                </button>
+              </div>
+            </div>
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+              <div class="d-flex flex-wrap align-items-center gap-2">
+                <div class="btn-group btn-group-sm" role="group" aria-label="History window">
+                  <button type="button" class="btn btn-outline-secondary" data-iot-range="300">5m</button>
+                  <button type="button" class="btn btn-outline-secondary active" data-iot-range="900" aria-pressed="true">15m</button>
+                  <button type="button" class="btn btn-outline-secondary" data-iot-range="1800">30m</button>
+                  <button type="button" class="btn btn-outline-secondary" data-iot-range="2700">45m</button>
+                  <button type="button" class="btn btn-outline-secondary" data-iot-range="3600">60m</button>
+                </div>
+                <span id="iot-chart-mode" class="badge text-bg-success">Live View</span>
+                <button id="iot-chart-live" type="button" class="btn btn-sm btn-outline-dark d-none">Back to Live</button>
+              </div>
+              <div class="text-muted small">Hover for exact timestamps. Drag the chart left or right to inspect history, then click “Back to Live” to follow the newest samples again.</div>
+            </div>
+            <div class="d-flex flex-wrap align-items-end gap-2 mb-3">
+              <div>
+                <label for="iot-range-start" class="form-label form-label-sm text-muted mb-1">From</label>
+                <input id="iot-range-start" type="datetime-local" step="1" class="form-control form-control-sm">
+              </div>
+              <div>
+                <label for="iot-range-end" class="form-label form-label-sm text-muted mb-1">To</label>
+                <input id="iot-range-end" type="datetime-local" step="1" class="form-control form-control-sm">
+              </div>
+              <button id="iot-range-apply" type="button" class="btn btn-sm btn-primary">Apply Range</button>
+              <button id="iot-range-clear" type="button" class="btn btn-sm btn-outline-secondary">Clear Range</button>
+              <a id="iot-range-export" class="btn btn-sm btn-outline-dark d-none" href="#" download>
+                <i class="bi bi-download me-1"></i>Export Raw CSV
+              </a>
+              <div id="iot-range-feedback" class="small text-muted">Times use {{ iot_time_zone_label|default:"Asia/Kolkata" }} timezone.</div>
+            </div>
+            <div class="iot-chart-canvas-wrap border rounded-3 p-3 mb-4" style="background:#07130a; height:360px;">
+              <canvas id="iot-chart" height="220" style="width:100%; height:100%; display:block; cursor:grab;"></canvas>
+            </div>
+
+            <details class="border rounded-3 mb-4 p-3">
+              <summary class="d-flex justify-content-between align-items-center" style="cursor:pointer; list-style:none;">
+                <span class="h4 mb-0">Latest Machine Signals</span>
+                <span id="iot-status" class="badge text-bg-secondary">Waiting</span>
+              </summary>
+              <div class="table-responsive mt-3">
+                <table class="table table-sm align-middle mb-0">
+                  <thead>
+                    <tr>
+                      <th scope="col">Signal</th>
+                      <th scope="col">Register</th>
+                      <th scope="col">Decoded</th>
+                      <th scope="col">Unit</th>
+                    </tr>
+                  </thead>
+                  <tbody id="iot-signals">
+                    <tr>
+                      <td colspan="4" class="text-muted">No payload received yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </details>
+
+            <details class="border rounded-3 p-3">
+              <summary class="d-flex justify-content-between align-items-center" style="cursor:pointer; list-style:none;">
+                <span class="h5 mb-0">All Raw Registers</span>
+                <small class="text-muted">Register numbers are shown as 40001-based Modbus addresses.</small>
+              </summary>
+              <div class="table-responsive mt-3">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th scope="col">Index</th>
+                      <th scope="col">Register</th>
+                      <th scope="col">Raw value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="iot-register-rows">
+                    <tr>
+                      <td colspan="3" class="text-muted">No payload received yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div id="iot-chart-backdrop" class="iot-chart-backdrop d-none"></div>
+
+<div class="modal fade" id="iotSummaryModal" tabindex="-1" aria-labelledby="iotSummaryModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="iotSummaryModalLabel">AI Summary</h5>
+          <div id="iot-summary-meta" class="text-muted small mt-1">Click “AI Summary” to load the latest interpretation.</div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <button id="iot-summary-refresh" class="btn btn-sm btn-outline-secondary" type="button">Refresh</button>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="iot-summary-loading" class="d-flex align-items-center gap-2 text-muted">
+          <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
+          <span>Generating AI summary…</span>
+        </div>
+        <div id="iot-summary-output" class="border rounded-3 p-3 bg-light d-none">
+          <div id="iot-summary-content" style="white-space: pre-wrap;"></div>
+        </div>
+        <div id="iot-summary-error" class="text-danger small mt-3 d-none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+
+<script>
+  const machineIdNode = document.getElementById("iot-machine-id");
+  const timestampNode = document.getElementById("iot-timestamp");
+  const registerCountNode = document.getElementById("iot-register-count");
+  const signalsNode = document.getElementById("iot-signals");
+  const registerRowsNode = document.getElementById("iot-register-rows");
+  const statusNode = document.getElementById("iot-status");
+  const chartCanvas = document.getElementById("iot-chart");
+  const chartShell = document.getElementById("iot-chart-shell");
+  const chartBackdrop = document.getElementById("iot-chart-backdrop");
+  const chartMaximizeButton = document.getElementById("iot-chart-maximize");
+  const chartModeNode = document.getElementById("iot-chart-mode");
+  const chartLiveButton = document.getElementById("iot-chart-live");
+  const rangeStartInput = document.getElementById("iot-range-start");
+  const rangeEndInput = document.getElementById("iot-range-end");
+  const rangeApplyButton = document.getElementById("iot-range-apply");
+  const rangeClearButton = document.getElementById("iot-range-clear");
+  const rangeExportLink = document.getElementById("iot-range-export");
+  const rangeFeedbackNode = document.getElementById("iot-range-feedback");
+  const rangeButtons = Array.from(document.querySelectorAll("[data-iot-range]"));
+  const iotDataUrl = "{{ iot_data_url|default:'/api/iot-dashboard-data/'|escapejs }}";
+  const iotSummaryUrl = "{{ iot_summary_url|default:'/api/iot-dashboard-summary/'|escapejs }}";
+  const iotExportUrl = "{{ iot_export_url|default:'/api/iot-history-export/'|escapejs }}";
+  const iotTimeZone = "{{ iot_time_zone|default:'Asia/Kolkata'|escapejs }}";
+  const iotTimeZoneLabel = "{{ iot_time_zone_label|default:'Asia/Kolkata'|escapejs }}";
+  const iotChartMaxPoints = Number("{{ iot_chart_max_points|default:5000 }}") || 5000;
+  const iotTimeZoneFeedback = `Times use ${iotTimeZoneLabel} timezone.`;
+  let latestHistory = [];
+  let latestSignalRows = [];
+  let pollTimer = null;
+  let fetchInFlight = false;
+  let hasFetchedOnce = false;
+  let currentHistoryLimit = 900;
+  let interactiveChart = null;
+  let interactiveChartDisabled = false;
+  let chartViewportMode = "live";
+  let manualViewport = null;
+  let dragState = null;
+  let selectedRange = null;
+  let chartExpanded = false;
+  const pollIntervalMs = 1000;
+  const chartSeries = [
+    { key: "avg_current", label: "Average Current", color: "#2cff63", axis: "left", unit: "A" },
+    { key: "ch1_temperature", label: "CH-1 Temperature", color: "#ff6b6b", axis: "right", unit: "°C" },
+    { key: "ch2_temperature", label: "CH-2 Temperature", color: "#59b6ff", axis: "right", unit: "°C" },
+  ];
+
+  function buildAxisScale(values) {
+    if (!values.length) {
+      return { min: 0, max: 1, range: 1 };
+    }
+    let min = Math.min(...values);
+    let max = Math.max(...values);
+    if (min === max) {
+      const pad = Math.max(Math.abs(min) * 0.05, 1);
+      min -= pad;
+      max += pad;
+    } else {
+      const pad = (max - min) * 0.05;
+      min -= pad;
+      max += pad;
+    }
+    return { min, max, range: Math.max(max - min, 0.001) };
+  }
+
+  function formatAxisValue(value, unit) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return "—";
+    }
+    const rendered = unit === "°C" ? value.toFixed(1) : value.toFixed(3).replace(/\.?0+$/, "");
+    return unit ? `${rendered} ${unit}` : rendered;
+  }
+
+  function setStatus(label, className) {
+    statusNode.className = "badge";
+    if (className) {
+      statusNode.classList.add(className);
+    }
+    statusNode.textContent = label;
+  }
+
+  function renderSignals(rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+      signalsNode.innerHTML = '<tr><td colspan="4" class="text-muted">No mapped signals available.</td></tr>';
+      return;
+    }
+
+    signalsNode.innerHTML = rows.map((row) => `
+      <tr>
+        <td>${row.label || row.key || "Unknown"}</td>
+        <td>${row.register ?? "—"}</td>
+        <td>${row.displayValue ?? "—"}</td>
+        <td>${row.unit || "—"}</td>
+      </tr>
+    `).join("");
+  }
+
+  function drawFallbackChart(history) {
+    const canvas = chartCanvas;
+    const parentWidth = canvas.parentElement ? canvas.parentElement.clientWidth : 900;
+    canvas.width = Math.max(parentWidth - 24, 320);
+    canvas.height = 340;
+
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#07130a";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const gridColor = "#12351a";
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= canvas.width; x += 40) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= canvas.height; y += 22) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width, y);
+      ctx.stroke();
+    }
+
+    if (!Array.isArray(history) || !history.length) {
+      ctx.fillStyle = "#9fb8a4";
+      ctx.font = "16px sans-serif";
+      ctx.fillText("Waiting for signal history...", 20, 32);
+      return;
+    }
+
+    const seriesWithValues = chartSeries
+      .map((series) => ({
+        ...series,
+        values: history
+          .map((entry) => ({
+            ts: entry.ts,
+            value: entry.signalsByKey ? entry.signalsByKey[series.key] : null,
+          }))
+          .filter((entry) => typeof entry.value === "number" && Number.isFinite(entry.value)),
+      }))
+      .filter((series) => series.values.length);
+
+    if (!seriesWithValues.length) {
+      ctx.fillStyle = "#9fb8a4";
+      ctx.font = "16px sans-serif";
+      ctx.fillText("No data for current/temperature history yet.", 20, 32);
+      return;
+    }
+
+    const leftSeries = seriesWithValues.filter((series) => series.axis === "left");
+    const rightSeries = seriesWithValues.filter((series) => series.axis === "right");
+    const leftScale = buildAxisScale(leftSeries.flatMap((series) => series.values.map((item) => item.value)));
+    const rightScale = buildAxisScale(rightSeries.flatMap((series) => series.values.map((item) => item.value)));
+    const paddingTop = 16;
+    const paddingBottom = 28;
+    const paddingLeft = 54;
+    const paddingRight = 54;
+    const plotHeight = canvas.height - paddingTop - paddingBottom;
+    const plotWidth = canvas.width - paddingLeft - paddingRight;
+
+    ctx.strokeStyle = "#2a5034";
+    ctx.beginPath();
+    ctx.moveTo(paddingLeft, paddingTop);
+    ctx.lineTo(paddingLeft, canvas.height - paddingBottom);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(canvas.width - paddingRight, paddingTop);
+    ctx.lineTo(canvas.width - paddingRight, canvas.height - paddingBottom);
+    ctx.stroke();
+
+    ctx.fillStyle = "#9fb8a4";
+    ctx.font = "12px sans-serif";
+    ctx.fillText(formatAxisValue(leftScale.max, "A"), 8, paddingTop + 10);
+    ctx.fillText(formatAxisValue(leftScale.min, "A"), 8, canvas.height - paddingBottom);
+    const rightMax = formatAxisValue(rightScale.max, "°C");
+    const rightMin = formatAxisValue(rightScale.min, "°C");
+    ctx.fillText(rightMax, canvas.width - paddingRight + 8, paddingTop + 10);
+    ctx.fillText(rightMin, canvas.width - paddingRight + 8, canvas.height - paddingBottom);
+
+    seriesWithValues.forEach((series) => {
+      const scale = series.axis === "right" ? rightScale : leftScale;
+      const step = series.values.length > 1 ? plotWidth / (series.values.length - 1) : plotWidth;
+      ctx.strokeStyle = series.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      series.values.forEach((item, index) => {
+        const x = paddingLeft + index * step;
+        const normalized = (item.value - scale.min) / scale.range;
+        const y = canvas.height - paddingBottom - normalized * plotHeight;
+        if (index === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      });
+      ctx.stroke();
+    });
+
+    ctx.font = "14px sans-serif";
+    let legendY = 20;
+    seriesWithValues.forEach((series) => {
+      const lastValue = series.values[series.values.length - 1].value;
+      ctx.fillStyle = series.color;
+      ctx.fillText(`${series.label}: ${formatAxisValue(lastValue, series.unit)}`, 16, legendY);
+      legendY += 20;
+    });
+  }
+
+  function updateRangeButtons() {
+    rangeButtons.forEach((button) => {
+      const isActive = Number(button.dataset.iotRange || 0) === currentHistoryLimit;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+  }
+
+  function setRangeFeedback(message, tone = "muted") {
+    if (!rangeFeedbackNode) {
+      return;
+    }
+    rangeFeedbackNode.className = "small";
+    if (tone === "danger") {
+      rangeFeedbackNode.classList.add("text-danger");
+    } else if (tone === "success") {
+      rangeFeedbackNode.classList.add("text-success");
+    } else {
+      rangeFeedbackNode.classList.add("text-muted");
+    }
+    rangeFeedbackNode.textContent = message;
+  }
+
+  function makeDashboardTimeFormatter(locale, options) {
+    try {
+      return new Intl.DateTimeFormat(locale, { ...options, timeZone: iotTimeZone });
+    } catch (error) {
+      console.warn("Invalid IoT dashboard timezone; using browser timezone.", error);
+      return new Intl.DateTimeFormat(locale, options);
+    }
+  }
+
+  const dashboardInputFormatter = makeDashboardTimeFormatter("en-GB", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
+  });
+  const dashboardDateTimeFormatter = makeDashboardTimeFormatter("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
+  });
+  const dashboardTimeFormatter = makeDashboardTimeFormatter("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
+  });
+  const dashboardTimeWithSecondsFormatter = makeDashboardTimeFormatter("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    hourCycle: "h23",
+  });
+
+  function getDashboardDateTimeParts(ts) {
+    if (!Number.isFinite(ts)) {
+      return null;
+    }
+    const parts = {};
+    dashboardInputFormatter.formatToParts(new Date(ts)).forEach((part) => {
+      if (part.type !== "literal") {
+        parts[part.type] = part.value;
+      }
+    });
+    if (!parts.year || !parts.month || !parts.day || !parts.hour || !parts.minute || !parts.second) {
+      return null;
+    }
+    return {
+      year: parts.year,
+      month: parts.month,
+      day: parts.day,
+      hour: parts.hour === "24" ? "00" : parts.hour,
+      minute: parts.minute,
+      second: parts.second,
+    };
+  }
+
+  function getDashboardTimeZoneOffsetMs(ts) {
+    const parts = getDashboardDateTimeParts(ts);
+    if (!parts) {
+      return 0;
+    }
+    const asUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second)
+    );
+    return asUtc - ts;
+  }
+
+  function formatDashboardDateTimeInput(ts) {
+    if (!Number.isFinite(ts)) {
+      return "";
+    }
+    const parts = getDashboardDateTimeParts(ts);
+    if (!parts) {
+      return "";
+    }
+    return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+  }
+
+  function parseDateTimeInputValue(value) {
+    if (!value) {
+      return null;
+    }
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
+    if (!match) {
+      return null;
+    }
+    const wallClockTs = Date.UTC(
+      Number(match[1]),
+      Number(match[2]) - 1,
+      Number(match[3]),
+      Number(match[4]),
+      Number(match[5]),
+      Number(match[6] || "0")
+    );
+    const firstOffset = getDashboardTimeZoneOffsetMs(wallClockTs);
+    let ts = wallClockTs - firstOffset;
+    const refinedOffset = getDashboardTimeZoneOffsetMs(ts);
+    if (Number.isFinite(refinedOffset) && refinedOffset !== firstOffset) {
+      ts = wallClockTs - refinedOffset;
+    }
+    return Number.isFinite(ts) ? ts : null;
+  }
+
+  function formatDashboardDateTime(ts) {
+    const numeric = Number(ts);
+    if (!Number.isFinite(numeric)) {
+      return "—";
+    }
+    return `${dashboardDateTimeFormatter.format(new Date(numeric))} ${iotTimeZoneLabel}`;
+  }
+
+  function formatDashboardChartTick(value, unit) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "";
+    }
+    const formatter = unit === "second" ? dashboardTimeWithSecondsFormatter : dashboardTimeFormatter;
+    return formatter.format(new Date(numeric));
+  }
+
+  function getSelectedRangeDurationSeconds() {
+    if (!selectedRange) {
+      return null;
+    }
+    const durationMs = selectedRange.endTs - selectedRange.startTs;
+    return durationMs > 0 ? Math.ceil(durationMs / 1000) : 1;
+  }
+
+  function getSelectedRangeFetchLimit() {
+    return 0;
+  }
+
+  function getSelectedRangeSummaryLimit() {
+    return 600;
+  }
+
+  function getSelectedRangeMaxPoints() {
+    return Math.max(1000, iotChartMaxPoints);
+  }
+
+  function clearSelectedRangeInputs() {
+    if (rangeStartInput) {
+      rangeStartInput.value = "";
+    }
+    if (rangeEndInput) {
+      rangeEndInput.value = "";
+    }
+  }
+
+  function syncRangeInputsFromHistory(history) {
+    if (selectedRange || !rangeStartInput || !rangeEndInput) {
+      return;
+    }
+    if (document.activeElement === rangeStartInput || document.activeElement === rangeEndInput) {
+      return;
+    }
+    const { earliestTs, latestTs } = getHistoryTimestampBounds(history);
+    if (!Number.isFinite(latestTs)) {
+      return;
+    }
+    const defaultStart = Math.max(Number.isFinite(earliestTs) ? earliestTs : latestTs, latestTs - (currentHistoryLimit * 1000));
+    rangeStartInput.value = formatDashboardDateTimeInput(defaultStart);
+    rangeEndInput.value = formatDashboardDateTimeInput(latestTs);
+  }
+
+  function getHistoryFetchLimit() {
+    return Math.min(Math.max(currentHistoryLimit * 6, 300), 5000);
+  }
+
+  function getXAxisTimeConfig() {
+    if (currentHistoryLimit <= 300) {
+      return {
+        unit: "second",
+        stepSize: 20,
+        displayFormat: "HH:mm:ss",
+      };
+    }
+    if (currentHistoryLimit <= 900) {
+      return {
+        unit: "second",
+        stepSize: 30,
+        displayFormat: "HH:mm:ss",
+      };
+    }
+    return {
+      unit: "minute",
+      stepSize: 1,
+      displayFormat: "HH:mm",
+    };
+  }
+
+  function buildDashboardDataUrl() {
+    const url = new URL(iotDataUrl, window.location.origin);
+    const machineId = (machineIdNode.textContent || "").trim();
+    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+      url.searchParams.set("machineId", machineId);
+    }
+    if (selectedRange) {
+      url.searchParams.set("startTs", String(selectedRange.startTs));
+      url.searchParams.set("endTs", String(selectedRange.endTs));
+      url.searchParams.set("limit", String(getSelectedRangeFetchLimit()));
+      url.searchParams.set("maxPoints", String(getSelectedRangeMaxPoints()));
+    } else {
+      url.searchParams.set("limit", String(getHistoryFetchLimit()));
+    }
+    return url.toString();
+  }
+
+  function buildHistoryExportUrl() {
+    const url = new URL(iotExportUrl, window.location.origin);
+    const machineId = (machineIdNode.textContent || "").trim();
+    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+      url.searchParams.set("machineId", machineId);
+    }
+    if (selectedRange) {
+      url.searchParams.set("startTs", String(selectedRange.startTs));
+      url.searchParams.set("endTs", String(selectedRange.endTs));
+    }
+    url.searchParams.set("format", "csv");
+    return url.toString();
+  }
+
+  function buildChartDatasets(history) {
+    return chartSeries.map((series) => ({
+      label: series.label,
+      yAxisID: series.axis,
+      borderColor: series.color,
+      backgroundColor: series.color,
+      unit: series.unit,
+      data: (Array.isArray(history) ? history : [])
+        .map((entry) => {
+          const ts = Number(entry && entry.ts);
+          const value = entry && entry.signalsByKey ? entry.signalsByKey[series.key] : null;
+          if (!Number.isFinite(ts) || typeof value !== "number" || !Number.isFinite(value)) {
+            return null;
+          }
+          return { x: ts, y: value };
+        })
+        .filter(Boolean),
+      tension: 0.24,
+      borderWidth: 2.5,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      pointHitRadius: 18,
+      fill: false,
+      spanGaps: true,
+    }));
+  }
+
+  function getHistoryTimestampBounds(history) {
+    const timestamps = (Array.isArray(history) ? history : [])
+      .map((entry) => Number(entry && entry.ts))
+      .filter((value) => Number.isFinite(value));
+    if (!timestamps.length) {
+      return { earliestTs: null, latestTs: null };
+    }
+    return {
+      earliestTs: timestamps[0],
+      latestTs: timestamps[timestamps.length - 1],
+    };
+  }
+
+  function getLiveChartBounds(history) {
+    const { latestTs } = getHistoryTimestampBounds(history);
+    if (!Number.isFinite(latestTs)) {
+      return { min: undefined, max: undefined };
+    }
+    return clampViewportToHistory({
+      min: latestTs - (currentHistoryLimit * 1000),
+      max: latestTs,
+    }, history);
+  }
+
+  function clampViewportToHistory(bounds, history) {
+    const { earliestTs, latestTs } = getHistoryTimestampBounds(history);
+    if (!Number.isFinite(earliestTs) || !Number.isFinite(latestTs)) {
+      return { min: undefined, max: undefined };
+    }
+
+    const totalRange = Math.max(latestTs - earliestTs, 1000);
+    const requestedMin = Number(bounds && bounds.min);
+    const requestedMax = Number(bounds && bounds.max);
+    const requestedRange = Number.isFinite(requestedMin) && Number.isFinite(requestedMax)
+      ? Math.max(requestedMax - requestedMin, 1000)
+      : currentHistoryLimit * 1000;
+
+    if (requestedRange >= totalRange) {
+      return { min: earliestTs, max: latestTs };
+    }
+
+    let min = Number.isFinite(requestedMin) ? requestedMin : latestTs - requestedRange;
+    let max = Number.isFinite(requestedMax) ? requestedMax : latestTs;
+
+    if (min < earliestTs) {
+      min = earliestTs;
+      max = earliestTs + requestedRange;
+    }
+    if (max > latestTs) {
+      max = latestTs;
+      min = latestTs - requestedRange;
+    }
+
+    return { min, max };
+  }
+
+  function setChartViewportMode(mode, bounds = null) {
+    chartViewportMode = mode === "manual" ? "manual" : "live";
+    manualViewport = chartViewportMode === "manual" && bounds ? { min: bounds.min, max: bounds.max } : null;
+    refreshChartModeUI();
+  }
+
+  function refreshChartModeUI() {
+    if (chartModeNode) {
+      if (selectedRange) {
+        chartModeNode.className = "badge text-bg-info";
+        chartModeNode.textContent = "Fixed Range";
+      } else if (chartViewportMode === "manual") {
+        chartModeNode.className = "badge text-bg-warning";
+        chartModeNode.textContent = "History View";
+      } else {
+        chartModeNode.className = "badge text-bg-success";
+        chartModeNode.textContent = "Live View";
+      }
+    }
+    if (chartLiveButton) {
+      chartLiveButton.classList.toggle("d-none", !(selectedRange || chartViewportMode === "manual"));
+    }
+    if (rangeClearButton) {
+      rangeClearButton.disabled = !selectedRange;
+    }
+    if (rangeExportLink) {
+      rangeExportLink.classList.toggle("d-none", !selectedRange);
+      if (selectedRange) {
+        rangeExportLink.href = buildHistoryExportUrl();
+      } else {
+        rangeExportLink.href = "#";
+      }
+    }
+  }
+
+  function getCurrentChartBounds(history) {
+    if (chartViewportMode === "manual" && manualViewport) {
+      return clampViewportToHistory(manualViewport, history);
+    }
+    if (selectedRange) {
+      return clampViewportToHistory({
+        min: selectedRange.startTs,
+        max: selectedRange.endTs,
+      }, history);
+    }
+    return getLiveChartBounds(history);
+  }
+
+  function ensureInteractiveChart() {
+    if (interactiveChart || interactiveChartDisabled || !window.Chart) {
+      return interactiveChart;
+    }
+
+    const emptyStatePlugin = {
+      id: "iotEmptyState",
+      afterDraw(chart) {
+        const datasets = Array.isArray(chart.data && chart.data.datasets) ? chart.data.datasets : [];
+        const hasData = datasets.some((dataset) => Array.isArray(dataset.data) && dataset.data.length);
+        if (hasData || !chart.chartArea) {
+          return;
+        }
+        const { ctx, chartArea } = chart;
+        ctx.save();
+        ctx.fillStyle = "#9fb8a4";
+        ctx.font = "16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(
+          "Waiting for signal history...",
+          (chartArea.left + chartArea.right) / 2,
+          (chartArea.top + chartArea.bottom) / 2
+        );
+        ctx.restore();
+      },
+    };
+
+    try {
+      interactiveChart = new window.Chart(chartCanvas, {
+        type: "line",
+        data: { datasets: [] },
+        plugins: [emptyStatePlugin],
+        options: {
+          animation: false,
+          responsive: true,
+          maintainAspectRatio: false,
+          normalized: true,
+          parsing: false,
+          interaction: {
+            mode: "index",
+            intersect: false,
+          },
+          plugins: {
+            legend: {
+              display: false,
+            },
+            tooltip: {
+              callbacks: {
+                title(items) {
+                  if (!Array.isArray(items) || !items.length) {
+                    return "";
+                  }
+                  return formatDashboardDateTime(items[0].parsed.x);
+                },
+                label(context) {
+                  const label = context.dataset.label || "Series";
+                  const unit = context.dataset.unit || "";
+                  return `${label}: ${formatAxisValue(context.parsed.y, unit)}`;
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              type: "time",
+              time: {
+                tooltipFormat: "PPpp",
+                displayFormats: {
+                  second: "HH:mm:ss",
+                  minute: "HH:mm",
+                },
+              },
+              ticks: {
+                autoSkip: true,
+                maxRotation: 0,
+                color: "#cfe3d3",
+                callback(value) {
+                  const unit = this.chart?.options?.scales?.x?.time?.unit || "minute";
+                  return formatDashboardChartTick(value, unit);
+                },
+              },
+              grid: {
+                color: "#12351a",
+              },
+            },
+            left: {
+              type: "linear",
+              position: "left",
+              title: {
+                display: true,
+                text: "Average Current (A)",
+                color: "#cfe3d3",
+              },
+              ticks: {
+                color: "#cfe3d3",
+                callback(value) {
+                  return formatAxisValue(Number(value), "A");
+                },
+              },
+              grid: {
+                color: "#12351a",
+              },
+            },
+            right: {
+              type: "linear",
+              position: "right",
+              title: {
+                display: true,
+                text: "Temperature (°C)",
+                color: "#cfe3d3",
+              },
+              ticks: {
+                color: "#cfe3d3",
+                callback(value) {
+                  return formatAxisValue(Number(value), "°C");
+                },
+              },
+              grid: {
+                drawOnChartArea: false,
+                color: "#12351a",
+              },
+            },
+          },
+        },
+      });
+    } catch (error) {
+      console.warn("Interactive chart unavailable, falling back to canvas rendering.", error);
+      interactiveChart = null;
+      interactiveChartDisabled = true;
+    }
+
+    return interactiveChart;
+  }
+
+  function drawChart(history) {
+    const chart = ensureInteractiveChart();
+    if (!chart) {
+      drawFallbackChart(history);
+      return;
+    }
+
+    const datasets = buildChartDatasets(history);
+    const bounds = getCurrentChartBounds(history);
+    const timeConfig = getXAxisTimeConfig();
+    if (chartViewportMode === "manual") {
+      manualViewport = bounds;
+    }
+    chart.data.datasets = datasets;
+    chart.options.scales.x.min = bounds.min;
+    chart.options.scales.x.max = bounds.max;
+    chart.options.scales.x.time.unit = timeConfig.unit;
+    chart.options.scales.x.time.stepSize = timeConfig.stepSize;
+    chart.options.scales.x.time.displayFormats[timeConfig.unit] = timeConfig.displayFormat;
+    chart.update("none");
+  }
+
+  function syncChartResize() {
+    window.setTimeout(() => {
+      if (interactiveChart) {
+        interactiveChart.resize();
+        interactiveChart.update("none");
+      } else {
+        drawFallbackChart(latestHistory);
+      }
+    }, 50);
+  }
+
+  function setChartExpanded(nextExpanded) {
+    chartExpanded = Boolean(nextExpanded);
+    if (chartShell) {
+      chartShell.classList.toggle("is-expanded", chartExpanded);
+    }
+    if (chartBackdrop) {
+      chartBackdrop.classList.toggle("d-none", !chartExpanded);
+    }
+    document.body.classList.toggle("iot-chart-expanded", chartExpanded);
+    if (chartMaximizeButton) {
+      chartMaximizeButton.setAttribute("aria-pressed", chartExpanded ? "true" : "false");
+      const label = chartMaximizeButton.querySelector("span");
+      const icon = chartMaximizeButton.querySelector("i");
+      if (label) {
+        label.textContent = chartExpanded ? "Close" : "Maximize";
+      }
+      if (icon) {
+        icon.className = chartExpanded ? "bi bi-fullscreen-exit me-1" : "bi bi-arrows-fullscreen me-1";
+      }
+    }
+    syncChartResize();
+  }
+
+  function toggleChartExpanded() {
+    setChartExpanded(!chartExpanded);
+  }
+
+  function getPointerPosition(event) {
+    const rect = chartCanvas.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  }
+
+  function startChartDrag(event) {
+    const chart = ensureInteractiveChart();
+    if (!chart || !chart.chartArea || !latestHistory.length) {
+      return;
+    }
+
+    const pointer = getPointerPosition(event);
+    const area = chart.chartArea;
+    if (pointer.x < area.left || pointer.x > area.right || pointer.y < area.top || pointer.y > area.bottom) {
+      return;
+    }
+
+    const bounds = getCurrentChartBounds(latestHistory);
+    if (!Number.isFinite(bounds.min) || !Number.isFinite(bounds.max)) {
+      return;
+    }
+
+    setChartViewportMode("manual", bounds);
+    dragState = {
+      startClientX: event.clientX,
+      startMin: bounds.min,
+      startMax: bounds.max,
+    };
+    chartCanvas.style.cursor = "grabbing";
+    event.preventDefault();
+  }
+
+  function moveChartDrag(event) {
+    if (!dragState || !interactiveChart || !interactiveChart.chartArea) {
+      return;
+    }
+
+    const plotWidth = interactiveChart.chartArea.right - interactiveChart.chartArea.left;
+    if (!(plotWidth > 0)) {
+      return;
+    }
+
+    const deltaPx = event.clientX - dragState.startClientX;
+    const visibleRange = Math.max(dragState.startMax - dragState.startMin, 1000);
+    const shiftMs = -(deltaPx / plotWidth) * visibleRange;
+    manualViewport = clampViewportToHistory({
+      min: dragState.startMin + shiftMs,
+      max: dragState.startMax + shiftMs,
+    }, latestHistory);
+    drawChart(latestHistory);
+  }
+
+  function endChartDrag() {
+    dragState = null;
+    chartCanvas.style.cursor = "grab";
+  }
+
+  function returnChartToLive() {
+    selectedRange = null;
+    clearSelectedRangeInputs();
+    setChartViewportMode("live");
+    setRangeFeedback(iotTimeZoneFeedback);
+    fetchLatestPayload();
+  }
+
+  function applySelectedRange() {
+    const startTs = parseDateTimeInputValue(rangeStartInput ? rangeStartInput.value : "");
+    const endTs = parseDateTimeInputValue(rangeEndInput ? rangeEndInput.value : "");
+
+    if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) {
+      setRangeFeedback("Choose both a valid start and end time.", "danger");
+      return;
+    }
+    if (endTs < startTs) {
+      setRangeFeedback("The end time must be after the start time.", "danger");
+      return;
+    }
+
+    selectedRange = { startTs, endTs };
+    setChartViewportMode("live");
+    fetchLatestPayload();
+  }
+
+  function renderRegisterRows(rows) {
+    if (!Array.isArray(rows) || !rows.length) {
+      registerRowsNode.innerHTML = '<tr><td colspan="3" class="text-muted">No register array received yet.</td></tr>';
+      return;
+    }
+
+    registerRowsNode.innerHTML = rows.map((row) => `
+      <tr>
+        <td>${row.index ?? "—"}</td>
+        <td>${row.register ?? "—"}</td>
+        <td>${row.value ?? "—"}</td>
+      </tr>
+    `).join("");
+  }
+
+  function renderPayload(payload) {
+    if (!payload) {
+      machineIdNode.textContent = "No data yet";
+      timestampNode.textContent = "—";
+      registerCountNode.textContent = "0";
+      latestHistory = [];
+      latestSignalRows = [];
+      drawChart([]);
+      renderSignals([]);
+      renderRegisterRows([]);
+      setStatus("Waiting", "text-bg-secondary");
+      return;
+    }
+
+    machineIdNode.textContent = payload.machineId || "Unknown";
+    timestampNode.textContent = payload.ts ? formatDashboardDateTime(payload.ts) : "—";
+    registerCountNode.textContent = Array.isArray(payload.registers) ? String(payload.registers.length) : "0";
+    latestSignalRows = payload.signalRows || [];
+    renderSignals(payload.signalRows || []);
+    renderRegisterRows(payload.registerRows || []);
+    setStatus(selectedRange ? "Range" : "Live", selectedRange ? "text-bg-warning" : "text-bg-success");
+  }
+
+  function scheduleNextPoll(delay = pollIntervalMs) {
+    if (pollTimer !== null) {
+      window.clearTimeout(pollTimer);
+    }
+    pollTimer = window.setTimeout(fetchLatestPayload, delay);
+  }
+
+  function buildSummaryUrl(force = false) {
+    const url = new URL(iotSummaryUrl, window.location.origin);
+    const machineId = (machineIdNode.textContent || "").trim();
+    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+      url.searchParams.set("machineId", machineId);
+    }
+    if (selectedRange) {
+      url.searchParams.set("startTs", String(selectedRange.startTs));
+      url.searchParams.set("endTs", String(selectedRange.endTs));
+      url.searchParams.set("limit", String(getSelectedRangeSummaryLimit()));
+    } else {
+      url.searchParams.set("limit", String(Math.min(currentHistoryLimit, 600)));
+    }
+    if (force) {
+      url.searchParams.set("force", "1");
+    }
+    return url.toString();
+  }
+
+  async function fetchLatestPayload() {
+    if (fetchInFlight) {
+      if (!selectedRange) {
+        scheduleNextPoll();
+      }
+      return;
+    }
+
+    fetchInFlight = true;
+    if (!hasFetchedOnce) {
+      setStatus("Loading", "text-bg-secondary");
+    }
+
+    try {
+      const response = await fetch(buildDashboardDataUrl(), {
+        headers: { "Accept": "application/json" },
+        cache: "no-store",
+        skipGlobalLoader: true,
+      });
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+      const data = await response.json();
+      latestHistory = Array.isArray(data.history) ? data.history : [];
+      renderPayload(data.latest || null);
+      drawChart(latestHistory);
+      if (selectedRange) {
+        const rawCount = Number(data.historyCount);
+        const returnedCount = Number(data.returnedCount || latestHistory.length);
+        const downsampled = Boolean(data.historyDownsampled) && Number.isFinite(rawCount) && rawCount > returnedCount;
+        setRangeFeedback(
+          latestHistory.length
+            ? downsampled
+              ? `Showing ${returnedCount.toLocaleString("en-IN")} representative points from ${rawCount.toLocaleString("en-IN")} raw samples. Export Raw CSV downloads the full range.`
+              : `Showing ${latestHistory.length.toLocaleString("en-IN")} samples between ${formatDashboardDateTime(selectedRange.startTs)} and ${formatDashboardDateTime(selectedRange.endTs)}.`
+            : "No retained telemetry is available inside the selected time range.",
+          latestHistory.length ? "success" : "danger"
+        );
+      } else {
+        syncRangeInputsFromHistory(latestHistory);
+        setRangeFeedback(iotTimeZoneFeedback);
+      }
+    } catch (error) {
+      setStatus("Error", "text-bg-danger");
+      signalsNode.innerHTML = '<tr><td colspan="4" class="text-danger">Failed to fetch payload.</td></tr>';
+      registerRowsNode.innerHTML = `<tr><td colspan="3" class="text-danger">Failed to fetch payload: ${error}</td></tr>`;
+      drawChart([]);
+      if (selectedRange) {
+        setRangeFeedback(error.message || "Failed to load the selected time range.", "danger");
+      }
+    } finally {
+      fetchInFlight = false;
+      hasFetchedOnce = true;
+      if (!selectedRange) {
+        scheduleNextPoll();
+      }
+    }
+  }
+
+  refreshChartModeUI();
+  updateRangeButtons();
+  rangeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextLimit = Number(button.dataset.iotRange || 0);
+      if (!Number.isFinite(nextLimit) || nextLimit <= 0 || nextLimit === currentHistoryLimit) {
+        return;
+      }
+      currentHistoryLimit = nextLimit;
+      selectedRange = null;
+      clearSelectedRangeInputs();
+      setChartViewportMode("live");
+      setRangeFeedback(iotTimeZoneFeedback);
+      updateRangeButtons();
+      fetchLatestPayload();
+    });
+  });
+
+  if (chartLiveButton) {
+    chartLiveButton.addEventListener("click", returnChartToLive);
+  }
+  if (chartMaximizeButton) {
+    chartMaximizeButton.addEventListener("click", toggleChartExpanded);
+  }
+  if (chartBackdrop) {
+    chartBackdrop.addEventListener("click", () => setChartExpanded(false));
+  }
+  if (rangeApplyButton) {
+    rangeApplyButton.addEventListener("click", applySelectedRange);
+  }
+  if (rangeClearButton) {
+    rangeClearButton.addEventListener("click", returnChartToLive);
+  }
+  if (rangeEndInput) {
+    rangeEndInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        applySelectedRange();
+      }
+    });
+  }
+
+  chartCanvas.addEventListener("mousedown", startChartDrag);
+  window.addEventListener("mousemove", moveChartDrag);
+  window.addEventListener("mouseup", endChartDrag);
+  chartCanvas.addEventListener("mouseleave", endChartDrag);
+  chartCanvas.addEventListener("dblclick", returnChartToLive);
+
+  window.addEventListener("resize", () => {
+    if (!interactiveChart) {
+      drawFallbackChart(latestHistory);
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && chartExpanded) {
+      setChartExpanded(false);
+    }
+  });
+  window.addEventListener("beforeunload", () => {
+    if (pollTimer !== null) {
+      window.clearTimeout(pollTimer);
+    }
+    window.removeEventListener("mousemove", moveChartDrag);
+    window.removeEventListener("mouseup", endChartDrag);
+    if (interactiveChart) {
+      interactiveChart.destroy();
+      interactiveChart = null;
+    }
+  });
+
+  fetchLatestPayload();
+
+  const summaryOpen = document.getElementById("iot-summary-open");
+  const summaryModal = document.getElementById("iotSummaryModal");
+  if (summaryOpen && summaryModal) {
+    const summaryMeta = document.getElementById("iot-summary-meta");
+    const summaryLoading = document.getElementById("iot-summary-loading");
+    const summaryOutput = document.getElementById("iot-summary-output");
+    const summaryContent = document.getElementById("iot-summary-content");
+    const summaryError = document.getElementById("iot-summary-error");
+    const summaryRefresh = document.getElementById("iot-summary-refresh");
+
+    const setSummaryMeta = (text) => {
+      if (summaryMeta) {
+        summaryMeta.textContent = text;
+      }
+    };
+
+    const showSummaryLoading = (show, text = "Generating AI summary…") => {
+      if (!summaryLoading) {
+        return;
+      }
+      summaryLoading.classList.toggle("d-none", !show);
+      const label = summaryLoading.querySelector("span");
+      if (label) {
+        label.textContent = text;
+      }
+    };
+
+    const clearSummaryError = () => {
+      if (!summaryError) {
+        return;
+      }
+      summaryError.textContent = "";
+      summaryError.classList.add("d-none");
+    };
+
+    const showSummaryError = (message) => {
+      if (!summaryError) {
+        return;
+      }
+      summaryError.textContent = message;
+      summaryError.classList.remove("d-none");
+    };
+
+    const hideSummaryOutput = () => {
+      if (summaryOutput) {
+        summaryOutput.classList.add("d-none");
+      }
+    };
+
+    const showSummaryOutput = (text) => {
+      if (!summaryOutput || !summaryContent) {
+        return;
+      }
+      summaryContent.textContent = text || "";
+      summaryOutput.classList.remove("d-none");
+    };
+
+    const loadSummary = async (force = false) => {
+      clearSummaryError();
+      hideSummaryOutput();
+      showSummaryLoading(true, force ? "Refreshing AI summary…" : "Generating AI summary…");
+      if (summaryRefresh) {
+        summaryRefresh.disabled = true;
+      }
+
+      try {
+        const response = await fetch(buildSummaryUrl(force), {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+          skipGlobalLoader: true,
+        });
+        const contentType = (response.headers.get("content-type") || "").toLowerCase();
+        const rawBody = await response.text();
+        let payload = null;
+        if (contentType.includes("application/json")) {
+          try {
+            payload = rawBody ? JSON.parse(rawBody) : {};
+          } catch (error) {
+            throw new Error("AI summary returned invalid JSON.");
+          }
+        } else {
+          const compactBody = rawBody.replace(/\s+/g, " ").trim();
+          if (response.redirected || compactBody.toLowerCase().includes("<!doctype")) {
+            throw new Error("AI summary returned an HTML page instead of JSON. Refresh the page and try again.");
+          }
+          throw new Error(compactBody || ("HTTP " + response.status));
+        }
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || ("HTTP " + response.status));
+        }
+
+        const snapshot = payload.snapshot || {};
+        const metaParts = [];
+        if (payload.cached) {
+          metaParts.push("Cached");
+        }
+        if (typeof payload.generated_at_ts === "number" && Number.isFinite(payload.generated_at_ts)) {
+          metaParts.push(`Generated ${formatDashboardDateTime(payload.generated_at_ts * 1000)}`);
+        }
+        if (typeof snapshot.latest_ts === "number" && Number.isFinite(snapshot.latest_ts)) {
+          metaParts.push(`Latest sample ${formatDashboardDateTime(snapshot.latest_ts)}`);
+        }
+        if (typeof snapshot.history_records === "number") {
+          metaParts.push(`${snapshot.history_records} history samples`);
+        }
+        if (typeof snapshot.window_seconds === "number") {
+          metaParts.push(`${snapshot.window_seconds}s window`);
+        }
+        setSummaryMeta(metaParts.join(" · ") || "AI summary ready");
+        showSummaryOutput(payload.summary || "No AI summary returned.");
+      } catch (error) {
+        setSummaryMeta("AI summary unavailable");
+        showSummaryError(error.message || "Unable to generate an AI summary right now.");
+      } finally {
+        showSummaryLoading(false);
+        if (summaryRefresh) {
+          summaryRefresh.disabled = false;
+        }
+      }
+    };
+
+    summaryModal.addEventListener("show.bs.modal", () => {
+      setSummaryMeta("Loading AI summary…");
+      loadSummary(false);
+    });
+
+    if (summaryRefresh) {
+      summaryRefresh.addEventListener("click", () => {
+        loadSummary(true);
+      });
+    }
+  }
+</script>
+{% endblock %}

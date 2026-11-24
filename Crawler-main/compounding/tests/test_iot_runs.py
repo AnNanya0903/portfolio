@@ -62,3 +62,23 @@ class CompoundingIoTRunViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Production Context")
         self.assertContains(response, "AG-5520")
+
+    @override_settings(DEBUG=False, IOT_PORTAL_URL="https://iot.magicwand.biz", IOT_MACHINE_ID_DEFAULT="mixing-mill-2")
+    def test_iot_dashboard_lists_saved_compounds_with_time_taken(self) -> None:
+        self.client.post(
+            reverse("compounding:save_iot_run"),
+            {
+                "plan_date": "2026-04-06",
+                "compound_code": "AG-5520",
+                "started_at": "2026-04-06T10:00",
+                "ended_at": "2026-04-06T11:30",
+                "stock_quality": "good",
+            },
+        )
+
+        response = self.client.get(reverse("compounding:iot_dashboard"), {"date": "2026-04-06"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Time taken")
+        self.assertContains(response, 'id="iotRunsTable"')
+        self.assertContains(response, "1 h 30 min")
