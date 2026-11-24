@@ -68,3 +68,10 @@ class BoardSearchViewTests(TestCase):
             "per_page": "50", "fin_year": "", "month": "", "status": "open", "payment": "", "document": "",
             "q": "PI Required"})
         self.assertEqual(response.status_code, 200)
+
+    def test_open_filter_hides_accepted_enquiry_and_says_so(self):
+        response = self.client.get(reverse("enquiries:board"), {"status": "open", "q": "#3355"})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'data-enquiry-id="3355"')
+        self.assertContains(response, "also matches 1")
+        self.assertContains(response, "accepted (1)")

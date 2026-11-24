@@ -1626,6 +1626,18 @@ def board(request: HttpRequest) -> HttpResponse:
     if query:
         enquiries = _search_enquiries(enquiries, query)
 
+    # A search that also has a status chosen only looks in that status: say when other statuses match too.
+    if query and status and status != WORK_ORDER_FILTER:
+        hidden: Dict[str, int] = {}
+        for enquiry in enquiries:
+            other = str(enquiry.get("status") or "").strip().lower()
+            if other != status:
+                hidden[other or "no status"] = hidden.get(other or "no status", 0) + 1
+        if hidden:
+            where = ", ".join(f"{name} ({count})" for name, count in sorted(hidden.items()))
+            messages.info(request, f"Search is limited to the \"{status}\" status. It also matches {sum(hidden.values())} "
+                                   f"enquiry(ies) in other statuses: {where}. Set Status to All to see them.")
+
     # Status filter
     if status == WORK_ORDER_FILTER:
         converted = set(WorkOrder.objects.values_list("enquiry_id", flat=True))
