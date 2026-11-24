@@ -51,8 +51,12 @@
     </div>
   </div>
 
-  {% if report.board_rows_not_included %}
-    <div class="alert alert-warning">This month is shown from the imported Excel file. {{ report.board_rows_not_included }} saved board row{{ report.board_rows_not_included|pluralize }} for this month {{ report.board_rows_not_included|pluralize:"is,are" }} not included.</div>
+  {% if report.record %}
+    <div class="alert alert-info">
+      This month starts from the imported Excel file ({{ report.record.imported_at|date:"d M Y" }}).
+      {% if report.board_rows_included %}{{ report.board_rows_included }} board save{{ report.board_rows_included|pluralize }} not in the Excel file {{ report.board_rows_included|pluralize:"is,are" }} added and locked.{% endif %}
+      {% if report.board_rows_not_included %}{{ report.board_rows_not_included }} board save{{ report.board_rows_not_included|pluralize }} made before the import {{ report.board_rows_not_included|pluralize:"is,are" }} not added, because the Excel file already has batches for that compound on that day.{% endif %}
+    </div>
   {% endif %}
   {% if report.negative_rows %}
     <div class="alert alert-danger" role="alert">

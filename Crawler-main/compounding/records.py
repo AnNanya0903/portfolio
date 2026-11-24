@@ -116,6 +116,58 @@ def _imported_rows(record: CompoundingRecordMonth) -> List[Dict[str, Any]]:
     return rows
 
 
+def _add_board_after_import(rows: List[Dict[str, Any]], record: CompoundingRecordMonth, start: date, end: date) -> tuple[int, int]:
+    """
+    Add saved board actuals to an imported Excel month.
+
+    A board save made before the import is left out only when the Excel file
+    already has batches for that compound on that day, so nothing is counted
+    twice. Returns (included, left out).
+    """
+    by_key = {row["key"]: row for row in rows}
+    excel_days = {(row["key"], day) for row in rows for day, batches in row["daily_batches"].items() if batches}
+    lines = list(
+        CompoundingLine.objects.filter(plan__plan_date__range=(start, end), actuals_saved=True).select_related("plan")
+    )
+    after = [
+        line
+        for line in lines
+        if line.updated_at >= record.imported_at
+        or (normalize_compound_code(line.compound_code), line.plan.plan_date.day) not in excel_days
+    ]
+    line_entries: Dict[int, Dict[str, Decimal]] = defaultdict(dict)
+    for line_id, entry_type, quantity in CompoundingStockEntry.objects.filter(line__in=after).values_list(
+        "line_id", "entry_type", "quantity"
+    ):
+        line_entries[line_id][entry_type] = quantity
+    for line in after:
+        key = normalize_compound_code(line.compound_code)
+        if not key:
+            continue
+        row = by_key.get(key)
+        if row is None:
+            row = _new_row(line.compound_code.strip(), key, len(rows), ZERO, ZERO)
+            rows.append(row)
+            by_key[key] = row
+        entries = line_entries.get(line.id, {})
+        day = line.plan.plan_date.day
+        fb_batches = Decimal(int(line.actual_fb or 0))
+        mb_batches = Decimal(int(line.actual_mb or 0))
+        row["daily_batches"][day] += fb_batches
+        row["daily_kg"][day] += -entries.get(CompoundingStockEntry.ENTRY_MB_USED, -(fb_batches * row["mb_weight"]))
+        row["daily_fb"][day] += entries.get(
+            CompoundingStockEntry.ENTRY_FB_MADE, fb_batches * (row["mb_weight"] + row["chemical_weight"])
+        )
+        made_kg = entries.get(CompoundingStockEntry.ENTRY_MB_MADE, mb_batches * row["mb_weight"])
+        row["production_batches"] += mb_batches
+        row["production_kg"] += made_kg
+        row["board_production_batches"] += mb_batches
+        row["board_production_kg"] += made_kg
+        if fb_batches > 0:
+            row["locked_days"].add(day)
+    return len(after), len(lines) - len(after)
+
+
 def _entry_date(entry: CompoundingStockEntry) -> date:
     if entry.movement_date:
         return entry.movement_date
@@ -269,7 +321,13 @@ def build_month_report(month: date, *, show_all: bool = False) -> Dict[str, Any]
     start, end = month_bounds(month)
     days = list(range(1, end.day + 1))
     record = CompoundingRecordMonth.objects.filter(month=start).prefetch_related("rows").first()
-    rows = [_finish_row(row, days) for row in (_imported_rows(record) if record else _live_rows(start))]
+    board_rows_included = board_rows_not_included = 0
+    if record:
+        base_rows = _imported_rows(record)
+        board_rows_included, board_rows_not_included = _add_board_after_import(base_rows, record, start, end)
+    else:
+        base_rows = _live_rows(start)
+    rows = [_finish_row(row, days) for row in base_rows]
 
     scrap = {item.date.day: item.quantity for item in CompoundingDailyScrap.objects.filter(date__range=(start, end))}
     day_totals = []
@@ -301,11 +359,6 @@ def build_month_report(month: date, *, show_all: bool = False) -> Dict[str, Any]
     totals["scrap"] = sum(scrap.values(), ZERO)
     totals["rejection"] = totals["scrap"] / totals["mixing_kg"] * 100 if totals["mixing_kg"] else ZERO
 
-    board_rows_not_included = 0
-    if record:
-        board_rows_not_included = CompoundingLine.objects.filter(
-            plan__plan_date__range=(start, end), actuals_saved=True
-        ).count()
     return {
         "month": start,
         "days": days,
@@ -316,6 +369,7 @@ def build_month_report(month: date, *, show_all: bool = False) -> Dict[str, Any]
         "negative_rows": [row for row in rows if row["is_negative"]],
         "record": record,
         "board_rows_not_included": board_rows_not_included,
+        "board_rows_included": board_rows_included,
         "has_adjustments": any(row["adjustment_kg"] for row in rows),
         "changes": list(CompoundingRecordChange.objects.filter(month=start).select_related("changed_by")[:30]),
     }
@@ -558,7 +612,17 @@ def apply_record_changes(month: date, changes: List[Dict[str, Any]], *, user, ca
                 else:
                     CompoundingDailyScrap.objects.filter(date=start.replace(day=day)).delete()
             elif record:
-                item = record_rows[key]
+                item = record_rows.get(key)
+                if item is None:
+                    raise RecordSaveError(f"{label} comes only from board actuals. Edit it on the Compounding Board.")
+                if field == "day" and day in row["locked_days"]:
+                    raise RecordSaveError(f"{label}, day {day} includes saved board actuals and is locked.")
+                if field == "production":
+                    if new_value < row["board_production_batches"]:
+                        raise RecordSaveError(
+                            f"{label}: MB production cannot be below {row['board_production_batches']} batches saved on the board."
+                        )
+                    new_value = new_value - row["board_production_batches"]
                 if field == "day":
                     daily = dict(item.daily_batches or {})
                     if new_value:
