@@ -3573,9 +3573,18 @@ def mb_planning_page(request):
         {
             "plan": plan,
             "rows": rows,
+            # Every compound, needing MB first, so nobody has to pick one compound at a time.
+            "all_rows": sorted(
+                rows_all,
+                key=lambda row: (
+                    0 if row["availability"]["has_shortage"] else 1 if row["availability"]["open_fb"] else 2,
+                ),
+            ),
+            "needs_mb_count": sum(1 for row in rows_all if row["availability"]["has_shortage"]),
             "compound_options": compound_options,
             "mb_alerts": _mb_shortage_alerts(plan, demand=demand),
             "selected_compound": selected_row["compound_code"] if selected_row else "",
+            "focus_compound": selected_row["compound_code"] if selected_row and selected_key else "",
         },
     )
 

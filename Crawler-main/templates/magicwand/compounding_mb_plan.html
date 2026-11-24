@@ -8,14 +8,15 @@
     <div>
       <p class="text-uppercase text-muted small mb-1">Compounding</p>
       <h1 class="mb-1">MB planning</h1>
-      <p class="text-muted mb-0">MB needed comes from open FB batches. Available stock and MB already on the board are subtracted, so planning quantity covers only the shortage.</p>
+      <p class="text-muted mb-0">All compounds in one list. Compounds that need MB are at the top with the batches already filled in. Choose a shift and click Send.</p>
     </div>
     <div class="d-flex flex-wrap gap-2 align-items-center">
+      <a href="{% url 'compounding:work_queue' %}" class="btn btn-primary"><i class="bi bi-list-check me-1"></i>Today's work</a>
       <a href="{% url 'compounding:planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
         <i class="bi bi-arrow-left me-1"></i>Back to planning
       </a>
       <a href="{% url 'compounding:display' %}?date={{ plan.plan_date|date:'Y-m-d' }}" class="btn btn-outline-secondary">
-        <i class="bi bi-grid-1x2 me-1"></i>Compounding
+        <i class="bi bi-grid-1x2 me-1"></i>Compounding Board
       </a>
     </div>
   </div>
@@ -24,141 +25,80 @@
 
   <div class="card shadow-sm">
     <div class="card-body">
-      <form method="get" action="{% url 'compounding:mb_planning' %}" class="row g-2 align-items-end mb-3">
-        <input type="hidden" name="date" value="{{ plan.plan_date|date:'Y-m-d' }}">
-        <div class="col-12 col-lg-8">
-          <label for="mbCompoundSelect" class="form-label mb-1">Choose compound</label>
-          <select id="mbCompoundSelect" class="form-select" name="compound" required>
-            <option value="">Select compound...</option>
-            {% for option in compound_options %}
-              <option value="{{ option.value }}" {% if selected_compound == option.value %}selected{% endif %}>{{ option.label }}</option>
-            {% endfor %}
-          </select>
+      <div class="d-flex flex-wrap gap-3 align-items-end mb-3">
+        <div style="min-width: 240px;">
+          <label for="mbSearch" class="form-label mb-1">Find compound</label>
+          <input id="mbSearch" class="form-control" type="search" placeholder="Type a compound code" value="{{ focus_compound }}">
         </div>
-        <div class="col-12 col-lg-4">
-          <button type="submit" class="btn btn-outline-primary w-100">
-            <i class="bi bi-search me-1"></i>Load MB plan
-          </button>
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="mbShowAll" {% if not needs_mb_count or focus_compound %}checked{% endif %}>
+          <label class="form-check-label" for="mbShowAll">Show all compounds ({{ all_rows|length }})</label>
         </div>
-      </form>
+        <span class="badge text-bg-{% if needs_mb_count %}danger{% else %}success{% endif %} mb-2">{% if needs_mb_count %}{{ needs_mb_count }} compound{{ needs_mb_count|pluralize }} need{{ needs_mb_count|pluralize:"s," }} MB{% else %}No compound needs MB{% endif %}</span>
+      </div>
 
-      {% if rows %}
-        {% for row in rows %}
-          {% with a=row.availability %}
-            <div class="mb-3" data-mb-availability="1">
-              <div class="row row-cols-2 row-cols-md-3 row-cols-xl-6 g-2 mb-2">
-                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">Open FB batches</div><div class="fw-semibold">{{ a.open_fb }}</div></div></div>
-                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">MB required</div><div class="fw-semibold">{{ a.required }}</div></div></div>
-                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">MB stock</div><div class="fw-semibold">{{ a.stock }}</div></div></div>
-                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">Reserved on board</div><div class="fw-semibold">{{ a.reserved }}</div></div></div>
-                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">MB coming from board</div><div class="fw-semibold">{{ a.incoming }}</div></div></div>
-                <div class="col"><div class="border rounded p-2 h-100"><div class="text-muted small">Shortage</div><div class="fw-semibold {% if a.has_shortage %}text-danger{% endif %}">{{ a.shortage }}</div></div></div>
-              </div>
-              {% if not a.known %}
-                <div class="alert alert-warning py-2 mb-0">MB weight or stock is missing in the master sheet, so availability cannot be checked.</div>
-              {% elif a.has_shortage %}
-                <div class="alert alert-danger d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 mb-0">
-                  <span>MB is short by {{ a.shortage }}. Plan {{ a.suggested_batches }} MB batch{{ a.suggested_batches|pluralize:"es" }}.</span>
-                  {% if row.planning_quantity != a.suggested_quantity %}
-                    <button type="button" class="btn btn-sm btn-outline-danger js-use-suggested" data-suggested="{{ a.suggested_quantity }}">Use suggested quantity ({{ a.suggested_quantity }})</button>
-                  {% endif %}
-                </div>
-              {% elif a.open_fb %}
-                <div class="alert alert-success py-2 mb-0">MB is enough for all open FB batches. No new MB is needed.</div>
-              {% else %}
-                <div class="alert alert-secondary py-2 mb-0">No open FB batches for this compound.</div>
-              {% endif %}
-            </div>
-          {% endwith %}
-        {% endfor %}
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
+      {% if all_rows %}
+        <div class="table-responsive mb-scroll">
+          <table class="table table-sm align-middle mb-0 mb-table">
             <thead>
               <tr>
-                <th style="min-width: 130px;">MB plan #</th>
-                <th style="min-width: 170px;">Compound</th>
-                <th class="text-center" style="width: 170px;">MB correct stock</th>
-                <th class="text-center" style="width: 170px;">Planning quantity</th>
-                <th class="text-center" style="width: 160px;">MB batch size</th>
-                <th class="text-center" style="width: 110px;">MB batches</th>
-                <th class="text-end" style="width: 220px;">Actions</th>
+                <th>Compound</th>
+                <th class="text-end">MB stock</th>
+                <th class="text-end">MB required</th>
+                <th class="text-end">On board</th>
+                <th class="text-end">Short</th>
+                <th class="text-end">Batch wt</th>
+                <th class="text-center">MB batches</th>
+                <th class="text-center">Planning qty</th>
+                <th class="text-end" style="min-width: 220px;">Send to board</th>
               </tr>
             </thead>
             <tbody>
-              {% for row in rows %}
-                <tr data-mb-row="1" data-mb-stock="{{ row.mb_stock|default_if_none:'' }}" data-batch-size="{{ row.batch_size_auto|default_if_none:'' }}">
-                  <td class="fw-semibold">{{ row.mb_plan_number }}</td>
-                  <td class="fw-semibold">{{ row.compound_code|default:"—" }}</td>
-                  <td class="text-center">
-                    {% if row.mb_stock is not None %}
-                      <span class="fw-semibold">{{ row.mb_stock }}</span>
-                    {% else %}
-                      <span class="text-danger small">Missing in master sheet</span>
-                    {% endif %}
-                  </td>
-                  <td class="text-center">
-                    <input
-                      class="form-control form-control-sm text-end d-inline-block"
-                      style="width: 120px;"
-                      type="number"
-                      min="0"
-                      step="any"
-                      name="planning_quantity"
-                      value="{{ row.planning_quantity_display }}"
-                      aria-label="Planning quantity"
-                      form="mb-send-selected"
-                      {% if not row.can_plan %}disabled{% endif %}
-                    />
-                  </td>
-                  <td class="text-center">
-                    {% if row.batch_size_auto %}
-                      <span class="fw-semibold">{{ row.batch_size_auto|floatformat:3 }}</span>
-                    {% else %}
-                      <span class="text-danger small">Missing in master sheet</span>
-                    {% endif %}
-                  </td>
-                  <td class="text-center">
-                    <input
-                      class="form-control form-control-sm text-end d-inline-block js-mb-batches"
-                      style="width: 90px;"
-                      type="number"
-                      min="0"
-                      step="1"
-                      name="mb_batches"
-                      value="{{ row.mb_batches }}"
-                      aria-label="MB batches"
-                      form="mb-send-selected"
-                      {% if not row.can_plan %}disabled{% endif %}
-                    />
-                  </td>
-                  <td class="text-end">
-                    <form id="mb-send-selected" method="post" action="{% url 'compounding:mb_send_to_board' %}" class="d-inline">
-                      {% csrf_token %}
-                      <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
-                      <input type="hidden" name="compound_code" value="{{ row.compound_code }}">
-                      <input type="hidden" name="planning_source" value="quantity" class="js-planning-source">
-                      <div class="btn-group btn-group-sm" role="group" aria-label="Send MB to board">
-                        <select class="form-select form-select-sm" name="shift" aria-label="Shift" style="width: 132px;">
+              {% for row in all_rows %}
+                {% with a=row.availability %}
+                  <tr data-mb-row data-code="{{ row.compound_code|lower }}" data-needs="{% if a.has_shortage %}1{% else %}0{% endif %}" data-batch-size="{{ row.batch_size_auto|default_if_none:'' }}" class="{% if a.has_shortage %}mb-needs{% endif %}{% if row.compound_code == focus_compound %} mb-focus{% endif %}">
+                    <td>
+                      <span class="fw-semibold">{{ row.compound_code }}</span>
+                      {% if a.has_shortage %}<span class="badge text-bg-danger ms-1">Needs MB</span>{% elif a.open_fb %}<span class="badge text-bg-success ms-1">Enough</span>{% endif %}
+                      {% if row.mb_already_sent %}<div class="small text-muted">MB already on the board</div>{% endif %}
+                    </td>
+                    <td class="text-end">{% if a.known %}{{ a.stock }}{% else %}<span class="text-danger small">Missing</span>{% endif %}</td>
+                    <td class="text-end">{% if a.open_fb %}{{ a.required }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                    <td class="text-end">{% if a.incoming and a.incoming != "0" %}{{ a.incoming }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                    <td class="text-end {% if a.has_shortage %}fw-semibold text-danger{% endif %}">{% if a.has_shortage %}{{ a.shortage }}{% else %}<span class="text-muted">0</span>{% endif %}</td>
+                    <td class="text-end">{% if row.batch_size_auto %}{{ row.batch_size_auto|floatformat:"-3" }}{% else %}<span class="text-danger small">Missing</span>{% endif %}</td>
+                    <td class="text-center">
+                      <input class="form-control form-control-sm text-end d-inline-block js-mb-batches" style="width: 78px;" type="number" min="0" step="1" name="mb_batches" value="{% if a.has_shortage %}{{ a.suggested_batches }}{% else %}{{ row.mb_batches }}{% endif %}" form="mb-send-{{ forloop.counter }}" aria-label="MB batches for {{ row.compound_code }}" {% if not row.can_plan %}disabled{% endif %}>
+                    </td>
+                    <td class="text-center">
+                      <input class="form-control form-control-sm text-end d-inline-block js-mb-quantity" style="width: 96px;" type="number" min="0" step="any" name="planning_quantity" value="{% if a.has_shortage %}{{ a.suggested_quantity }}{% else %}{{ row.planning_quantity_display }}{% endif %}" form="mb-send-{{ forloop.counter }}" aria-label="Planning quantity for {{ row.compound_code }}" {% if not row.can_plan %}disabled{% endif %}>
+                    </td>
+                    <td class="text-end">
+                      <form id="mb-send-{{ forloop.counter }}" method="post" action="{% url 'compounding:mb_send_to_board' %}" class="d-inline-flex gap-1 justify-content-end js-mb-form" data-compound="{{ row.compound_code }}">
+                        {% csrf_token %}
+                        <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+                        <input type="hidden" name="compound_code" value="{{ row.compound_code }}">
+                        <input type="hidden" name="planning_source" value="{% if a.has_shortage %}batches{% else %}quantity{% endif %}" class="js-planning-source">
+                        <select class="form-select form-select-sm" name="shift" aria-label="Shift for {{ row.compound_code }}" style="width: 104px;" {% if not row.can_plan %}disabled{% endif %}>
                           <option value="1" selected>1st shift</option>
                           <option value="2">2nd shift</option>
                           <option value="3">3rd shift</option>
                         </select>
-                        <button class="btn btn-outline-secondary" type="submit" {% if not row.can_plan %}disabled{% endif %}>
+                        <button class="btn btn-sm {% if a.has_shortage %}btn-danger{% else %}btn-outline-secondary{% endif %}" type="submit" {% if not row.can_plan %}disabled{% endif %}>
                           <i class="bi bi-send me-1"></i>Send
                         </button>
-                      </div>
-                    </form>
-                  </td>
-                </tr>
+                      </form>
+                    </td>
+                  </tr>
+                {% endwith %}
               {% endfor %}
             </tbody>
           </table>
         </div>
-        <p class="text-muted small mt-3 mb-0">Formula: MB required = FB batches × MB weight. Shortage = MB required − MB stock − MB coming from board. Enter MB batches to calculate planning quantity (batches × MB weight), or enter a quantity to calculate batches, rounded up.</p>
-      {% elif compound_options %}
-        <div class="text-muted small">Select a compound to generate and view its MB plan details.</div>
+        <p id="mbEmpty" class="text-muted small mt-3 mb-0" hidden>No compound needs MB right now. Tick "Show all compounds" to plan extra MB.</p>
+        <p class="text-muted small mt-3 mb-0">Short = MB required − MB stock − MB already on the board. Enter MB batches to calculate planning quantity (batches × MB weight), or enter a quantity to calculate batches, rounded up.</p>
       {% else %}
-        <div class="text-muted small">No compounds found. Upload master sheet data first.</div>
+        <div class="text-muted small">No compounds found. Upload the master sheet in Planning first.</div>
       {% endif %}
     </div>
   </div>
@@ -166,75 +106,79 @@
 
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-  function parseNumber(value) {
-    if (value === null || value === undefined) {
-      return null;
-    }
-    var normalized = String(value).replace(/,/g, "").trim();
-    if (!normalized) {
-      return null;
-    }
-    var parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
+  var rows = Array.prototype.slice.call(document.querySelectorAll("[data-mb-row]"));
+  var search = document.getElementById("mbSearch");
+  var showAll = document.getElementById("mbShowAll");
+  var empty = document.getElementById("mbEmpty");
+
+  function number(value) {
+    var parsed = Number(String(value === undefined || value === null ? "" : value).replace(/,/g, "").trim());
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
-  function parseWholeNumber(value) {
-    var parsed = parseInt(String(value || "").trim(), 10);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      return 0;
-    }
-    return parsed;
+  function filter() {
+    if (!search) { return; }
+    var text = search.value.trim().toLowerCase(), visible = 0;
+    rows.forEach(function (row) {
+      var matches = text ? row.dataset.code.indexOf(text) !== -1 : (showAll.checked || row.dataset.needs === "1");
+      row.hidden = !matches;
+      if (matches) { visible += 1; }
+    });
+    if (empty) { empty.hidden = visible > 0; }
   }
 
-  var rows = document.querySelectorAll("tr[data-mb-row='1']");
   rows.forEach(function (row) {
-    var input = row.querySelector("input[name='planning_quantity']");
-    var batchesInput = row.querySelector(".js-mb-batches");
+    var batches = row.querySelector(".js-mb-batches");
+    var quantity = row.querySelector(".js-mb-quantity");
     var source = row.querySelector(".js-planning-source");
-    if (!input || !batchesInput || !source) {
-      return;
-    }
-
-    var batchSize = parseNumber(row.getAttribute("data-batch-size"));
-    var hasBatchSize = Number.isFinite(batchSize) && batchSize > 0;
-
-    var batchesFromQuantity = function () {
-      if (!hasBatchSize) {
-        return;
-      }
-      var quantity = Math.max(parseNumber(input.value) || 0, 0);
-      // Rounding first stops decimal noise from adding a batch to an exact multiple.
-      batchesInput.value = String(Math.ceil(Number((quantity / batchSize).toFixed(6))));
-      source.value = "quantity";
-    };
-
-    var quantityFromBatches = function () {
-      if (!hasBatchSize) {
-        return;
-      }
-      var batches = parseWholeNumber(batchesInput.value);
-      input.value = String(Number((batches * batchSize).toFixed(3)));
+    var size = number(row.dataset.batchSize);
+    if (!batches || !quantity || !source || size <= 0) { return; }
+    batches.addEventListener("input", function () {
+      quantity.value = String(Number((Math.max(Math.floor(number(batches.value)), 0) * size).toFixed(3)));
       source.value = "batches";
-    };
-
-    input.addEventListener("input", batchesFromQuantity);
-    batchesInput.addEventListener("input", quantityFromBatches);
-
-    document.querySelectorAll(".js-use-suggested").forEach(function (button) {
-      button.addEventListener("click", function () {
-        input.value = button.getAttribute("data-suggested");
-        batchesFromQuantity();
-      });
+    });
+    quantity.addEventListener("input", function () {
+      batches.value = String(Math.ceil(Number((Math.max(number(quantity.value), 0) / size).toFixed(6))));
+      source.value = "quantity";
     });
   });
+
+  document.querySelectorAll(".js-mb-form").forEach(function (form) {
+    form.addEventListener("submit", function (event) {
+      var batches = document.querySelector('.js-mb-batches[form="' + form.id + '"]');
+      var shift = form.querySelector("select[name=shift]");
+      var count = batches ? Math.floor(number(batches.value)) : 0;
+      if (count <= 0) {
+        event.preventDefault();
+        window.alert("Enter at least 1 MB batch for " + form.dataset.compound + ".");
+        return;
+      }
+      if (!window.confirm("Send " + count + " MB batch" + (count === 1 ? "" : "es") + " of " + form.dataset.compound + " to the board (" + shift.options[shift.selectedIndex].text + ")?")) {
+        event.preventDefault();
+        return;
+      }
+      form.querySelector("button[type=submit]").disabled = true;
+    });
+  });
+
+  if (search) {
+    search.addEventListener("input", filter);
+    showAll.addEventListener("change", filter);
+    filter();
+    var focus = document.querySelector(".mb-focus");
+    if (focus) { focus.scrollIntoView({ block: "center" }); }
+  }
 });
 </script>
 {% endblock %}
 
 {% block extra_css %}
 <style>
-.compounding-page-shell {
-  width: 100%;
-}
+.compounding-page-shell { width: 100%; }
+.mb-scroll { max-height: 70vh; overflow: auto; }
+.mb-table th, .mb-table td { white-space: nowrap; }
+.mb-table thead th { position: sticky; top: 0; z-index: 2; background: var(--bs-tertiary-bg); }
+.mb-table tr.mb-needs td { background: var(--bs-danger-bg-subtle); }
+.mb-table tr.mb-focus td { box-shadow: inset 0 2px 0 var(--bs-primary), inset 0 -2px 0 var(--bs-primary); }
 </style>
 {% endblock %}

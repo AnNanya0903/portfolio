@@ -290,3 +290,56 @@ class MBStockAlertTests(TestCase):
         )
 
         self.assertFalse(crin.planned_lines.exists())
+
+    def test_all_compounds_are_listed_without_choosing_one(self):
+        self._sheet(mb_stock="400")
+        self._crin()
+
+        response = self.client.get(reverse("compounding:mb_planning"), {"date": PLAN_DATE})
+
+        self.assertNotContains(response, "Choose compound")
+        self.assertNotContains(response, "Load MB plan")
+        self.assertEqual([row["compound_code"] for row in response.context["all_rows"]], ["7020"])
+        self.assertEqual(response.context["needs_mb_count"], 1)
+        self.assertContains(response, 'id="mb-send-1"')
+        self.assertContains(response, "Needs MB")
+
+    def test_short_compound_is_first_with_suggested_batches(self):
+        self._sheet(mb_stock="400")
+        CompoundingMasterSheet.objects.filter(plan=self.plan).update(
+            rows=[
+                ["6820", "50", "10", "60", "1000", "0"],
+                ["7020", "100", "20", "120", "400", "0"],
+            ]
+        )
+        self._crin()  # 7020 needs 1000, has 400
+
+        response = self.client.get(reverse("compounding:mb_planning"), {"date": PLAN_DATE})
+
+        rows = response.context["all_rows"]
+        self.assertEqual(rows[0]["compound_code"], "7020")
+        self.assertEqual(rows[0]["availability"]["suggested_batches"], 6)
+        self.assertContains(response, 'name="mb_batches" value="6"')
+
+    def test_send_from_list_puts_batches_on_board(self):
+        self._sheet(mb_stock="400")
+        self._crin()
+
+        self.client.post(
+            reverse("compounding:mb_send_to_board"),
+            {"plan_date": PLAN_DATE, "compound_code": "7020", "planning_source": "batches", "mb_batches": "6", "planning_quantity": "600", "shift": "2"},
+        )
+
+        line = CompoundingLine.objects.get(plan=self.plan, compound_code="7020")
+        self.assertEqual(line.shift2_mb, 6)
+        response = self.client.get(reverse("compounding:mb_planning"), {"date": PLAN_DATE})
+        self.assertEqual(response.context["needs_mb_count"], 0)
+
+    def test_link_with_compound_highlights_that_row(self):
+        self._sheet(mb_stock="400")
+        self._crin()
+
+        response = self.client.get(reverse("compounding:mb_planning"), {"date": PLAN_DATE, "compound": "7020"})
+
+        self.assertEqual(response.context["focus_compound"], "7020")
+        self.assertContains(response, "mb-focus")
