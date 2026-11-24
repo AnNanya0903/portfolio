@@ -81,15 +81,19 @@ def can_update_assignment(user, assignment: EnquiryAssignment) -> bool:
     return assignment.to_department_id in {d.pk for d in departments_of(user)}
 
 
-def log_status_change(user, enquiry_id: str, old: str, new: str, note: str = "", lost_reason: str = "") -> None:
-    """Record a status change. Never raises, so a failed log cannot stop the change itself."""
+def log_status_change(user, enquiry_id: str, old: str, new: str, note: str = "", lost_reason: str = "",
+                      username: str = "") -> None:
+    """Record a status change. Never raises, so a failed log cannot stop the change itself.
+
+    `username` names who made the change when there is no signed-in user (e.g. the customer on the share link).
+    """
     old, new = str(old or "").strip(), str(new or "").strip()
     if old == new:
         return
     try:
         EnquiryStatusLog.objects.create(
             enquiry_id=str(enquiry_id), user=user if getattr(user, "pk", None) else None,
-            username=getattr(user, "username", ""), old_status=old, new_status=new, note=note[:500],
+            username=(getattr(user, "username", "") or username)[:150], old_status=old, new_status=new, note=note[:500],
             lost_reason=lost_reason[:200])
     except Exception:
         logger.exception("Enquiry status change could not be logged")

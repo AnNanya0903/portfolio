@@ -169,6 +169,21 @@ class ShareLinkTests(TestCase):
         self.assertEqual(self.update.call_args.args[2]["status"], "accepted")
         self.send.assert_not_called()
 
+    def test_accept_is_recorded_in_the_enquiry_history(self):
+        from enquiries.models import EnquiryStatusLog
+        self._post("accept")
+        log = EnquiryStatusLog.objects.get(enquiry_id="E1")
+        self.assertEqual((log.old_status, log.new_status), ("open", "accepted"))
+        self.assertEqual(log.username, "Customer (share link)")
+        self.assertIn("Quotation accepted", log.note)
+
+    def test_reject_is_recorded_with_the_reason(self):
+        from enquiries.models import EnquiryStatusLog
+        self._post("reject", "Price too high")
+        log = EnquiryStatusLog.objects.get(enquiry_id="E1")
+        self.assertEqual(log.new_status, "rejected")
+        self.assertEqual(log.lost_reason, "Price too high")
+
 
 @override_settings(**AUTO_ON)
 class BoardTrackingTests(TestCase):

@@ -1624,16 +1624,7 @@ def board(request: HttpRequest) -> HttpResponse:
     fin_years = _generate_financial_year_options(all_dates)
 
     if query:
-        filtered = []
-        for enquiry in enquiries:
-            haystack = " ".join(
-                str(value or "")
-                for key, value in enquiry.items()
-                if isinstance(value, (str, int, float)) and key not in {"sheet_url", "primary_pdf_url"}
-            ).lower()
-            if query in haystack:
-                filtered.append(enquiry)
-        enquiries = filtered
+        enquiries = _search_enquiries(enquiries, query)
 
     # Status filter
     if status == WORK_ORDER_FILTER:
@@ -3596,6 +3587,59 @@ def _append_remark(existing: Mapping[str, Any] | None, line: str) -> str:
     return f"{existing_remarks}\n{line}" if existing_remarks else line
 
 
+_SEARCH_SKIP_KEYS = frozenset({"sheet_url", "primary_pdf_url"})
+
+
+def _compact(text: str) -> str:
+    """Letters and digits only, so "AP-3355", "AP 3355" and "ap3355" compare equal."""
+    return re.sub(r"[^0-9a-z]+", "", text.lower())
+
+
+def _search_enquiries(enquiries: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+    """Board search: every word must appear somewhere in the enquiry, in any field and any order.
+
+    Besides the enquiry's own fields it looks at what the board shows from this app's database: the saved
+    customer emails and the linked KYC customer (code, company name, city). A leading "#" is ignored, and an
+    enquiry whose number is the query comes first (a number like 3355 also appears in other enquiries' prices).
+    """
+    words = [w.lstrip("#") for w in query.lower().split()]
+    words = [w for w in words if w]
+    if not words:
+        return enquiries
+    ids = [str(e.get("enquiry_id")) for e in enquiries if e.get("enquiry_id")]
+    extra: Dict[str, List[str]] = {}
+    try:
+        for c in EnquiryContact.objects.filter(enquiry_id__in=ids):
+            extra.setdefault(c.enquiry_id, []).extend([c.customer_email or "", c.other_customer_emails or ""])
+        for enquiry_id, customer in kyc_links.customers_for(ids).items():
+            extra.setdefault(enquiry_id, []).extend(
+                [customer.code or "", customer.customer_code or "", customer.name or "", customer.city or ""])
+    except Exception:  # a database hiccup must not break the board: search the enquiry fields only
+        logger.exception("Board search could not read saved contacts / KYC links")
+
+    wanted_id = _compact(" ".join(words))
+    exact, matches = [], []
+    for enquiry in enquiries:
+        enquiry_id = str(enquiry.get("enquiry_id") or "")
+        parts = [str(value) for key, value in enquiry.items()
+                 if key not in _SEARCH_SKIP_KEYS and isinstance(value, (str, int, float)) and value is not None]
+        parts.extend(extra.get(enquiry_id, []))
+        haystack = " ".join(" ".join(parts).lower().split())
+        compact_parts = [_compact(p) for p in parts]  # per field, so a word never matches across two fields
+
+        def found(word: str) -> bool:
+            if word in haystack:
+                return True
+            short = _compact(word)
+            return bool(short) and any(short in p for p in compact_parts)
+
+        if enquiry_id and _compact(enquiry_id) == wanted_id:
+            exact.append(enquiry)
+        elif all(found(w) for w in words):
+            matches.append(enquiry)
+    return exact + matches
+
+
 def share_action(request: HttpRequest) -> HttpResponse:
     """Customer's answer on the share link: accept, or reject with a reason."""
     token = request.POST.get("token") or ""
@@ -3631,6 +3675,13 @@ def share_action(request: HttpRequest) -> HttpResponse:
         services.update_enquiry(api_root, enquiry_id, update_payload, request=request)
     except services.EnquiryServiceError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
+
+    # Put the customer's answer in the enquiry's history, as staff status changes are.
+    old_status = str((existing or {}).get("status") or "").strip().lower()
+    note = "Quotation accepted by the customer via the share link" if action == "accept" else \
+        "Quotation rejected by the customer via the share link" + (f": {reason}" if reason else "")
+    negotiation.log_status_change(None, enquiry_id, old_status, status_value, note=note,
+                                  lost_reason=reason if action == "reject" else "", username="Customer (share link)")
 
     if action == "reject":
         status_emails.send_status_email(CustomerStatusEmail.KIND_REJECTION, enquiry_id, existing or {}, reason=reason)
