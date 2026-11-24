@@ -1194,6 +1194,7 @@ class GmailService:
         to: Optional[str] = None,
         cc: Optional[List[str]] = None,
         html_body: Optional[str] = None,
+        inline_images: Optional[List[Dict]] = None,
     ) -> Dict:
         """Send a reply email referencing an existing message.
 
@@ -1262,6 +1263,10 @@ class GmailService:
         email_message.set_content(body)
         if html_body:
             email_message.add_alternative(html_body, subtype='html')
+            for image in inline_images or []:
+                maintype, subtype = (image.get('mime_type') or 'image/jpeg').split('/', 1)
+                email_message.get_payload()[1].add_related(
+                    image.get('content', b''), maintype=maintype, subtype=subtype, cid=f"<{image['cid']}>")
 
         for attachment in attachments or []:
             filename = attachment.get('filename') or 'attachment'
@@ -1298,11 +1303,14 @@ class GmailService:
         cc: Optional[List[str]] = None,
         attachments: Optional[List[Dict]] = None,
         html_body: Optional[str] = None,
+        inline_images: Optional[List[Dict]] = None,
     ) -> Dict:
         """Send a new email (not a reply) with optional CC and attachments.
 
         Attachments are dicts with ``filename``, ``mime_type`` and ``content`` (bytes).
         ``html_body`` adds an HTML version (the plain-text ``body`` stays as the alternative).
+        ``inline_images`` are dicts with ``cid``, ``mime_type`` and ``content``: images the HTML refers to
+        as ``cid:<cid>`` (for example the logo in the signature).
         In local development nothing is sent; the email is only logged.
         """
         if self._local_demo_enabled():
@@ -1322,6 +1330,10 @@ class GmailService:
         email_message.set_content(body)
         if html_body:
             email_message.add_alternative(html_body, subtype='html')
+            for image in inline_images or []:
+                maintype, subtype = (image.get('mime_type') or 'image/jpeg').split('/', 1)
+                email_message.get_payload()[1].add_related(
+                    image.get('content', b''), maintype=maintype, subtype=subtype, cid=f"<{image['cid']}>")
         for attachment in attachments or []:
             mime_type = attachment.get('mime_type') or 'application/octet-stream'
             maintype, subtype = mime_type.split('/', 1) if '/' in mime_type else ('application', 'octet-stream')

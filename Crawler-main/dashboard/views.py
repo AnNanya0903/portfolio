@@ -40,6 +40,7 @@ from .priority_engine import PriorityEngine
 from .automation import AutomationService
 from .forms import ComposeReplyForm
 from .follow_up_templates import (
+    logo_inline_images, to_html,
     DEFAULT_STAGE as DEFAULT_FOLLOW_UP_STAGE,
     PAYMENT_STAGE,
     STAGE_CHOICES as FOLLOW_UP_STAGE_CHOICES,
@@ -2070,6 +2071,8 @@ def compose_email(request, email_id):
                     subject=form.cleaned_data.get('subject'),
                     to=follow_up_recipient,
                     cc=cc_list or None,
+                    html_body=to_html(form.cleaned_data['body']),
+                    inline_images=logo_inline_images(),
                 )
             except Exception as exc:  # Gmail API or network failure
                 logger.warning("Follow-up send failed for enquiry %s: %s", record.enquiry_id, exc)

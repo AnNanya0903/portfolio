@@ -55,7 +55,9 @@ from .constants import (
     STATUS_CHOICES,
 )
 from .pdf_preview import generate_preview_pdf
-from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, STAGE_CHOICES as FOLLOW_UP_STAGE_CHOICES
+from dashboard.follow_up_templates import (
+    MARKETING_STAGE, PAYMENT_STAGE, STAGE_CHOICES as FOLLOW_UP_STAGE_CHOICES, logo_inline_images, to_html,
+)
 from kyc import links as kyc_links
 from dashboard.gmail_service import GmailService, GmailAPIError
 from dashboard.ai_service import AIReplyRequest, AIReplyService, AIServiceError
@@ -3423,6 +3425,7 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
     context = {"share_url": share_email.share_url(request, record), "share_password": password, "email": email}
     try:
         if not enquiry_id:
+        quotation_html = to_html(email["body"], name=share_email.sender_name(request.user))
             raise share_email.ShareEmailError("This share link is not linked to an enquiry.")
         to, cc = share_email.validate_recipients(email["to"], email["cc"])
         if not email["subject"] or not email["body"]:
@@ -3437,9 +3440,11 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
             # Same conversation as the earlier quotation / follow-ups: reply in that thread.
             result = gmail.send_reply(original_message=original, body=email["body"],
                                       subject=original.get("subject") or email["subject"], to=to, cc=cc or None,
-                                      attachments=attachments)
+                                      attachments=attachments, html_body=quotation_html,
+                                      inline_images=logo_inline_images())
         else:
-            result = gmail.send_email(to, email["subject"], email["body"], cc=cc or None, attachments=attachments)
+            result = gmail.send_email(to, email["subject"], email["body"], cc=cc or None, attachments=attachments,
+                                      html_body=quotation_html, inline_images=logo_inline_images())
     except share_email.ShareEmailError as exc:
         context["email_error"] = str(exc)
         return render(request, "enquiries/link_generated.html", context)

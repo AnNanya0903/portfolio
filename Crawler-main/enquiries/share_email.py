@@ -15,7 +15,7 @@ from django.contrib.auth.hashers import check_password
 from django.core import signing
 from django.urls import reverse
 
-from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, QUOTATION_STAGE
+from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, QUOTATION_STAGE, enquiry_signature_text
 
 from . import payment_terms, services
 from .models import EnquiryContact, FollowUpSent, FollowUpStart, ShareLink
@@ -206,22 +206,9 @@ def sender_name(user) -> str:
 
 
 def signature(name: str = "") -> str:
-    """Kind Regards, the sender's name and designation, then the company details.
-
-    Settings QUOTATION_EMAIL_DESIGNATION and QUOTATION_EMAIL_FOOTER change the last two. Without a name the
-    email is signed by the team, as before. (The logo comes from the Gmail signature, not from this text.)
-    """
-    if not name:
-        return "Kind Regards,\nAVIGIRI Team"
-    designation = getattr(settings, "QUOTATION_EMAIL_DESIGNATION", DEFAULT_DESIGNATION)
-    footer = getattr(settings, "QUOTATION_EMAIL_FOOTER", DEFAULT_FOOTER)
-    lines = ["Kind Regards,", name]
-    if designation:
-        lines.append(designation)
-    if footer:
-        lines.append("")  # a blank line before the company details; no divider (it shows as stars in mail clients)
-        lines.append(footer)
-    return "\n".join(lines)
+    """Kind Regards, the sender's name, the designation, a divider and the company details (the same as the
+    enquiry follow-up emails). Without a name the email is signed by the team."""
+    return enquiry_signature_text(name)
 
 
 def default_message(enquiry_id: str, enquiry: Mapping[str, Any], url: str, password: str,

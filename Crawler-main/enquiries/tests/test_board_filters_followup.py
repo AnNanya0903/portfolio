@@ -273,7 +273,7 @@ class FollowUpFlowTests(TestCase):
         self.assertContains(response, "buyer@acme.example")
         self.assertContains(response, "Dear Acme,")
         self.assertContains(response, "Just following up on the quotation")
-        self.assertContains(response, "AVIGIRI team")
+        self.assertContains(response, "Naveen Kumar H B")
         self.assertNotContains(response, "MagicWand Team")
         self.assertContains(response, "we shared for Gasket quote")
         self.assertContains(response, "Re: Gasket quote")
@@ -625,8 +625,8 @@ class FollowUpTemplateTests(TestCase):
                   for key, _ in STAGE_CHOICES}
         for key, body in bodies.items():
             self.assertTrue(body.startswith("Dear Sir/Madam,"))
-            self.assertIn("AVIGIRI team", body)
-            self.assertNotIn("Ananya", body)  # signed by the team, never a person
+            self.assertTrue("AVIGIRI team" in body or "Naveen Kumar H B" in body or "Kumar Govind R" in body)
+            self.assertNotIn("Ananya", body)  # never signed with the sender's own name
         # Enquiry stages have the link; the document named follows the stage; Marketing never has a link.
         for key in ("general", "waiting_po", "payment_pending"):
             self.assertIn("https://x.example/s/", bodies[key])

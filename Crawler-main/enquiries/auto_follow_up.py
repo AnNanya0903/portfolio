@@ -38,6 +38,7 @@ from django.utils import timezone
 
 from dashboard.follow_up_templates import (
     DEFAULT_STAGE, MARKETING_STAGE, PAYMENT_STAGE, QUOTATION_STAGE, STAGE_KEYS, build_follow_up_body,
+    logo_inline_images,
     document_for_stage, enquiry_closing_body, follow_up_count, marketing_subject, to_html,
 )
 from dashboard.gmail_service import GmailAPIError, GmailService
@@ -647,10 +648,11 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, cycle: 
     try:
         html_body = to_html(body)
         if original is None:
-            sent = gmail.send_email(address, subject, body, cc=cc_list or None, html_body=html_body)
+            sent = gmail.send_email(address, subject, body, cc=cc_list or None, html_body=html_body,
+                                    inline_images=logo_inline_images())
         else:
             sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=address,
-                                    cc=cc_list or None, html_body=html_body)
+                                    cc=cc_list or None, html_body=html_body, inline_images=logo_inline_images())
     except Exception as exc:  # Gmail API or network failure: retried on the next runs
         logger.warning("Automatic %s failed for enquiry %s: %s", what.lower(), enquiry_id, exc)
         record.status = FollowUpSent.STATUS_FAILED

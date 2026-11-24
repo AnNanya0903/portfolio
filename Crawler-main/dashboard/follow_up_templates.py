@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import html
 import re
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from django.conf import settings
@@ -32,6 +33,17 @@ STAGE_CHOICES: List[Tuple[str, str]] = [
 STAGE_KEYS = {key for key, _ in STAGE_CHOICES}
 
 TEAM_NAME = "AVIGIRI team"
+
+# The signature of the enquiry follow-up emails (plain text and HTML), as the team signs them.
+ENQUIRY_SIGNATURE_NAME = "Naveen Kumar H B"
+ENQUIRY_SIGNATURE_DESIGNATION = "Customer Representative Officer"
+ENQUIRY_SIGNATURE_RULE = "*" * 52
+ENQUIRY_SIGNATURE_TEL = "(+91) 9606016345"
+MARKETING_SIGNATURE_NAME = "Kumar Govind R"
+MARKETING_SIGNATURE_DESIGNATION = "Client Support Officer"
+MARKETING_SIGNATURE_TEL = "(+91) 9035211084"
+LOGO_CID = "avigiri-logo"  # the HTML signature shows the logo as cid:avigiri-logo
+LOGO_PATH = "static/images/avigiri-logo.jpg"
 # Last line of every Marketing email. A reply that starts with STOP marks the customer Do not contact.
 MARKETING_STOP_LINE = "Reply STOP if you'd prefer not to hear from us."
 
@@ -163,6 +175,71 @@ def _render(paragraphs: Template, values: Dict[str, str], sign_off: str, extra: 
     return "\n\n".join(parts)
 
 
+def _signature_footer(tel: str) -> List[str]:
+    return [
+        "AVIGIRI Urethane and Rubber Industries Pvt. Ltd.",
+        "169-D Vasanthanarasapura Industrial Area",
+        "Kora Hobli 572128, Tumkur District,",
+        "Karnataka, India",
+        "Phone # : 0816 2970025/27",
+        "CIN: U25203KA2011PTC059765",
+        "",
+        f"Tel : {tel}",
+        "Visit: www.avigiri.com",
+    ]
+
+
+def enquiry_signature_text(name: str = ENQUIRY_SIGNATURE_NAME, designation: str = ENQUIRY_SIGNATURE_DESIGNATION,
+                           tel: str = ENQUIRY_SIGNATURE_TEL) -> str:
+    """Plain-text signature of the follow-up and closing emails: Kind Regards, the name, the designation, a divider
+    and the company details. Without a name the email is signed by the team."""
+    if not name:
+        return "Kind Regards,\nAVIGIRI Team"
+    return "\n".join(["Kind Regards,", name, designation, ENQUIRY_SIGNATURE_RULE, *_signature_footer(tel)])
+
+
+def marketing_signature_text() -> str:
+    """The signature of the Marketing emails (automatic and manual)."""
+    return enquiry_signature_text(MARKETING_SIGNATURE_NAME, MARKETING_SIGNATURE_DESIGNATION, MARKETING_SIGNATURE_TEL)
+
+
+def enquiry_signature_html(name: str = ENQUIRY_SIGNATURE_NAME, designation: str = ENQUIRY_SIGNATURE_DESIGNATION,
+                           tel: str = ENQUIRY_SIGNATURE_TEL) -> str:
+    """The same signature as HTML: the logo, the company name in bold and the website as a link."""
+    rows = []
+    for line in enquiry_signature_text(name, designation, tel).split("\n"):
+        if line.startswith("AVIGIRI Urethane"):
+            rows.append(f'<img src="cid:{LOGO_CID}" alt="AVIGIRI" width="150" style="display:block;margin:6px 0">')
+            rows.append(f"<b>{html.escape(line)}</b>")
+        elif line.startswith("Visit: "):
+            rows.append('Visit: <a href="https://www.avigiri.com" style="color:#0a3d91;font-weight:bold">'
+                        'www.avigiri.com</a>')
+        else:
+            rows.append(html.escape(line))
+    return ('<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222">'
+            + "<br>\n".join(rows) + "</div>")
+
+
+def logo_inline_images() -> List[Dict[str, object]]:
+    """The logo for the HTML signature, to attach inline (empty if the file is missing)."""
+    try:
+        content = (Path(settings.BASE_DIR) / LOGO_PATH).read_bytes()
+    except OSError:
+        return []
+    return [{"cid": LOGO_CID, "mime_type": "image/jpeg", "content": content}]
+
+
+def _render_enquiry(paragraphs: Template, values: Dict[str, str], signature: str = "") -> str:
+    greeting = " ".join(str(values.get("customer_name") or "").split()) or "Sir/Madam"
+    parts = [f"Dear {greeting},"]
+    for paragraph in paragraphs:
+        sentences = [s for s in (_fill(sentence, values) for sentence in paragraph) if s]
+        if sentences:
+            parts.append(" ".join(sentences))
+    parts.append(signature or enquiry_signature_text())
+    return "\n\n".join(parts)
+
+
 def _values(*, customer_name: str = "", subject: str = "", enquiry_title: str = "", document: str = "",
             document_number: str = "", share_url: str = "", share_password: str = "",
             delivery_timeline: str = "", confirm_by_date: str = "") -> Dict[str, str]:
@@ -208,9 +285,9 @@ def build_follow_up_body(stage: str, *, reference: str = "", subject: str = "", 
                      confirm_by_date=confirm_by_date)
     if key == MARKETING_STAGE:
         _, paragraphs, sign_off = _marketing_template(attempt, lead_source)
-        return _render(paragraphs, values, sign_off, extra=[MARKETING_STOP_LINE])
-    paragraphs, sign_off = _ENQUIRY_FOLLOW_UPS[min(max(attempt, 1), len(_ENQUIRY_FOLLOW_UPS)) - 1]
-    return _render(paragraphs, values, sign_off)
+        return _render_enquiry(paragraphs, values, marketing_signature_text()) + "\n\n" + MARKETING_STOP_LINE
+    paragraphs, _sign_off = _ENQUIRY_FOLLOW_UPS[min(max(attempt, 1), len(_ENQUIRY_FOLLOW_UPS)) - 1]
+    return _render_enquiry(paragraphs, values)
 
 
 def _marketing_template(attempt: int, lead_source: str = "") -> Tuple[str, Template, str]:
@@ -233,15 +310,28 @@ def marketing_subject(attempt: int, *, customer_name: str = "", subject: str = "
 
 def enquiry_closing_body(*, customer_name: str = "", document: str = "quotation") -> str:
     """The enquiry's closing email (no link)."""
-    paragraphs, sign_off = _ENQUIRY_CLOSING
-    return _render(paragraphs, _values(customer_name=customer_name, document=document), sign_off)
+    paragraphs, _sign_off = _ENQUIRY_CLOSING
+    return _render_enquiry(paragraphs, _values(customer_name=customer_name, document=document))
 
 
 _URL = re.compile(r"https?://[^\s<>\"']+")
 
 
-def to_html(text: str) -> str:
-    """The HTML version of a plain-text email: paragraphs kept, links clickable."""
+def to_html(text: str, name: str = ENQUIRY_SIGNATURE_NAME) -> str:
+    """The HTML version of a plain-text email: paragraphs kept, links clickable. A known signature at the end
+    (the enquiry or the Marketing one) is replaced by its HTML version with the logo."""
+    for signature_text, signature_html in (
+        (marketing_signature_text(), lambda: enquiry_signature_html(MARKETING_SIGNATURE_NAME,
+                                                                   MARKETING_SIGNATURE_DESIGNATION,
+                                                                   MARKETING_SIGNATURE_TEL)),
+        (enquiry_signature_text(name), lambda: enquiry_signature_html(name)),
+    ):
+        index = text.rfind(signature_text) if text else -1
+        if index >= 0:
+            head = text[:index].rstrip("\n")
+            tail = text[index + len(signature_text):].strip("\n")
+            parts = (to_html(head, name), signature_html(), to_html(tail, name) if tail else "")
+            return "\n".join(part for part in parts if part)
     def paragraph(block: str) -> str:
         pieces, last = [], 0
         for match in _URL.finditer(block):

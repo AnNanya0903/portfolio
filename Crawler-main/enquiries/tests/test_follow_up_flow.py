@@ -178,7 +178,8 @@ class TemplateTests(TestCase):
         self.assertTrue(body.startswith("Dear Sir/Madam,"))
         self.assertIn("we won't send further follow-ups", body)
         self.assertIn("our team will get back to you promptly", body)
-        self.assertTrue(body.endswith("Wishing you all the best,\nAVIGIRI team\n\n"
+        self.assertIn("Kind Regards,\nKumar Govind R\nClient Support Officer\n", body)
+        self.assertTrue(body.endswith("Visit: www.avigiri.com\n\n"
                                       "Reply STOP if you'd prefer not to hear from us."))
 
 

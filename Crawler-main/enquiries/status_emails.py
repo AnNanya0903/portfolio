@@ -29,8 +29,8 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from dashboard.follow_up_templates import (
-    MARKETING_STAGE, PAYMENT_STAGE, document_for_stage, enquiry_closing_body, follow_up_count, sender_signature,
-    to_html,
+    MARKETING_STAGE, PAYMENT_STAGE, document_for_stage, enquiry_closing_body, follow_up_count, logo_inline_images,
+    sender_signature, to_html,
 )
 from dashboard.gmail_service import GmailAPIError, GmailService
 
@@ -218,7 +218,7 @@ def send_status_email(kind: str, enquiry_id: str, enquiry: Mapping[str, Any], *,
 
         cc = customer_emails.with_customer_cc(enquiry_id, [], to=customer_email, own=own)  # other customer emails
         sent = gmail.send_reply(original_message=original, body=body, subject=subject, to=customer_email,
-                                cc=cc or None, html_body=html_body)
+                                cc=cc or None, html_body=html_body, inline_images=logo_inline_images())
         fields["gmail_message_id"] = (sent or {}).get("id") or ""
         fields["gmail_thread_id"] = (sent or {}).get("threadId") or fields["gmail_thread_id"]
         return _finish(row, CustomerStatusEmail.STATUS_SENT, "", sent_at=timezone.now(), **fields)

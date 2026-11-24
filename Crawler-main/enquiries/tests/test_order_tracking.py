@@ -48,7 +48,7 @@ class StageTests(TestCase):
             self.assertEqual(len(bodies), 4, key)
             for body in bodies:
                 self.assertTrue(body.startswith("Dear Sir/Madam,"))
-                self.assertIn("AVIGIRI team", body)
+                self.assertTrue("AVIGIRI team" in body or "Naveen Kumar H B" in body or "Kumar Govind R" in body)
 
     def test_old_sample_stage_falls_back_to_general(self):
         self.assertEqual(build_follow_up_body("sample_sent", reference="E1", subject="G"),
@@ -422,7 +422,7 @@ class EmailWordingTests(TestCase):
         bodies.append(status_emails.enquiry_closing_body())
         for body in bodies:
             self.assertNotIn("Ananya", body)
-            self.assertRegex(body, r"AVIGIRI [Tt]eam")
+            self.assertRegex(body, r"AVIGIRI [Tt]eam|Naveen Kumar H B|Kumar Govind R")  # every email is signed
 
     def test_enquiry_follow_ups_are_signed_avigiri_team_and_have_no_unfilled_placeholder(self):
         for n in (1, 2, 3, 4):
@@ -430,7 +430,8 @@ class EmailWordingTests(TestCase):
                                         share_url="https://x.example/s/1/", share_password="AG-pw",
                                         customer_name="Acme")
             self.assertTrue(body.startswith("Dear Acme,"))
-            self.assertTrue(body.rstrip().endswith("AVIGIRI team"), body[-40:])
+            self.assertTrue(body.rstrip().endswith("Visit: www.avigiri.com"), body[-40:])
+            self.assertIn("Kind Regards,\nNaveen Kumar H B\nCustomer Representative Officer\n", body)
             self.assertNotRegex(body, r"[{}]")
             self.assertIn("https://x.example/s/1/", body)
             self.assertIn("Password: AG-pw", body)
