@@ -220,6 +220,14 @@ def enquiry_signature_html(name: str = ENQUIRY_SIGNATURE_NAME, designation: str 
             + "<br>\n".join(rows) + "</div>")
 
 
+def signed_html(text: str) -> Optional[str]:
+    """The HTML version of an email that ends with one of the team's signatures (with the logo), or None when it
+    has none, so the caller sends it as plain text."""
+    if marketing_signature_text() in text or enquiry_signature_text() in text:
+        return to_html(text)
+    return None
+
+
 def logo_inline_images() -> List[Dict[str, object]]:
     """The logo for the HTML signature, to attach inline (empty if the file is missing)."""
     try:

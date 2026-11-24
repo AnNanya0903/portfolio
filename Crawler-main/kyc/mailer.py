@@ -21,6 +21,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.utils import timezone
 
+from dashboard.follow_up_templates import logo_inline_images, marketing_signature_text, signed_html
 from dashboard.gmail_service import GmailAPIError, GmailService
 
 from .models import Customer, CustomerContact, Department, EmailLog
@@ -127,6 +128,12 @@ def _send_raw(gmail: GmailService, msg: Message) -> str:
     email["Subject"] = msg.subject
     email["Message-ID"] = make_msgid()
     email.set_content(msg.body)
+    html_body = signed_html(msg.body)  # a signed email also goes out as HTML, with the logo
+    if html_body:
+        email.add_alternative(html_body, subtype="html")
+        for image in logo_inline_images():
+            email.get_payload()[1].add_related(image["content"], maintype="image", subtype="jpeg",
+                                               cid=f"<{image['cid']}>")
     raw = base64.urlsafe_b64encode(email.as_bytes()).decode("utf-8")
     try:
         result = gmail.service.users().messages().send(userId="me", body={"raw": raw}).execute()
@@ -254,8 +261,7 @@ def customer_template(*, enquiry: Dict[str, Any], customer: Optional[Customer]) 
         "",
         "[Response text – editable by user]",
         "",
-        "Best regards,",
-        "AVIGIRI Team",
+        marketing_signature_text(),
     ])
     return {"subject": f"Regarding Your Enquiry – {enquiry_id} ({code})", "body": body, "to": to, "cc": cc}
 

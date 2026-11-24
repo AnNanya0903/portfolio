@@ -200,7 +200,7 @@ class TemplateTests(TestCase):
         self.assertEqual(t["cc"], ["ravi@acme.example"])
         self.assertIn('With reference to your comment: "Need 40 gaskets by May"', t["body"])
         self.assertTrue(t["body"].startswith("Dear Sir/Madam,"))
-        self.assertTrue(t["body"].endswith("AVIGIRI Team"))
+        self.assertTrue(t["body"].endswith("Visit: www.avigiri.com"))  # signed with the Marketing signature
 
     def test_without_a_kyc_customer_the_enquiry_email_is_used(self):
         self.enquiry["customer_email"] = "buyer@elsewhere.example"

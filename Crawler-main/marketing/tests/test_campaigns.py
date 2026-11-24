@@ -48,7 +48,7 @@ class AudienceTests(TestCase):
         self.assertEqual(subject, "Offer for Seal")
         self.assertTrue(body.startswith("Dear Acme, ref E1."))
         self.assertTrue(body.endswith("Reply STOP if you'd prefer not to hear from us."))
-        self.assertIn("AVIGIRI Team", body)
+        self.assertIn("Kumar Govind R", body)  # campaign emails are signed by the Marketing signer
 
     def test_greeting_never_uses_a_subject_or_domain(self):
         _, known = campaigns.render_email("S", "Dear {greeting}, from {customer_name}.", {"greeting_name": "Acme"})

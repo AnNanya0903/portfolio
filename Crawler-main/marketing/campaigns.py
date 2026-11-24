@@ -25,7 +25,7 @@ from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from dashboard.follow_up_templates import MARKETING_STOP_LINE, sender_signature
+from dashboard.follow_up_templates import MARKETING_STOP_LINE, logo_inline_images, marketing_signature_text, to_html
 from dashboard.gmail_service import GmailAPIError, GmailService
 
 from . import lost
@@ -111,7 +111,7 @@ def render_email(subject: str, body: str, row: Mapping[str, Any]) -> Tuple[str, 
     for key, value in values.items():
         subject = subject.replace(key, value)
         body = body.replace(key, value)
-    full_body = "\n\n".join([body.strip(), sender_signature(), OPT_OUT_LINE])  # STOP line = footer
+    full_body = "\n\n".join([body.strip(), marketing_signature_text(), OPT_OUT_LINE])  # STOP line = footer
     return " ".join(subject.split())[:300], full_body
 
 
@@ -186,6 +186,10 @@ def send_new_email(gmail: GmailService, to: str, subject: str, body: str,
     message["Subject"] = subject
     message["Message-ID"] = make_msgid()
     message.set_content(body)
+    message.add_alternative(to_html(body), subtype="html")  # the signature with the logo
+    for image in logo_inline_images():
+        message.get_payload()[1].add_related(image["content"], maintype="image", subtype="jpeg",
+                                             cid=f"<{image['cid']}>")
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
     try:
         return gmail.service.users().messages().send(userId="me", body={"raw": raw}).execute()
