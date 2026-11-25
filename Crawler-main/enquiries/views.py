@@ -128,7 +128,7 @@ def _normalize_summary_filter_datetime(value: Any) -> Optional[datetime]:
     if not isinstance(value, datetime):
         return None
     if timezone.is_naive(value):
-        return timezone.make_aware(value, timezone.get_current_timezone())
+        return timezone.make_aware(value, timezone.utc)  # the service sends naive UTC
     return value
 
 

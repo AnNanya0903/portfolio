@@ -496,7 +496,7 @@ def _enquiry_reply_after_move(gmail, enquiry_id: str, lead, own: set, address: s
     for message in seen["replied"]:
         when = message.get("parsed_date")
         if when is not None and timezone.is_naive(when):
-            when = timezone.make_aware(when)
+            when = timezone.make_aware(when, timezone.utc)  # Gmail dates without a zone are UTC
         if when is not None and when >= lead.ready_at:
             return True
     return False
@@ -823,7 +823,7 @@ def detect_gmail_quotes(enquiries: List[Mapping[str, Any]], *, limit: int = 30) 
         quote = found["quote"]
         when = quote.get("parsed_date")
         if when is not None and timezone.is_naive(when):
-            when = timezone.make_aware(when)
+            when = timezone.make_aware(when, timezone.utc)  # Gmail dates without a zone are UTC
         started_at = when if when is not None and when >= now - gap else now
         stage = PAYMENT_STAGE if thread_check.document_of(quote) == "proforma" else QUOTATION_STAGE
         record_start(enquiry_id, stage, sent={"threadId": found["thread_id"], "id": quote.get("id")},

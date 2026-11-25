@@ -216,6 +216,14 @@ class DecisionTests(Base):
         self.assertContains(response, "A newer version was uploaded")
         self.assertEqual(self.quotation.status, "pending")
 
+    def test_tracker_times_are_indian_time(self):
+        from datetime import datetime, timezone as dt_timezone
+        self.quotation.events.update(created_at=datetime(2026, 11, 25, 10, 39, tzinfo=dt_timezone.utc))
+        self.client.force_login(self.boss)
+        response = self.client.get(reverse("quotations:detail", args=[self.quotation.pk]))
+        self.assertContains(response, "25 Nov 2026, 16:09")  # 10:39 UTC
+        self.assertNotContains(response, "25 Nov 2026, 10:39")
+
 
 class VisibilityTests(Base):
     def setUp(self):

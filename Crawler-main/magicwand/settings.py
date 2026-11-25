@@ -433,7 +433,8 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'UTC'
+# Times are stored in UTC (USE_TZ) but shown in Indian time everywhere: templates' |date, localtime(), localdate().
+TIME_ZONE = config('TIME_ZONE', default='Asia/Kolkata')
 USE_I18N = True
 USE_TZ = True
 
