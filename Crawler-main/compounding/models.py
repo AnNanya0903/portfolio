@@ -334,12 +334,39 @@ class CompoundingIoTRun(models.Model):
         (QUALITY_REJECTED, "Rejected"),
     ]
 
+    BATCH_MB = "mb"
+    BATCH_FB = "fb"
+    BATCH_TYPE_CHOICES = [
+        (BATCH_MB, "MB"),
+        (BATCH_FB, "FB"),
+    ]
+
+    REJECTION_REASON_CHOICES = [
+        ("scorch", "Scorch"),
+        ("poor_dispersion", "Poor dispersion"),
+        ("hardness", "Hardness off"),
+        ("weight", "Weight off"),
+        ("other", "Other"),
+    ]
+
     plan = models.ForeignKey(CompoundingPlan, on_delete=models.CASCADE, related_name="iot_runs")
     machine_id = models.CharField(max_length=64, db_index=True, default="")
     compound_code = models.CharField(max_length=64, db_index=True)
     started_at = models.DateTimeField()
-    ended_at = models.DateTimeField()
-    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, default=QUALITY_GOOD)
+    # Empty while a batch started with "Start batch" is still on the machine.
+    ended_at = models.DateTimeField(null=True, blank=True)
+    # Empty until the batch is ended and graded.
+    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, blank=True, default=QUALITY_GOOD)
+    batch_type = models.CharField(max_length=2, choices=BATCH_TYPE_CHOICES, blank=True, default="")
+    batch_weight_kg = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
+    crin = models.ForeignKey(
+        CompoundingCRIN,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="iot_runs",
+    )
+    rejection_reason = models.CharField(max_length=32, choices=REJECTION_REASON_CHOICES, blank=True, default="")
     notes = models.TextField(blank=True, default="")
 
     created_by = models.ForeignKey(

@@ -134,6 +134,43 @@ def _iot_run_compound_options(plan: CompoundingPlan) -> List[Dict[str, str]]:
     return options
 
 
+def _open_iot_batch(machine_id: str) -> Optional[CompoundingIoTRun]:
+    """The batch started with "Start batch" that has not been ended yet on this machine."""
+    return (
+        CompoundingIoTRun.objects.filter(machine_id=machine_id, ended_at__isnull=True)
+        .select_related("crin")
+        .order_by("-started_at", "-id")
+        .first()
+    )
+
+
+def _iot_batch_crin_options() -> List[Dict[str, str]]:
+    """Open CRINs an operator can tie a batch to."""
+    crins = CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN).order_by("crin_number")
+    return [
+        {
+            "value": str(crin.pk),
+            "label": f"{crin.display_number} · {crin.compound_code}" if crin.compound_code else crin.display_number,
+            "compound_code": crin.compound_code or "",
+        }
+        for crin in crins
+    ]
+
+
+def _parse_batch_weight(value: str) -> tuple[Optional[Decimal], bool]:
+    """Returns (weight, ok). A blank value is fine; a bad or non-positive one is not."""
+    raw = (value or "").strip()
+    if not raw:
+        return None, True
+    try:
+        weight = Decimal(raw)
+    except InvalidOperation:
+        return None, False
+    if not weight.is_finite() or weight <= 0 or weight >= Decimal("10000000"):
+        return None, False
+    return weight.quantize(Decimal("0.001")), True
+
+
 def _iot_run_duration_text(started_at, ended_at) -> str:
     """How long a compound took on the machine, e.g. "1 h 30 min"."""
     if not started_at or not ended_at or ended_at <= started_at:
@@ -2384,13 +2421,16 @@ def iot_dashboard(request):
     iot_runs = [
         {
             "compound_code": run.compound_code,
+            "batch_type": run.get_batch_type_display(),
             "started_at": run.started_at,
             "ended_at": run.ended_at,
             "time_taken": _iot_run_duration_text(run.started_at, run.ended_at),
-            "stock_quality": run.get_stock_quality_display(),
+            "stock_quality": run.get_stock_quality_display() if run.ended_at else "Running",
+            "rejection_reason": run.get_rejection_reason_display(),
         }
         for run in plan.iot_runs.all().order_by("-started_at", "-id")[:50]
     ]
+    open_batch = _open_iot_batch(machine_id)
     return render(
         request,
         "magicwand/iot_dashboard.html",
@@ -2414,6 +2454,13 @@ def iot_dashboard(request):
             "iot_run_compound_options": compound_options,
             "iot_runs": iot_runs,
             "iot_run_quality_choices": CompoundingIoTRun.QUALITY_CHOICES,
+            "iot_batch_type_choices": CompoundingIoTRun.BATCH_TYPE_CHOICES,
+            "iot_rejection_reason_choices": CompoundingIoTRun.REJECTION_REASON_CHOICES,
+            "iot_batch_crin_options": _iot_batch_crin_options(),
+            "iot_open_batch": open_batch,
+            "iot_open_batch_weight": (
+                _decimal_text(open_batch.batch_weight_kg) if open_batch and open_batch.batch_weight_kg else ""
+            ),
             "iot_time_zone": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),
             "iot_time_zone_label": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),
         },
@@ -2467,6 +2514,125 @@ def save_iot_run(request):
         created_by=request.user,
     )
     messages.success(request, f"Saved IoT production context for {compound_code}.")
+    return redirect(redirect_url)
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["POST"])
+def start_iot_batch(request):
+    """Operator taps "Start batch" as the batch goes on the machine; the start time is now."""
+    if not _iot_dashboard_available():
+        raise Http404("Not found")
+
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
+    plan = _get_or_create_plan(plan_date, user=request.user)
+    redirect_url = f"{reverse('compounding:iot_dashboard')}?date={plan.plan_date.isoformat()}"
+    machine_id = _iot_dashboard_machine_id()
+
+    compound_code = (request.POST.get("compound_code") or "").strip()
+    batch_type = (request.POST.get("batch_type") or "").strip().lower()
+    weight, weight_ok = _parse_batch_weight(request.POST.get("batch_weight_kg") or "")
+    crin_id = (request.POST.get("crin_id") or "").strip()
+
+    compound_options = {item["value"] for item in _iot_run_compound_options(plan)}
+    if not compound_code:
+        messages.error(request, "Select the compound going on the machine.")
+        return redirect(redirect_url)
+    if compound_options and compound_code not in compound_options:
+        messages.error(request, "Select a valid compound from MB planning.")
+        return redirect(redirect_url)
+    if batch_type not in {choice[0] for choice in CompoundingIoTRun.BATCH_TYPE_CHOICES}:
+        messages.error(request, "Select whether this is an MB or FB batch.")
+        return redirect(redirect_url)
+    if not weight_ok:
+        messages.error(request, "Enter the batch weight in kg as a number above 0, or leave it blank.")
+        return redirect(redirect_url)
+
+    crin = None
+    if crin_id:
+        crin = CompoundingCRIN.objects.filter(pk=crin_id, status=CompoundingCRIN.STATUS_OPEN).first() if crin_id.isdigit() else None
+        if crin is None:
+            messages.error(request, "That CRIN is not open any more. Pick another one or leave it blank.")
+            return redirect(redirect_url)
+
+    with transaction.atomic():
+        # Lock this machine's runs so two taps at once can't open two batches.
+        running = (
+            CompoundingIoTRun.objects.select_for_update()
+            .filter(machine_id=machine_id, ended_at__isnull=True)
+            .order_by("-started_at")
+            .first()
+        )
+        if running is not None:
+            messages.error(
+                request,
+                f"{running.compound_code} is still running on the machine. End that batch before starting a new one.",
+            )
+            return redirect(redirect_url)
+        CompoundingIoTRun.objects.create(
+            plan=plan,
+            machine_id=machine_id,
+            compound_code=compound_code,
+            started_at=timezone.now(),
+            ended_at=None,
+            stock_quality="",
+            batch_type=batch_type,
+            batch_weight_kg=weight,
+            crin=crin,
+            created_by=request.user,
+        )
+    messages.success(request, f"Started a {batch_type.upper()} batch of {compound_code}.")
+    return redirect(redirect_url)
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["POST"])
+def end_iot_batch(request):
+    """Operator taps "End batch" when the batch comes off; the end time is now."""
+    if not _iot_dashboard_available():
+        raise Http404("Not found")
+
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
+    redirect_url = f"{reverse('compounding:iot_dashboard')}?date={plan_date.isoformat()}"
+    machine_id = _iot_dashboard_machine_id()
+
+    run_id = (request.POST.get("run_id") or "").strip()
+    stock_quality = (request.POST.get("stock_quality") or "").strip().lower()
+    rejection_reason = (request.POST.get("rejection_reason") or "").strip().lower()
+    notes = (request.POST.get("notes") or "").strip()
+
+    if stock_quality not in {choice[0] for choice in CompoundingIoTRun.QUALITY_CHOICES}:
+        messages.error(request, "Select the quality of the batch before ending it.")
+        return redirect(redirect_url)
+    if stock_quality == CompoundingIoTRun.QUALITY_REJECTED:
+        if rejection_reason not in {choice[0] for choice in CompoundingIoTRun.REJECTION_REASON_CHOICES}:
+            messages.error(request, "Select why the batch was rejected.")
+            return redirect(redirect_url)
+    else:
+        rejection_reason = ""
+
+    with transaction.atomic():
+        run = (
+            CompoundingIoTRun.objects.select_for_update()
+            .filter(pk=run_id if run_id.isdigit() else None, machine_id=machine_id, ended_at__isnull=True)
+            .first()
+        )
+        if run is None:
+            messages.error(request, "That batch has already been ended. Refresh the page to see the current batch.")
+            return redirect(redirect_url)
+        now = timezone.now()
+        run.ended_at = max(now, run.started_at)
+        run.stock_quality = stock_quality
+        run.rejection_reason = rejection_reason
+        if notes:
+            run.notes = notes[:2000]
+        run.save(update_fields=["ended_at", "stock_quality", "rejection_reason", "notes", "updated_at"])
+    messages.success(
+        request,
+        f"Ended the {run.compound_code} batch after {_iot_run_duration_text(run.started_at, run.ended_at)}.",
+    )
     return redirect(redirect_url)
 
 
