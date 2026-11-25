@@ -519,3 +519,42 @@ def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
         "lost": sum(1 for r in leads if r["progress"] == PROGRESS_LOST),
         "by_reason": sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0])),
     }
+
+
+WON_ACCEPTED = "accepted"
+WON_REVIVED = "revived"
+
+
+def won_back_rows(enquiries: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Customers marketing won back, newest first: the lost enquiry set back to Accepted, or revived as a new
+    enquiry for sales. `enquiries` is every enquiry (any status), to show names and where each one is now."""
+    by_id = {str(e.get("enquiry_id")): e for e in enquiries if e.get("enquiry_id")}
+    leads = (MarketingLead.objects.filter(accepted_at__isnull=False)
+             | MarketingLead.objects.exclude(revived_enquiry_id="")).select_related("accepted_by", "revived_by")
+    rows: List[Dict[str, Any]] = []
+    for lead in leads.distinct():
+        enquiry = by_id.get(lead.enquiry_id, {})
+        revived = bool(lead.revived_enquiry_id)
+        new_enquiry = by_id.get(lead.revived_enquiry_id, {}) if revived else {}
+        when = (lead.revived_at if revived else lead.accepted_at) or lead.updated_at
+        who = lead.revived_by if revived else lead.accepted_by
+        now = _status(new_enquiry if revived else enquiry)
+        name = customer_display(enquiry.get("customer_name"), enquiry.get("subject"), "", lead.customer_name)["name"]
+        reason_key = lead.lost_reason or ("no_reply" if lead.lead_source == NO_RESPONSE else "")
+        rows.append({
+            "enquiry_id": lead.enquiry_id,
+            "customer_name": name or new_enquiry.get("customer_name") or "",
+            "subject": enquiry.get("subject") or "",
+            "how": WON_REVIVED if revived else WON_ACCEPTED,
+            "how_label": f"New enquiry {lead.revived_enquiry_id}" if revived else "Same enquiry set to Accepted",
+            "new_enquiry_id": lead.revived_enquiry_id,
+            "lost_as": KIND_LABELS.get(lead.lead_source, ""),
+            "reason_label": REASON_LABELS.get(reason_key, "")
+            + (f": {lead.lost_reason_note}" if reason_key == "other" and lead.lost_reason_note else ""),
+            "price": _price_text(enquiry),
+            "won_on": _local_date(when),
+            "won_by": (who.get_full_name() or who.username) if who else "",
+            "status_now": now.capitalize() if now else "",
+        })
+    rows.sort(key=lambda r: (r["won_on"] or date.min, r["enquiry_id"]), reverse=True)
+    return rows

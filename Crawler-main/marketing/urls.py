@@ -10,6 +10,7 @@ _marketing = require_service_access("marketing")
 
 urlpatterns = [
     path("", _marketing(views.board), name="board"),
+    path("won-back/", _marketing(views.won_back), name="won_back"),
     path("campaigns/", _marketing(campaign_views.campaign_list), name="campaign_list"),
     path("campaigns/new/", _marketing(campaign_views.campaign_new), name="campaign_new"),
     path("campaigns/<int:pk>/", _marketing(campaign_views.campaign_detail), name="campaign_detail"),
