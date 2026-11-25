@@ -15,9 +15,21 @@
              padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
   .mk-chip--rejected { background: #fef2f2; color: #b91c1c; }
   .mk-chip--no_response { background: #f1f5f9; color: #475569; }
-  .mk-chip--ready { background: #ecfdf5; color: #047857; }
+  .mk-chip--ready { background: #f1f5f9; color: #334155; }
   .mk-chip--do_not_contact { background: #f1f5f9; color: #334155; text-decoration: line-through; }
   .mk-chip--revived { background: #eff6ff; color: #1d4ed8; }
+  .mk-progress { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; font-weight: 700;
+                 padding: 3px 10px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+  .mk-progress--done { background: #dcfce7; color: #166534; border-color: #86efac; }
+  .mk-progress--running { background: #e0f2fe; color: #075985; border-color: #7dd3fc; }
+  .mk-progress--action { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .mk-progress-detail { font-size: 0.75rem; color: #334155; margin-top: 3px; max-width: 200px; }
+  tr.mk-row--done td { background: #f8fafc; }
+  tr.mk-row--done .mk-row-link { color: #64748b; }
+  .mk-stat--done { border-left: 4px solid #22c55e; }
+  .mk-stat--running { border-left: 4px solid #0ea5e9; }
+  .mk-stat--action { border-left: 4px solid #f59e0b; }
+  .mk-stat.is-active { box-shadow: 0 0 0 2px var(--brand-primary, #2563eb); }
   .mk-reason-row { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem; padding: 4px 0; }
   .mk-muted { font-size: 0.75rem; color: var(--brand-muted, #64748b); }
   .mk-row-link { color: inherit; text-decoration: none; }
@@ -48,6 +60,33 @@
   <div class="alert alert-warning">{{ load_error }}</div>
 {% endif %}
 
+<div class="row g-3 mb-3" data-progress-cards>
+  <div class="col-12 col-md-4">
+    <a class="mk-stat mk-stat--action{% if chosen.progress == 'action' %} is-active{% endif %}" href="?progress=action"
+       title="The customer replied, the email failed, or nobody has contacted the customer yet.">
+      <div class="mk-stat-label"><i class="bi bi-exclamation-circle me-1"></i>Needs action (not completed)</div>
+      <div class="mk-stat-value" style="color:#b45309;">{{ summary.action }}</div>
+      <div class="mk-muted">Customer replied, email failed, or not contacted yet</div>
+    </a>
+  </div>
+  <div class="col-12 col-md-4">
+    <a class="mk-stat mk-stat--running{% if chosen.progress == 'running' %} is-active{% endif %}" href="?progress=running"
+       title="Automatic follow-up emails are still being sent. Nothing to do until the customer replies or they finish.">
+      <div class="mk-stat-label"><i class="bi bi-hourglass-split me-1"></i>In progress (not completed)</div>
+      <div class="mk-stat-value" style="color:#0369a1;">{{ summary.running }}</div>
+      <div class="mk-muted">Automatic follow-ups still being sent</div>
+    </a>
+  </div>
+  <div class="col-12 col-md-4">
+    <a class="mk-stat mk-stat--done{% if chosen.progress == 'done' %} is-active{% endif %}" href="?progress=done"
+       title="Won back, marked Do not contact, or every follow-up and the closing email were sent.">
+      <div class="mk-stat-label"><i class="bi bi-check-circle-fill me-1"></i>Completed</div>
+      <div class="mk-stat-value text-success">{{ summary.done }}</div>
+      <div class="mk-muted">Won back, Do not contact, or all follow-ups sent</div>
+    </a>
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg">
     <a class="mk-stat" href="{% url 'marketing:board' %}">
@@ -70,7 +109,7 @@
   <div class="col-6 col-lg">
     <a class="mk-stat" href="?stage=ready">
       <div class="mk-stat-label">Ready to contact</div>
-      <div class="mk-stat-value text-success">{{ summary.ready }}</div>
+      <div class="mk-stat-value">{{ summary.ready }}</div>
     </a>
   </div>
   <div class="col-6 col-lg">
@@ -119,6 +158,12 @@
               <option value="{{ key }}"{% if chosen.stage == key %} selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
+          <select name="progress" class="form-select form-select-sm" style="width:auto;" aria-label="Progress">
+            <option value="">Completed and not completed</option>
+            {% for key, label in progress_choices %}
+              <option value="{{ key }}"{% if chosen.progress == key %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
           <select name="fin_year" class="form-select form-select-sm" style="width:auto;" aria-label="Financial year">
             <option value="">All years</option>
             {% for fy in fin_years %}
@@ -136,6 +181,7 @@
         <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
           <thead>
             <tr>
+              <th>Progress</th>
               <th>Customer</th>
               <th>Enquiry</th>
               <th>Status</th>
@@ -148,7 +194,11 @@
           </thead>
           <tbody>
             {% for row in rows %}
-              <tr>
+              <tr class="mk-row--{{ row.progress }}" data-progress="{{ row.progress }}">
+                <td>
+                  <span class="mk-progress mk-progress--{{ row.progress }}">{% if row.progress == 'done' %}<i class="bi bi-check-circle-fill"></i>{% elif row.progress == 'running' %}<i class="bi bi-hourglass-split"></i>{% else %}<i class="bi bi-exclamation-circle"></i>{% endif %} {{ row.progress_label }}</span>
+                  <div class="mk-progress-detail">{{ row.progress_detail }}</div>
+                </td>
                 <td>
                   <a class="mk-row-link fw-semibold" href="{% url 'marketing:detail' row.enquiry_id %}">{% if row.customer_name %}{{ row.customer_name }}{% else %}<span class="text-muted fw-normal">Name not recorded</span>{% endif %}</a>
                   {% if row.customer_name_source == 'email' %}<div class="mk-muted">from email address</div>{% endif %}
@@ -178,7 +228,7 @@
               </tr>
             {% empty %}
               <tr>
-                <td colspan="8" class="text-center text-muted py-5">
+                <td colspan="9" class="text-center text-muted py-5">
                   {% if has_filters %}No lost enquiries match these filters.{% else %}No Rejected or No response enquiries yet.{% endif %}
                 </td>
               </tr>

@@ -44,6 +44,16 @@ STAGE_LABELS = {
     STAGE_REVIVED: "Revived",
 }
 
+# Is marketing's work on a lead finished? Shown as its own column so done and not-done never look alike.
+PROGRESS_DONE = "done"
+PROGRESS_RUNNING = "running"
+PROGRESS_ACTION = "action"
+PROGRESS_LABELS = {
+    PROGRESS_ACTION: "Needs action",
+    PROGRESS_RUNNING: "In progress",
+    PROGRESS_DONE: "Completed",
+}
+
 REASON_LABELS = dict(MarketingLead.REASON_CHOICES)
 
 SHARE_REASON_MARKER = "Rejection reason (via share link):"
@@ -138,6 +148,36 @@ def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, repli
         label = f"{limit} of {limit} sent" + (f", closing email {cycle.next_on:%d %b}" if cycle.next_on else "")
     return {"state": state, "label": label, "sent": min(sent, limit), "limit": limit,
             "next_on": cycle.next_on if state == "running" else None}
+
+
+def lead_progress(stage: str, revived_enquiry_id: str, flag: str, auto: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Whether marketing is finished with a lead: {"key": done/running/action, "label", "detail"}.
+
+    Completed: won back (revived), Do not contact, or every automatic follow-up and the closing email went out.
+    In progress: the automatic follow-ups are still being sent; nothing to do yet.
+    Needs action: the customer replied, the email failed, or nobody has contacted the customer yet.
+    """
+    def out(key: str, detail: str) -> Dict[str, str]:
+        return {"key": key, "label": PROGRESS_LABELS[key], "detail": detail}
+
+    if stage == STAGE_REVIVED:
+        return out(PROGRESS_DONE, f"Won back: new enquiry {revived_enquiry_id}" if revived_enquiry_id else "Won back")
+    if stage == STAGE_DO_NOT_CONTACT:
+        return out(PROGRESS_DONE, "Do not contact")
+    state = (auto or {}).get("state")
+    if state == "replied" or flag == MarketingLead.FLAG_REPLIED:
+        return out(PROGRESS_ACTION, "Customer replied: call or email them")
+    if flag == MarketingLead.FLAG_BOUNCED:
+        return out(PROGRESS_ACTION, "Email bounced: fix the customer email")
+    if flag == MarketingLead.FLAG_THREAD_NOT_FOUND:
+        return out(PROGRESS_ACTION, "Gmail thread not found: check the customer email")
+    if state == "closed":
+        return out(PROGRESS_DONE, "All follow-ups sent, no reply")
+    if state == "stopped":
+        return out(PROGRESS_DONE, auto["label"].replace("Stopped: ", "").capitalize())
+    if state == "running":
+        return out(PROGRESS_RUNNING, f"Follow-ups: {auto['label']}")
+    return out(PROGRESS_ACTION, "Not contacted yet")
 
 
 def is_stop_reply(text: Any) -> bool:
@@ -343,6 +383,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         if kyc_customer is not None and who["source"] in ("", "email"):
             who = {"name": kyc_customer.name, "source": "kyc", "greeting": kyc_customer.name}
 
+        auto = auto_follow_up_status(item["kind"], lead, mk_cycles.get(enquiry_id), enquiry_id in replied_ids)
+        progress = lead_progress(stage, lead.revived_enquiry_id if lead else "", lead.flag if lead else "", auto)
         leads.append({
             "enquiry_id": enquiry_id,
             "customer_name": who["name"],
@@ -376,8 +418,10 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "stage_label": STAGE_LABELS[stage],
             "revived_enquiry_id": lead.revived_enquiry_id if lead else "",
             "lead": lead,
-            "auto_follow_up": auto_follow_up_status(item["kind"], lead, mk_cycles.get(enquiry_id),
-                                                    enquiry_id in replied_ids),
+            "auto_follow_up": auto,
+            "progress": progress["key"],
+            "progress_label": progress["label"],
+            "progress_detail": progress["detail"],
             "kyc_customer": kyc_customer,
             "kyc_code": kyc_customer.code if kyc_customer is not None else "",
         })
@@ -385,7 +429,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
     return leads
 
 
-FILTER_KEYS = ("q", "kind", "reason", "stage", "fin_year")
+FILTER_KEYS = ("q", "kind", "reason", "stage", "progress", "fin_year")
 
 
 def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
@@ -395,12 +439,15 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
         "kind": (params.get("kind") or "").strip(),
         "reason": (params.get("reason") or "").strip(),
         "stage": (params.get("stage") or "").strip(),
+        "progress": (params.get("progress") or "").strip(),
         "fin_year": (params.get("fin_year") or "").strip(),
     }
     if chosen["kind"] not in KIND_LABELS:
         chosen["kind"] = ""
     if chosen["stage"] not in STAGE_LABELS:
         chosen["stage"] = ""
+    if chosen["progress"] not in PROGRESS_LABELS:
+        chosen["progress"] = ""
     if chosen["reason"] not in REASON_LABELS and chosen["reason"] != "none":
         chosen["reason"] = ""
 
@@ -410,6 +457,8 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
         if chosen["kind"] and row["kind"] != chosen["kind"]:
             continue
         if chosen["stage"] and row["stage"] != chosen["stage"]:
+            continue
+        if chosen["progress"] and row["progress"] != chosen["progress"]:
             continue
         if chosen["reason"] == "none" and row["reason_key"]:
             continue
@@ -441,5 +490,8 @@ def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
         "revived": sum(1 for r in leads if r["stage"] == STAGE_REVIVED),
         # Same rule as the "Do not contact" stage filter, so the card and the filtered list always agree.
         "do_not_contact": sum(1 for r in leads if r["stage"] == STAGE_DO_NOT_CONTACT),
+        "done": sum(1 for r in leads if r["progress"] == PROGRESS_DONE),
+        "running": sum(1 for r in leads if r["progress"] == PROGRESS_RUNNING),
+        "action": sum(1 for r in leads if r["progress"] == PROGRESS_ACTION),
         "by_reason": sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0])),
     }

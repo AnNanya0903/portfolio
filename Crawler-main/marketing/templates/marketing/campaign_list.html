@@ -36,7 +36,7 @@
               <a class="fw-semibold text-decoration-none" href="{% url 'marketing:campaign_detail' c.pk %}">{{ c.name }}</a>
               <div class="mk-muted text-truncate" style="max-width: 320px;">{{ c.subject }}</div>
             </td>
-            <td><span class="mk-chip mk-chip--{{ c.status }}">{{ c.get_status_display }}</span></td>
+            <td><span class="mk-chip mk-chip--{{ c.status }}" data-campaign-status="{{ c.status }}">{% if c.status == 'sent' %}<i class="bi bi-check-circle-fill me-1"></i>Sent (completed){% else %}<i class="bi bi-pencil me-1"></i>Draft (not sent yet){% endif %}</span></td>
             <td class="text-nowrap">
               {% if c.status == 'draft' %}—{% else %}
                 {{ item.sent }} sent{% if item.test %} · {{ item.test }} test{% endif %}{% if item.failed %} · <span class="text-danger">{{ item.failed }} failed</span>{% endif %}

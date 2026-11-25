@@ -51,11 +51,12 @@ def board(request: HttpRequest) -> HttpResponse:
         "has_filters": any(chosen.values()),
         "kind_choices": list(lost.SOURCE_BADGES.items()),
         "stage_choices": list(lost.STAGE_LABELS.items()),
+        "progress_choices": list(lost.PROGRESS_LABELS.items()),
         "reason_choices": list(MarketingLead.REASON_CHOICES),
         "fin_years": sorted({row["fin_year"] for row in leads if row["fin_year"]}, reverse=True),
         "load_error": error,
         # Same filters for a new campaign (its audience is always "Ready to contact").
-        "campaign_query": urlencode({k: v for k, v in chosen.items() if v and k != "stage"}),
+        "campaign_query": urlencode({k: v for k, v in chosen.items() if v and k not in ("stage", "progress")}),
     }
     return render(request, "marketing/board.html", context)
 
