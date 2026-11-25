@@ -2048,7 +2048,8 @@ def _crin_status_rows(crin_objs: List[CompoundingCRIN]) -> List[Dict[str, Any]]:
         rows.append(
             {
                 "id": crin.id,
-                "crin_number": crin.crin_number,
+                "crin_number": crin.display_number,
+                "full_number": crin.crin_number,
                 "compound_code": crin.compound_code,
                 "plan_date": crin.plan.plan_date,
                 "stage_label": stage_label,
@@ -2095,7 +2096,7 @@ def _production_request_groups() -> List[Dict[str, Any]]:
             raised_at = header.created_at if header else crin.created_at
             raised_by = header.created_by if header else crin.created_by
             groups[key] = {
-                "number": header.request_number if header else crin.crin_number,
+                "number": header.request_number if header else crin.display_number,
                 "raised_at": raised_at.astimezone(IST_TIMEZONE).strftime("%Y-%m-%d %H:%M"),
                 "raised_by": raised_by.get_username() if raised_by else "—",
                 "note": header.note if header else "",
@@ -2105,7 +2106,7 @@ def _production_request_groups() -> List[Dict[str, Any]]:
 
     result = list(groups.values())
     for group in result:
-        group["items"].sort(key=lambda row: row["crin_number"])
+        group["items"].sort(key=lambda row: row["full_number"])
         group["item_count"] = len(group["items"])
         group["closed_count"] = sum(1 for row in group["items"] if not row["is_open"])
         group["is_complete"] = group["closed_count"] == group["item_count"]
@@ -2251,7 +2252,7 @@ def fb_issue_page(request):
     recent_issues = [
         {
             "created_at": entry.created_at.astimezone(IST_TIMEZONE).strftime("%Y-%m-%d %H:%M"),
-            "crin_number": entry.crin.crin_number if entry.crin else "—",
+            "crin_number": entry.crin.display_number if entry.crin else "—",
             "compound_code": entry.compound_code,
             "quantity": _decimal_text(-entry.quantity),
             "user": entry.created_by.get_username() if entry.created_by else "—",
@@ -2274,7 +2275,7 @@ def issue_fb(request, crin_id: int):
     redirect_url = _safe_next(request) or reverse("compounding:fb_issue")
     crin = get_object_or_404(CompoundingCRIN.objects.select_for_update().select_related("plan"), id=crin_id)
     if crin.status != CompoundingCRIN.STATUS_OPEN:
-        messages.info(request, f"{crin.crin_number} is already closed.")
+        messages.info(request, f"{crin.display_number} is already closed.")
         return redirect(redirect_url)
 
     try:
@@ -2292,7 +2293,7 @@ def issue_fb(request, crin_id: int):
     except InvalidOperation:
         expected_issued = None
     if expected_issued is None or not expected_issued.is_finite() or expected_issued != issued_now:
-        messages.warning(request, f"{crin.crin_number} was just updated. Check the balance and issue again if needed.")
+        messages.warning(request, f"{crin.display_number} was just updated. Check the balance and issue again if needed.")
         return redirect(redirect_url)
 
     spec = _sheet_spec_for_compound(crin.plan, crin.compound_code)
@@ -2311,12 +2312,12 @@ def issue_fb(request, crin_id: int):
     if result["closed"]:
         messages.success(
             request,
-            f"Issued {_decimal_text(quantity)} FB on {crin.crin_number}. The CRIN is now closed.",
+            f"Issued {_decimal_text(quantity)} FB on {crin.display_number}. The CRIN is now closed.",
         )
     else:
         messages.success(
             request,
-            f"Issued {_decimal_text(quantity)} FB on {crin.crin_number}. "
+            f"Issued {_decimal_text(quantity)} FB on {crin.display_number}. "
             f"{_decimal_text(result['remaining'])} is left to issue.",
         )
     return redirect(redirect_url)
@@ -2439,7 +2440,7 @@ def planning(request):
         crins.append(
             {
                 "id": crin.id,
-                "crin_number": crin.crin_number,
+                "crin_number": crin.display_number,
                 "compound_code": crin.compound_code,
                 "quantity": crin.quantity,
                 "mb_planning": crin.mb_planning,
@@ -2655,7 +2656,7 @@ def display(request):
                 "planned_fb_weight": fb_weight_text(planned_fb),
                 "actual_fb_weight": fb_weight_text(actual_fb),
                 "remaining_fb_weight": fb_weight_text(remaining_fb),
-                "crin_number": line.crin_request.crin_number if line.crin_request else "",
+                "crin_number": line.crin_request.display_number if line.crin_request else "",
                 "planned_mb": planned_mb,
                 "planned_fb": planned_fb,
                 "actual_mb": actual_mb,
@@ -2814,7 +2815,7 @@ def set_actuals(request):
             returned_to_same_crin = True
             returned_mb = remaining_mb
             returned_fb = remaining_fb
-            same_crin_number = crin.crin_number
+            same_crin_number = crin.display_number
         elif planned_fb <= 0 and not crin.stock_entries.filter(
             entry_type=CompoundingStockEntry.ENTRY_FB_MADE
         ).exists():
@@ -2936,7 +2937,7 @@ def send_remaining_to_planning(request):
 
     messages.success(
         request,
-        f"Sent remaining batches for {line.compound_code} to planning as {crin.crin_number} (MB {remaining_mb}, FB {remaining_fb}).",
+        f"Sent remaining batches for {line.compound_code} to planning as {crin.display_number} (MB {remaining_mb}, FB {remaining_fb}).",
     )
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
@@ -3067,11 +3068,11 @@ def delete_crin(request, crin_id: int):
     if not _crin_can_be_deleted(crin):
         messages.error(
             request,
-            f"{crin.crin_number} cannot be deleted because production has been recorded on it.",
+            f"{crin.display_number} cannot be deleted because production has been recorded on it.",
         )
         return redirect(redirect_url)
 
-    crin_number = crin.crin_number
+    crin_number = crin.display_number
     compound_code = crin.compound_code
     header_id = crin.request_id
     for line in board_lines:
@@ -3170,7 +3171,7 @@ def fb_planning_set(request):
 
     messages.success(
         request,
-        f"FB planning set for {crin.crin_number}: {batches} batches (batch size { _decimal_text(batch_size) }).",
+        f"FB planning set for {crin.display_number}: {batches} batches (batch size { _decimal_text(batch_size) }).",
     )
     return redirect(f"/compounding/planning/fb/?date={plan.plan_date.isoformat()}")
 
@@ -3257,7 +3258,7 @@ def send_to_board(request, crin_id: int):
         return redirect(default_path or f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
     if plan.lines.filter(crin_request=crin).exists():
-        messages.info(request, f"{crin.crin_number} is already on the compounding board.")
+        messages.info(request, f"{crin.display_number} is already on the compounding board.")
         return _redirect_after_send_block()
 
     shift = _parse_shift(request.POST.get("shift"))
@@ -3289,7 +3290,7 @@ def send_to_board(request, crin_id: int):
     with transaction.atomic():
         CompoundingPlan.objects.select_for_update().get(pk=plan.pk)
         if plan.lines.filter(crin_request=crin).exists():
-            messages.info(request, f"{crin.crin_number} is already on the compounding board.")
+            messages.info(request, f"{crin.display_number} is already on the compounding board.")
             return _redirect_after_send_block()
 
         availability = _mb_availability(plan, crin.compound_code, spec=spec)
@@ -3335,7 +3336,7 @@ def send_to_board(request, crin_id: int):
 
         line.save(update_fields=update_fields)
 
-    messages.success(request, f"Sent {crin.crin_number} to the compounding board (shift {shift}).")
+    messages.success(request, f"Sent {crin.display_number} to the compounding board (shift {shift}).")
     next_url = (request.POST.get("next") or "").strip()
     if next_url.startswith("/"):
         return redirect(next_url)
@@ -3386,7 +3387,7 @@ def fb_planning_page(request):
         crins.append(
             {
                 "id": crin.id,
-                "crin_number": crin.crin_number,
+                "crin_number": crin.display_number,
                 "compound_code": crin.compound_code,
                 "quantity": crin.quantity,
                 "fb_planning": fb_batches,

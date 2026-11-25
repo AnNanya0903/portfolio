@@ -58,7 +58,7 @@
               </thead>
               <tbody>
                 {% for item in stage.items %}
-                  <tr data-work-row data-search="{{ item.crin_number|lower }} {{ item.compound_code|lower }}">
+                  <tr data-work-row data-search="{{ item.crin_number|lower }} {{ item.full_number|lower }} {{ item.compound_code|lower }}">
                     <td><span class="fw-semibold">{{ item.crin_number }}</span><div class="small text-muted">{{ item.plan_date|date:"d M Y" }}</div></td>
                     <td class="fw-semibold">{{ item.compound_code }}</td>
                     <td class="text-end">{{ item.ordered }}</td>

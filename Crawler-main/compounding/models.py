@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, time, timedelta, timezone as dt_timezone
 
 from django.conf import settings
@@ -204,6 +205,12 @@ class CompoundingCRIN(models.Model):
         if self._state.adding and self.ordered_quantity is None:
             self.ordered_quantity = self.quantity
         super().save(*args, **kwargs)
+
+    @property
+    def display_number(self) -> str:
+        """The number people see: a multi-compound CRIN shares one number, without -1, -2, -3."""
+        match = re.fullmatch(r"(CRIN-\d{4}-\d+)-\d+", self.crin_number or "")
+        return match.group(1) if match else self.crin_number
 
     @property
     def order_quantity(self) -> int:
