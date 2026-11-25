@@ -25,8 +25,8 @@ class HiddenSectionTests(TestCase):
 
     def test_default_setting_hides_only_the_rarely_used_sections(self):
         from django.conf import settings
-        rarely_used = {"design", "discussion", "document_scanner", "gasket_counter",
-                       "mrp", "deskera", "accounts"}  # compounding is shown
+        rarely_used = {"discussion", "document_scanner", "gasket_counter",
+                       "mrp", "deskera", "accounts"}  # compounding and design are shown
         self.assertEqual(settings.MAGICWAND_HIDDEN_SERVICES, rarely_used)
         shown = {slug for slug, on in self._flags().items() if on}
         self.assertEqual(shown, set(SERVICE_DEFINITIONS) - rarely_used)
@@ -68,11 +68,12 @@ class HiddenSectionTests(TestCase):
     def test_default_menus_hide_the_rarely_used_sections_but_keep_the_rest(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
         for text in (">Intelligence</summary>", "</i> Gmail AI", "</i> Quotations",
-                     ">Operations</summary>", "</i> Compounding"):  # Gmail AI and Compounding stay visible
+                     ">Operations</summary>", "</i> Compounding",
+                     "</i> Design Match"):  # Gmail AI, Compounding and Design Match stay visible
             self.assertIn(text, page, text)
         for text in (">Integrations</summary>", ">Utilities</summary>", ">Collaboration</summary>",
                      "</i> Manufacturing", "</i> Deskera MRP", "</i> Accounts Portal",
-                     "</i> Design Match", "</i> Documents", "</i> Gasket Counter", "</i> Forum",
+                     "</i> Documents", "</i> Gasket Counter", "</i> Forum",
                      "Pending Tasks"):
             self.assertNotIn(text, page, text)
 
