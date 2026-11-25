@@ -468,6 +468,15 @@ def _seed_rollover_lines_for_display(plan: CompoundingPlan) -> None:
         if all(value <= 0 for value in (shift1_mb, shift2_mb, shift3_mb, shift1_fb, shift2_fb, shift3_fb)):
             continue
 
+        if previous_line.crin_request_id and not previous_line.actuals_saved:
+            # A CRIN's unfinished line moves to the new day with its CRIN link, so saving
+            # it can still send the remaining batches back to that CRIN's planning.
+            previous_line.plan = plan
+            previous_line.position = next_position
+            previous_line.save(update_fields=["plan", "position", "updated_at"])
+            next_position += 1
+            continue
+
         CompoundingLine.objects.create(
             plan=plan,
             position=next_position,
