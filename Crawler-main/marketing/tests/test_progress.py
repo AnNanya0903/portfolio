@@ -72,3 +72,30 @@ class BoardShowsProgressTests(TestCase):
         MarketingActivity.objects.create(lead=lead, kind="system", text=lost.REPLY_NOTE + ".")
         page = self.client.get(reverse("marketing:board"), {"progress": "action"})
         self.assertEqual(sorted(r["enquiry_id"] for r in page.context["rows"]), ["E1", "E3"])
+
+
+@override_settings(STATICFILES_STORAGE="django.contrib.staticfiles.storage.StaticFilesStorage")
+class DoNotContactOnlyInItsOwnCardTests(TestCase):
+    def setUp(self):
+        self.client.force_login(get_user_model().objects.create_superuser("mk", "mk@example.com", "x"))
+        old = timezone.now() - timedelta(days=40)
+        enquiries = [{"enquiry_id": eid, "status": "rejected", "subject": "Gaskets", "customer_name": eid,
+                      "remarks": "", "received_at_dt": old} for eid in ("R1", "R2")]
+        patch("enquiries.services.list_enquiries", return_value=enquiries).start()
+        self.addCleanup(patch.stopall)
+        MarketingLead.objects.create(enquiry_id="R2", do_not_contact=True)
+
+    def ids(self, **params):
+        page = self.client.get(reverse("marketing:board"), params)
+        return page, sorted(r["enquiry_id"] for r in page.context["rows"])
+
+    def test_rejected_card_and_list_leave_out_do_not_contact(self):
+        page, rows = self.ids(kind="rejected")
+        self.assertEqual(rows, ["R1"])
+        summary = page.context["summary"]
+        self.assertEqual((summary["rejected"], summary["do_not_contact"], summary["total"]), (1, 1, 2))
+
+    def test_do_not_contact_card_still_lists_them(self):
+        self.assertEqual(self.ids(stage="do_not_contact")[1], ["R2"])
+        self.assertEqual(self.ids(stage="do_not_contact", kind="rejected")[1], ["R2"])
+        self.assertEqual(self.ids()[1], ["R1", "R2"])  # All lost enquiries still shows everyone

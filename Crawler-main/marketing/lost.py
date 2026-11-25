@@ -456,6 +456,10 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
     for row in leads:
         if chosen["kind"] and row["kind"] != chosen["kind"]:
             continue
+        # Do not contact customers belong only under Do not contact, never under Rejected / No response
+        # (unless that stage is asked for together with the lead source).
+        if chosen["kind"] and row["stage"] == STAGE_DO_NOT_CONTACT and chosen["stage"] != STAGE_DO_NOT_CONTACT:
+            continue
         if chosen["stage"] and row["stage"] != chosen["stage"]:
             continue
         if chosen["progress"] and row["progress"] != chosen["progress"]:
@@ -484,8 +488,9 @@ def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
         by_reason[label] = by_reason.get(label, 0) + 1
     return {
         "total": len(leads),
-        "rejected": sum(1 for r in leads if r["kind"] == REJECTED),
-        "no_response": sum(1 for r in leads if r["kind"] == NO_RESPONSE),
+        # Do not contact customers are counted only in the Do not contact card.
+        "rejected": sum(1 for r in leads if r["kind"] == REJECTED and r["stage"] != STAGE_DO_NOT_CONTACT),
+        "no_response": sum(1 for r in leads if r["kind"] == NO_RESPONSE and r["stage"] != STAGE_DO_NOT_CONTACT),
         "ready": sum(1 for r in leads if r["stage"] == STAGE_READY),
         "revived": sum(1 for r in leads if r["stage"] == STAGE_REVIVED),
         # Same rule as the "Do not contact" stage filter, so the card and the filtered list always agree.
