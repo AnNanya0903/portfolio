@@ -52,10 +52,12 @@ STAGE_LABELS = {
 PROGRESS_DONE = "done"
 PROGRESS_RUNNING = "running"
 PROGRESS_ACTION = "action"
+PROGRESS_LOST = "lost"  # Do not contact: the order is lost for good, not "completed"
 PROGRESS_LABELS = {
     PROGRESS_ACTION: "Needs action",
     PROGRESS_RUNNING: "In progress",
     PROGRESS_DONE: "Completed",
+    PROGRESS_LOST: "Lost order",
 }
 
 REASON_LABELS = dict(MarketingLead.REASON_CHOICES)
@@ -155,9 +157,10 @@ def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, repli
 
 
 def lead_progress(stage: str, revived_enquiry_id: str, flag: str, auto: Optional[Dict[str, Any]]) -> Dict[str, str]:
-    """Whether marketing is finished with a lead: {"key": done/running/action, "label", "detail"}.
+    """Whether marketing is finished with a lead: {"key": done/running/action/lost, "label", "detail"}.
 
-    Completed: won back (revived), Do not contact, or every automatic follow-up and the closing email went out.
+    Lost order: marked Do not contact.
+    Completed: won back (revived), or every automatic follow-up and the closing email went out.
     In progress: the automatic follow-ups are still being sent; nothing to do yet.
     Needs action: the customer replied, the email failed, or nobody has contacted the customer yet.
     """
@@ -167,7 +170,7 @@ def lead_progress(stage: str, revived_enquiry_id: str, flag: str, auto: Optional
     if stage == STAGE_REVIVED:
         return out(PROGRESS_DONE, f"Won back: new enquiry {revived_enquiry_id}" if revived_enquiry_id else "Won back")
     if stage == STAGE_DO_NOT_CONTACT:
-        return out(PROGRESS_DONE, "Do not contact")
+        return out(PROGRESS_LOST, "Do not contact")
     state = (auto or {}).get("state")
     if state == "replied" or flag == MarketingLead.FLAG_REPLIED:
         return out(PROGRESS_ACTION, "Customer replied: call or email them")
@@ -513,5 +516,6 @@ def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
         "done": sum(1 for r in leads if r["progress"] == PROGRESS_DONE),
         "running": sum(1 for r in leads if r["progress"] == PROGRESS_RUNNING),
         "action": sum(1 for r in leads if r["progress"] == PROGRESS_ACTION),
+        "lost": sum(1 for r in leads if r["progress"] == PROGRESS_LOST),
         "by_reason": sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0])),
     }

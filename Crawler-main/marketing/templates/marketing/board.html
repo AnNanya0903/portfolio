@@ -23,12 +23,14 @@
   .mk-progress--done { background: #dcfce7; color: #166534; border-color: #86efac; }
   .mk-progress--running { background: #e0f2fe; color: #075985; border-color: #7dd3fc; }
   .mk-progress--action { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .mk-progress--lost { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
   .mk-progress-detail { font-size: 0.75rem; color: #334155; margin-top: 3px; max-width: 200px; }
-  tr.mk-row--done td { background: #f8fafc; }
-  tr.mk-row--done .mk-row-link { color: #64748b; }
+  tr.mk-row--done td, tr.mk-row--lost td { background: #f8fafc; }
+  tr.mk-row--done .mk-row-link, tr.mk-row--lost .mk-row-link { color: #64748b; }
   .mk-stat--done { border-left: 4px solid #22c55e; }
   .mk-stat--running { border-left: 4px solid #0ea5e9; }
   .mk-stat--action { border-left: 4px solid #f59e0b; }
+  .mk-stat--lost { border-left: 4px solid #ef4444; }
   .mk-stat.is-active { box-shadow: 0 0 0 2px var(--brand-primary, #2563eb); }
   .mk-reason-row { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.85rem; padding: 4px 0; }
   .mk-muted { font-size: 0.75rem; color: var(--brand-muted, #64748b); }
@@ -61,7 +63,7 @@
 {% endif %}
 
 <div class="row g-3 mb-3" data-progress-cards>
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-6 col-xl-3">
     <a class="mk-stat mk-stat--action{% if chosen.progress == 'action' %} is-active{% endif %}" href="?progress=action"
        title="The customer replied, the email failed, or nobody has contacted the customer yet.">
       <div class="mk-stat-label"><i class="bi bi-exclamation-circle me-1"></i>Needs action (not completed)</div>
@@ -69,7 +71,7 @@
       <div class="mk-muted">Customer replied, email failed, or not contacted yet</div>
     </a>
   </div>
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-6 col-xl-3">
     <a class="mk-stat mk-stat--running{% if chosen.progress == 'running' %} is-active{% endif %}" href="?progress=running"
        title="Automatic follow-up emails are still being sent. Nothing to do until the customer replies or they finish.">
       <div class="mk-stat-label"><i class="bi bi-hourglass-split me-1"></i>In progress (not completed)</div>
@@ -77,12 +79,20 @@
       <div class="mk-muted">Automatic follow-ups still being sent</div>
     </a>
   </div>
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-6 col-xl-3">
     <a class="mk-stat mk-stat--done{% if chosen.progress == 'done' %} is-active{% endif %}" href="?progress=done"
-       title="Won back, marked Do not contact, or every follow-up and the closing email were sent.">
+       title="Won back, or every follow-up and the closing email were sent.">
       <div class="mk-stat-label"><i class="bi bi-check-circle-fill me-1"></i>Completed</div>
       <div class="mk-stat-value text-success">{{ summary.done }}</div>
-      <div class="mk-muted">Won back, Do not contact, or all follow-ups sent</div>
+      <div class="mk-muted">Won back, or all follow-ups sent</div>
+    </a>
+  </div>
+  <div class="col-12 col-md-6 col-xl-3">
+    <a class="mk-stat mk-stat--lost{% if chosen.progress == 'lost' %} is-active{% endif %}" href="?progress=lost"
+       title="Marked Do not contact: the order is lost.">
+      <div class="mk-stat-label"><i class="bi bi-x-circle-fill me-1"></i>Lost order</div>
+      <div class="mk-stat-value" style="color:#b91c1c;">{{ summary.lost }}</div>
+      <div class="mk-muted">Do not contact</div>
     </a>
   </div>
 </div>
@@ -196,7 +206,7 @@
             {% for row in rows %}
               <tr class="mk-row--{{ row.progress }}" data-progress="{{ row.progress }}">
                 <td>
-                  <span class="mk-progress mk-progress--{{ row.progress }}">{% if row.progress == 'done' %}<i class="bi bi-check-circle-fill"></i>{% elif row.progress == 'running' %}<i class="bi bi-hourglass-split"></i>{% else %}<i class="bi bi-exclamation-circle"></i>{% endif %} {{ row.progress_label }}</span>
+                  <span class="mk-progress mk-progress--{{ row.progress }}">{% if row.progress == 'done' %}<i class="bi bi-check-circle-fill"></i>{% elif row.progress == 'running' %}<i class="bi bi-hourglass-split"></i>{% elif row.progress == 'lost' %}<i class="bi bi-x-circle-fill"></i>{% else %}<i class="bi bi-exclamation-circle"></i>{% endif %} {{ row.progress_label }}</span>
                   <div class="mk-progress-detail">{{ row.progress_detail }}</div>
                 </td>
                 <td>

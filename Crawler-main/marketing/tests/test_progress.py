@@ -20,7 +20,8 @@ class LeadProgressTests(SimpleTestCase):
     def test_completed(self):
         won = self.progress(lost.STAGE_REVIVED, revived="E2")
         self.assertEqual((won["key"], won["detail"]), ("done", "Won back: new enquiry E2"))
-        self.assertEqual(self.progress(lost.STAGE_DO_NOT_CONTACT)["key"], "done")
+        dnc = self.progress(lost.STAGE_DO_NOT_CONTACT)
+        self.assertEqual((dnc["key"], dnc["label"], dnc["detail"]), ("lost", "Lost order", "Do not contact"))
         self.assertEqual(self.progress(state="closed")["detail"], "All follow-ups sent, no reply")
         self.assertEqual(self.progress(state="stopped", label="Stopped: email bounced", flag="")["key"], "done")
 
@@ -99,3 +100,11 @@ class DoNotContactOnlyInItsOwnCardTests(TestCase):
         self.assertEqual(self.ids(stage="do_not_contact")[1], ["R2"])
         self.assertEqual(self.ids(stage="do_not_contact", kind="rejected")[1], ["R2"])
         self.assertEqual(self.ids()[1], ["R1", "R2"])  # All lost enquiries still shows everyone
+
+    def test_do_not_contact_is_a_lost_order_not_completed(self):
+        page, rows = self.ids(progress="lost")
+        self.assertEqual(rows, ["R2"])
+        self.assertEqual((page.context["summary"]["lost"], page.context["summary"]["done"]), (1, 0))
+        self.assertContains(page, 'data-progress="lost"')
+        self.assertContains(page, "Lost order")
+        self.assertEqual(self.ids(progress="done")[1], [])
