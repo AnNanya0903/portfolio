@@ -8,13 +8,25 @@
     <div>
       <p class="text-uppercase text-muted small mb-1">Compounding</p>
       <h1 class="mb-1">Today's work</h1>
-      <p class="text-muted mb-0">Every open CRIN, grouped by what it needs next. Oldest CRINs are first and get MB first.</p>
+      <p class="text-muted mb-0">Recent CRINs, grouped by what each needs next. Older open CRINs still get MB first and are one click away.</p>
     </div>
     <div class="d-flex flex-wrap gap-2">
       <a href="{% url 'compounding:display' %}" class="btn btn-outline-secondary"><i class="bi bi-grid-1x2 me-1"></i>Compounding Board</a>
       {% if can_planning %}<a href="{% url 'compounding:planning' %}" class="btn btn-outline-primary"><i class="bi bi-plus-circle me-1"></i>Raise CRIN</a>{% endif %}
       <a href="{% url 'compounding:board' %}" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Back</a>
     </div>
+  </div>
+
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    <div class="btn-group" role="group" aria-label="Show CRINs from">
+      {% for option in range_options %}
+        <a href="{% url 'compounding:work_queue' %}?range={{ option.key }}" class="btn btn-sm {% if option.key == range_key %}btn-primary{% else %}btn-outline-primary{% endif %}"{% if option.key == range_key %} aria-current="true"{% endif %}>{{ option.label }}</a>
+      {% endfor %}
+    </div>
+    {% if queue.hidden %}
+      <span class="small text-muted" data-work-hidden="{{ queue.hidden }}">{{ queue.hidden }} older open CRIN{{ queue.hidden|pluralize }} hidden.
+        <a href="{% url 'compounding:work_queue' %}?range=all">Show all open</a></span>
+    {% endif %}
   </div>
 
   <nav class="row row-cols-2 row-cols-lg-4 g-2 mb-3" aria-label="Work stages">
@@ -34,7 +46,7 @@
   </div>
 
   {% if not queue.total %}
-    <div class="alert alert-success">No open CRINs. Everything raised has been issued.</div>
+    <div class="alert alert-success">{% if queue.hidden %}Nothing recent is open. {{ queue.hidden }} older open CRIN{{ queue.hidden|pluralize }} {{ queue.hidden|pluralize:"is,are" }} hidden. <a class="alert-link" href="{% url 'compounding:work_queue' %}?range=all">Show all open</a>{% else %}No open CRINs. Everything raised has been issued.{% endif %}</div>
   {% endif %}
 
   {% for stage in queue.stages %}

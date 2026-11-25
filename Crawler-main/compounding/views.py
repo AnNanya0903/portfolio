@@ -1893,8 +1893,29 @@ WORK_STAGES = [
 ]
 
 
-def _work_queue() -> Dict[str, Any]:
-    """Every open CRIN in the step it needs next, oldest first."""
+WORK_RANGES = {
+    "today": "Today",
+    "week": "Last 7 days",
+    "all": "All open",
+}
+
+
+def _work_since(range_key: str) -> Optional[date]:
+    today = compounding_business_date()
+    if range_key == "week":
+        return today - timedelta(days=6)
+    if range_key == "all":
+        return None
+    return today
+
+
+def _work_queue(since: Optional[date] = None) -> Dict[str, Any]:
+    """
+    Open CRINs in the step each needs next, oldest first.
+
+    MB is shared out across every open CRIN so older ones are served first, then only
+    the CRINs from `since` onward are shown. Older ones are counted, not lost.
+    """
     crins = list(
         CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN)
         .select_related("plan")
@@ -1978,25 +1999,39 @@ def _work_queue() -> Dict[str, Any]:
             item["suggested_batches"] = int((remaining / mb_weight).to_integral_value(rounding=ROUND_CEILING)) if mb_weight else 0
         groups["mb"].append(item)
 
+    def is_recent(item: Dict[str, Any]) -> bool:
+        if since is None:
+            return True
+        return item["plan_date"] >= since or bool(item.get("board_date") and item["board_date"] >= since)
+
+    all_count = sum(len(items) for items in groups.values())
+    if since is not None:
+        groups = {key: [item for item in items if is_recent(item)] for key, items in groups.items()}
     stages = [
         {"key": key, "title": title, "hint": hint, "color": color, "items": groups[key]}
         for key, title, hint, color in WORK_STAGES
     ]
-    return {"stages": stages, "total": sum(len(items) for items in groups.values())}
+    shown = sum(len(items) for items in groups.values())
+    return {"stages": stages, "total": shown, "hidden": all_count - shown}
 
 
 @login_required
 @require_any_service_access(["compounding_planning", "compounding_board"])
 @require_http_methods(["GET"])
 def work_queue(request):
+    range_key = (request.GET.get("range") or "today").strip().lower()
+    if range_key not in WORK_RANGES:
+        range_key = "today"
     return render(
         request,
         "magicwand/compounding_work.html",
         {
-            "queue": _work_queue(),
+            "queue": _work_queue(_work_since(range_key)),
             "can_planning": user_has_service_access(request.user, "compounding_planning"),
             "today": compounding_business_date(),
-            "back_url": reverse("compounding:work_queue"),
+            "range_key": range_key,
+            "range_options": [{"key": key, "label": label} for key, label in WORK_RANGES.items()],
+            "back_url": f"{reverse('compounding:work_queue')}?range={range_key}",
         },
     )
 
