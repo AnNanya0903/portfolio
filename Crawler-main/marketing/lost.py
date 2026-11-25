@@ -20,7 +20,7 @@ from django.db.models import prefetch_related_objects
 from django.utils import timezone
 
 from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, follow_up_count
-from enquiries.models import CustomerStatusEmail, EnquiryContact, EnquiryFollowup, FollowUpSent
+from enquiries.models import CustomerStatusEmail, EnquiryContact, EnquiryFollowup, EnquiryStatusLog, FollowUpSent
 from kyc import links as kyc_links
 from kyc.models import CustomerContact
 
@@ -34,6 +34,10 @@ NO_RESPONSE = "no_response"
 KIND_LABELS = {REJECTED: "Rejected", NO_RESPONSE: "No response"}
 # The badge on the board and lead detail.
 SOURCE_BADGES = {REJECTED: "Rejected", NO_RESPONSE: "No response after 5 reminders"}
+# Sales rejected the enquiry with the reason "No response" (they followed up themselves, in person or by phone):
+# it is a No response lead, not a Rejected one.
+SALES_NO_RESPONSE_REASON = "No response"
+SALES_NO_RESPONSE_BADGE = "No response after sales follow-up"
 
 STAGE_READY = "ready"
 STAGE_DO_NOT_CONTACT = "do_not_contact"
@@ -273,6 +277,15 @@ def _status_email_dates(enquiry_ids: List[str], kind: str, sent_only: bool) -> D
     return dates
 
 
+def _rejected_for_no_response(enquiry_ids: List[str]) -> set:
+    """Enquiries whose latest rejection was given the reason "No response" by sales."""
+    latest: Dict[str, str] = {}
+    for enquiry_id, reason in (EnquiryStatusLog.objects.filter(enquiry_id__in=enquiry_ids, new_status__iexact="rejected")
+                               .order_by("created_at", "id").values_list("enquiry_id", "lost_reason")):
+        latest[enquiry_id] = reason  # latest wins
+    return {eid for eid, reason in latest.items() if (reason or "").strip().lower() == SALES_NO_RESPONSE_REASON.lower()}
+
+
 def _price_text(enquiry: Mapping[str, Any]) -> str:
     currency = str(enquiry.get("currency") or "").strip()
     for key, unit in (("final_price_per_piece", "pc"), ("final_price_per_meter", "m"),
@@ -299,6 +312,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
     follow_ups = _follow_up_stats(ids)
     closing_sent = _status_email_dates(ids, CustomerStatusEmail.KIND_CLOSING, sent_only=True)
     rejection_seen = _status_email_dates(ids, CustomerStatusEmail.KIND_REJECTION, sent_only=False)
+    sales_no_response = _rejected_for_no_response(ids)
     no_response_closed = dict(EnquiryContact.objects.filter(
         enquiry_id__in=ids, close_reason=EnquiryContact.CLOSE_NO_RESPONSE).exclude(moved_to_marketing_at=None)
         .values_list("enquiry_id", "moved_to_marketing_at"))
@@ -312,7 +326,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         kind = None
         lost_at = None
         if _status(enquiry) == "rejected":
-            kind = REJECTED
+            kind = NO_RESPONSE if enquiry_id in sales_no_response else REJECTED
             lost_at = rejection_seen.get(enquiry_id)
         elif enquiry_id in no_response_closed:
             kind = NO_RESPONSE
@@ -326,7 +340,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             lost_at = stats["last"] + timedelta(days=silent_days)
         if kind is None:
             continue
-        found[enquiry_id] = {"enquiry": enquiry, "kind": kind, "lost_at": lost_at, "follow_ups": stats}
+        badge = SALES_NO_RESPONSE_BADGE if enquiry_id in sales_no_response and kind == NO_RESPONSE else SOURCE_BADGES[kind]
+        found[enquiry_id] = {"enquiry": enquiry, "kind": kind, "lost_at": lost_at, "follow_ups": stats, "badge": badge}
 
     if not found:
         return []
@@ -399,7 +414,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "other_emails": [a for a in others.get(enquiry_id, []) if a != emails.get(enquiry_id, "").lower()],
             "kind": item["kind"],
             "kind_label": KIND_LABELS[item["kind"]],
-            "source_badge": SOURCE_BADGES[item["kind"]],
+            "source_badge": item["badge"],
             "flag": lead.flag if lead else "",
             "flag_label": lead.get_flag_display() if lead and lead.flag else "",
             "reason_key": reason_key,
