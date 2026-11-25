@@ -1056,7 +1056,7 @@ def _available_mb_batches(*, mb_stock: Optional[Decimal], mb_weight: Optional[De
 
 def _mb_demand_by_compound(plan: CompoundingPlan) -> Dict[str, Dict[str, int]]:
     """
-    Outstanding batches per compound for a plan.
+    Outstanding batches per compound across every date, because MB stock is shared.
 
     - on_board_fb: FB batches on unsaved board lines (these reserve MB stock)
     - incoming_mb: MB batches on unsaved board lines (MB that is yet to be made)
@@ -1068,7 +1068,7 @@ def _mb_demand_by_compound(plan: CompoundingPlan) -> Dict[str, Dict[str, int]]:
         return demand.setdefault(key, {"on_board_fb": 0, "incoming_mb": 0, "waiting_fb": 0})
 
     on_board_crin_ids: set[int] = set()
-    for line in plan.lines.filter(actuals_saved=False):
+    for line in CompoundingLine.objects.filter(actuals_saved=False):
         if line.crin_request_id:
             on_board_crin_ids.add(line.crin_request_id)
         key = _normalize_compound_code(line.compound_code)
@@ -1082,10 +1082,12 @@ def _mb_demand_by_compound(plan: CompoundingPlan) -> Dict[str, Dict[str, int]]:
 
     # A CRIN stays open until issued, but a saved linked line means its batches are made.
     made_crin_ids = set(
-        plan.lines.filter(actuals_saved=True, crin_request__isnull=False).values_list("crin_request_id", flat=True)
+        CompoundingLine.objects.filter(actuals_saved=True, crin_request__isnull=False).values_list(
+            "crin_request_id", flat=True
+        )
     )
     fb_weights: Dict[str, Optional[Decimal]] = {}
-    for crin in plan.crins.filter(status=CompoundingCRIN.STATUS_OPEN):
+    for crin in CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN):
         if crin.id in on_board_crin_ids or crin.id in made_crin_ids:
             continue
         key = _normalize_compound_code(crin.compound_code)
@@ -1278,9 +1280,9 @@ def _mb_shortage_alerts(
     demand = demand if demand is not None else _mb_demand_by_compound(plan)
     negative_stock = _negative_mb_stock(plan)
     codes: Dict[str, str] = {}
-    for code in plan.crins.filter(status=CompoundingCRIN.STATUS_OPEN).values_list("compound_code", flat=True):
+    for code in CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN).values_list("compound_code", flat=True):
         codes.setdefault(_normalize_compound_code(code), code)
-    for code in plan.lines.filter(actuals_saved=False).values_list("compound_code", flat=True):
+    for code in CompoundingLine.objects.filter(actuals_saved=False).values_list("compound_code", flat=True):
         codes.setdefault(_normalize_compound_code(code), code)
 
     alerts: List[Dict[str, Any]] = []
@@ -2471,11 +2473,18 @@ def planning(request):
     compounds_ready = bool(compound_values)
 
     crins: list[dict[str, Any]] = []
-    for crin in plan.crins.all().order_by("-created_at", "-id"):
+    # Open CRINs from earlier days stay listed until they are issued.
+    for crin in (
+        CompoundingCRIN.objects.filter(models.Q(plan=plan) | models.Q(status=CompoundingCRIN.STATUS_OPEN))
+        .select_related("plan")
+        .order_by("-created_at", "-id")
+    ):
         crins.append(
             {
                 "id": crin.id,
                 "crin_number": crin.display_number,
+                "plan_date": crin.plan.plan_date,
+                "is_older": crin.plan_id != plan.id,
                 "compound_code": crin.compound_code,
                 "quantity": crin.quantity,
                 "mb_planning": crin.mb_planning,
@@ -3281,7 +3290,9 @@ def mb_planning_set(request):
 def send_to_board(request, crin_id: int):
     plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
-    crin = get_object_or_404(CompoundingCRIN, id=crin_id, plan=plan)
+    crin = get_object_or_404(CompoundingCRIN, id=crin_id)
+    if crin.plan_id != plan.id and crin.status != CompoundingCRIN.STATUS_OPEN:
+        raise Http404("This CRIN is closed.")
 
     def _redirect_after_send_block(default_path: str = ""):
         next_url = (request.POST.get("next") or "").strip()
@@ -3292,7 +3303,7 @@ def send_to_board(request, crin_id: int):
             return redirect(referer)
         return redirect(default_path or f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
-    if plan.lines.filter(crin_request=crin).exists():
+    if CompoundingLine.objects.filter(crin_request=crin).exists():
         messages.info(request, f"{crin.display_number} is already on the compounding board.")
         return _redirect_after_send_block()
 
@@ -3324,7 +3335,7 @@ def send_to_board(request, crin_id: int):
     # Lock the plan so two simultaneous sends cannot reserve the same MB stock.
     with transaction.atomic():
         CompoundingPlan.objects.select_for_update().get(pk=plan.pk)
-        if plan.lines.filter(crin_request=crin).exists():
+        if CompoundingLine.objects.filter(crin_request=crin).exists():
             messages.info(request, f"{crin.display_number} is already on the compounding board.")
             return _redirect_after_send_block()
 
@@ -3387,23 +3398,19 @@ def send_to_board(request, crin_id: int):
 def fb_planning_page(request):
     plan_date = _parse_date(request.GET.get("date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
+    # Every open CRIN is listed, whatever day it was raised, plus this day's finished ones.
     crin_objs = list(
-        plan.crins.annotate(
+        CompoundingCRIN.objects.filter(models.Q(plan=plan) | models.Q(status=CompoundingCRIN.STATUS_OPEN))
+        .select_related("plan")
+        .annotate(
             has_line=models.Exists(
-                CompoundingLine.objects.filter(
-                    plan=plan,
-                    crin_request=models.OuterRef("pk"),
-                    actuals_saved=False,
-                )
+                CompoundingLine.objects.filter(crin_request=models.OuterRef("pk"), actuals_saved=False)
             ),
             has_done_line=models.Exists(
-                CompoundingLine.objects.filter(
-                    plan=plan,
-                    crin_request=models.OuterRef("pk"),
-                    actuals_saved=True,
-                )
+                CompoundingLine.objects.filter(crin_request=models.OuterRef("pk"), actuals_saved=True)
             ),
-        ).order_by("-created_at", "-id")
+        )
+        .order_by("-created_at", "-id")
     )
     demand = _mb_demand_by_compound(plan)
     crins: list[dict[str, Any]] = []
@@ -3432,6 +3439,8 @@ def fb_planning_page(request):
                 "has_done_line": bool(getattr(crin, "has_done_line", False)),
                 "mb_needed": _decimal_text(mb_needed) if mb_needed is not None else "—",
                 "mb_free": _decimal_text(free_mb) if free_mb is not None else "—",
+                "plan_date": crin.plan.plan_date,
+                "is_older": crin.plan_id != plan.id,
                 "mb_short": "—",
                 "mb_is_short": False,
                 "mb_ready": True,

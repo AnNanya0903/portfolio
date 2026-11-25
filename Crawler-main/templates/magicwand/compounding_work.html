@@ -117,7 +117,7 @@
                           <form method="post" action="{% url 'compounding:send_to_board' item.id %}" class="d-inline-flex flex-wrap gap-1 justify-content-end js-work-form" data-confirm="Send {{ item.crin_number }} ({{ item.compound_code }}) FB to the board?">
                             {% csrf_token %}
                             <input type="hidden" name="next" value="{{ back_url }}">
-                            <input type="hidden" name="plan_date" value="{{ item.plan_date|date:'Y-m-d' }}">
+                            <input type="hidden" name="plan_date" value="{{ today|date:'Y-m-d' }}">
                             <select class="form-select form-select-sm" style="width: 104px;" name="shift" aria-label="Shift for {{ item.crin_number }}">
                               <option value="1">1st shift</option><option value="2">2nd shift</option><option value="3">3rd shift</option>
                             </select>
