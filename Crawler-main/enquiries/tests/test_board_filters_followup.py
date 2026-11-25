@@ -610,8 +610,8 @@ class CustomerFieldsOnCreateTests(TestCase):
     def test_board_shows_the_new_fields(self):
         with patch("enquiries.views.services.list_enquiries", return_value=[]):
             response = self.client.get(reverse("enquiries:board"))
-        self.assertContains(response, 'name="customer_email"', count=2)
-        self.assertContains(response, 'name="customer_name"', count=2)
+        self.assertContains(response, 'name="customer_email"', count=1)  # only the PDF RFQ form now
+        self.assertContains(response, 'name="customer_name"', count=1)  # only the PDF RFQ form now
 
 
 class FollowUpTemplateTests(TestCase):

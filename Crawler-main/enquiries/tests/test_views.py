@@ -73,9 +73,12 @@ class EnquiryViewRenderingTests(TestCase):
         self.assertContains(response, "Generate Link")
 
     @patch("enquiries.views.services.list_enquiries", return_value=[])
-    def test_board_displays_sheet_cta_button(self, _mock_list):
+    def test_board_has_no_new_enquiry_sheet_card(self, _mock_list):
+        # Excel now goes in through the quotation portal; the board keeps only the PDF RFQ upload.
         response = self.client.get(reverse("enquiries:board"))
-        self.assertContains(response, "data-open-google-sheet")
+        self.assertNotContains(response, "New Enquiry Sheet")
+        self.assertNotContains(response, "createSheetForm")
+        self.assertContains(response, "Upload PDF RFQ")
 
     @patch("enquiries.views.services.list_enquiries")
     def test_board_displays_generate_link_action(self, mock_list):
