@@ -2473,9 +2473,9 @@ def planning(request):
     compounds_ready = bool(compound_values)
 
     crins: list[dict[str, Any]] = []
-    # Open CRINs from earlier days stay listed until they are issued.
+    scope = _recent_crin_scope(request, plan)
     for crin in (
-        CompoundingCRIN.objects.filter(models.Q(plan=plan) | models.Q(status=CompoundingCRIN.STATUS_OPEN))
+        CompoundingCRIN.objects.filter(scope["query"])
         .select_related("plan")
         .order_by("-created_at", "-id")
     ):
@@ -2527,6 +2527,9 @@ def planning(request):
             "crin_compounds_ready": compounds_ready,
             "master_sheet": master_sheet_context,
             "mb_alerts": _mb_shortage_alerts(plan),
+            "show_all_open": scope["show_all"],
+            "hidden_older": scope["hidden_older"],
+            "since": scope["since"],
             "show_iot_dashboard": _iot_dashboard_available(),
         },
     )
@@ -3064,6 +3067,27 @@ def create_crin(request):
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
 
+def _recent_crin_scope(request, plan: CompoundingPlan) -> Dict[str, Any]:
+    """
+    Which CRINs a planning screen lists: this day's, plus open ones raised the day before
+    (so yesterday evening's CRINs are still there). Older open CRINs are counted, not listed,
+    unless "All open" is chosen.
+    """
+    show_all = (request.GET.get("range") or "").strip().lower() == "all"
+    since = plan.plan_date - timedelta(days=1)
+    if show_all:
+        query = models.Q(plan=plan) | models.Q(status=CompoundingCRIN.STATUS_OPEN)
+        hidden = 0
+    else:
+        query = models.Q(plan=plan) | (models.Q(status=CompoundingCRIN.STATUS_OPEN) & models.Q(plan__plan_date__gte=since))
+        hidden = (
+            CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN, plan__plan_date__lt=since)
+            .exclude(plan=plan)
+            .count()
+        )
+    return {"query": query, "show_all": show_all, "hidden_older": hidden, "since": since}
+
+
 def _crin_can_be_deleted(crin: CompoundingCRIN) -> bool:
     """A CRIN can be deleted until production is recorded, so no stock history is lost."""
     if (
@@ -3398,9 +3422,9 @@ def send_to_board(request, crin_id: int):
 def fb_planning_page(request):
     plan_date = _parse_date(request.GET.get("date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
-    # Every open CRIN is listed, whatever day it was raised, plus this day's finished ones.
+    scope = _recent_crin_scope(request, plan)
     crin_objs = list(
-        CompoundingCRIN.objects.filter(models.Q(plan=plan) | models.Q(status=CompoundingCRIN.STATUS_OPEN))
+        CompoundingCRIN.objects.filter(scope["query"])
         .select_related("plan")
         .annotate(
             has_line=models.Exists(
@@ -3481,7 +3505,14 @@ def fb_planning_page(request):
     return render(
         request,
         "magicwand/compounding_fb_plan.html",
-        {"plan": plan, "crins": crins, "mb_alerts": _mb_shortage_alerts(plan, demand=demand)},
+        {
+            "plan": plan,
+            "crins": crins,
+            "mb_alerts": _mb_shortage_alerts(plan, demand=demand),
+            "show_all_open": scope["show_all"],
+            "hidden_older": scope["hidden_older"],
+            "since": scope["since"],
+        },
     )
 
 

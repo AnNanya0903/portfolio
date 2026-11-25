@@ -145,3 +145,54 @@ class OlderOpenCRINTests(TestCase):
         )
 
         self.assertEqual(crin.planned_lines.get().plan.plan_date, self.today)
+
+
+class RecentCRINScopeTests(OlderOpenCRINTests):
+    """FB planning and Planning list recent CRINs by default, with older open ones one click away."""
+
+    def _stale_crin(self, days=5):
+        plan = CompoundingPlan.objects.create(plan_date=self.today - timedelta(days=days), cjc_number=490, created_by=self.user)
+        return CompoundingCRIN.objects.create(plan=plan, crin_number="CRIN-STALE", compound_code="7020", quantity=600, created_by=self.user)
+
+    def test_fb_planning_hides_old_crins_but_keeps_yesterdays(self):
+        yesterday_crin = self._old_crin("CRIN-YDAY")
+        stale = self._stale_crin()
+
+        response = self._fb_page()
+
+        shown = [row["id"] for row in response.context["crins"]]
+        self.assertIn(yesterday_crin.id, shown)
+        self.assertNotIn(stale.id, shown)
+        self.assertEqual(response.context["hidden_older"], 1)
+        self.assertContains(response, "1 older open CRIN hidden")
+        self.assertContains(response, "range=all")
+
+    def test_all_open_shows_the_old_ones_too(self):
+        stale = self._stale_crin()
+
+        response = self._fb_page(range="all")
+
+        self.assertIn(stale.id, [row["id"] for row in response.context["crins"]])
+        self.assertEqual(response.context["hidden_older"], 0)
+        self.assertContains(response, "Show recent only")
+
+    def test_planning_page_hides_old_crins_too(self):
+        recent = self._old_crin("CRIN-YDAY")
+        stale = self._stale_crin()
+
+        response = self.client.get(reverse("compounding:planning"), {"date": self.today.isoformat()})
+
+        shown = [row["id"] for row in response.context["crin_requests"]]
+        self.assertIn(recent.id, shown)
+        self.assertNotIn(stale.id, shown)
+        self.assertEqual(response.context["hidden_older"], 1)
+        everything = self.client.get(reverse("compounding:planning"), {"date": self.today.isoformat(), "range": "all"})
+        self.assertIn(stale.id, [row["id"] for row in everything.context["crin_requests"]])
+
+    def test_a_days_own_closed_crin_still_shows_and_no_note_when_nothing_is_hidden(self):
+        done = self._old_crin("CRIN-DONE", status=CompoundingCRIN.STATUS_CLOSED)
+
+        response = self.client.get(reverse("compounding:fb_planning"), {"date": self.yesterday.isoformat()})
+
+        self.assertIn(done.id, [row["id"] for row in response.context["crins"]])
+        self.assertNotContains(response, "older open CRIN")
