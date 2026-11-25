@@ -3350,6 +3350,46 @@ def apply_crin(request, crin_id: int):
     return send_to_board(request, crin_id=crin.id)
 
 
+def _split_crin_for_stock(crin: CompoundingCRIN, *, send_batches: int, spec: Dict[str, Any]) -> CompoundingCRIN:
+    """
+    Send only the FB batches the MB stock covers.
+
+    The batches that can be made now go to a new part of the same CRIN (same shown number);
+    the rest stays on this CRIN, in FB planning, waiting for MB.
+    """
+    total_batches = int(crin.fb_planning or 0)
+    batch_size = spec.get("fb_total_weight")
+    if batch_size is not None and batch_size > 0:
+        sent_quantity = int(Decimal(send_batches) * batch_size)
+    else:
+        sent_quantity = int(crin.quantity) * send_batches // max(total_batches, 1)
+    sent_quantity = min(max(sent_quantity, 1), max(int(crin.quantity) - 1, 1))
+
+    base = crin.display_number
+    part = 1
+    while CompoundingCRIN.objects.filter(crin_number=f"{base}-{part}").exists():
+        part += 1
+    sibling = CompoundingCRIN.objects.create(
+        plan=crin.plan,
+        request=crin.request,
+        crin_number=f"{base}-{part}",
+        compound_folder=crin.compound_folder,
+        compound_code=crin.compound_code,
+        quantity=sent_quantity,
+        ordered_quantity=sent_quantity,
+        fb_batch_size=crin.fb_batch_size,
+        fb_planning=send_batches,
+        mb_planning=None,
+        mb_msl=crin.mb_msl,
+        created_by=crin.created_by,
+        created_at=crin.created_at,
+    )
+    crin.quantity = max(int(crin.quantity) - sent_quantity, 1)
+    crin.fb_planning = total_batches - send_batches
+    crin.save(update_fields=["quantity", "fb_planning", "updated_at"])
+    return sibling
+
+
 def _ensure_line_for_crin(*, plan: CompoundingPlan, crin: CompoundingCRIN) -> CompoundingLine:
     existing = plan.lines.filter(crin_request=crin).order_by("position", "id").first()
     if existing:
@@ -3540,9 +3580,16 @@ def send_to_board(request, crin_id: int):
 
         availability = _mb_availability(plan, crin.compound_code, spec=spec)
         free_mb_stock = availability["free"]
-        if fb_batches > 0 and (
+        short = fb_batches > 0 and (
             required_mb_stock is None or free_mb_stock is None or free_mb_stock < required_mb_stock
-        ):
+        )
+        if short and request.POST.get("partial"):
+            free_batches = _available_mb_batches(mb_stock=free_mb_stock, mb_weight=spec.get("mb_weight")) or 0
+            if 0 < free_batches < fb_batches:
+                crin = _split_crin_for_stock(crin, send_batches=free_batches, spec=spec)
+                fb_batches = free_batches
+                short = False
+        if short:
             free_mb_batches = _available_mb_batches(mb_stock=free_mb_stock, mb_weight=spec.get("mb_weight"))
             available_batches_text = str(free_mb_batches) if free_mb_batches is not None else "0"
             required_stock_text = _decimal_text(required_mb_stock, places=3) if required_mb_stock is not None else "unknown"
@@ -3649,6 +3696,8 @@ def fb_planning_page(request):
                 "_key": _normalize_compound_code(crin.compound_code),
                 "_needed": mb_needed,
                 "_free": free_mb,
+                "_mb_weight": spec.get("mb_weight"),
+                "partial_batches": 0,
             }
         )
 
@@ -3672,6 +3721,12 @@ def fb_planning_page(request):
         row["mb_ready"] = False
         row["mb_is_short"] = True
         row["mb_short"] = _decimal_text(needed - left)
+        weight = row["_mb_weight"]
+        if weight and weight > 0 and left > 0:
+            covered = int((left / weight).to_integral_value(rounding=ROUND_FLOOR))
+            if 0 < covered < int(row["fb_planning"] or 0):
+                row["partial_batches"] = covered
+                free_left[row["_key"]] = left - Decimal(covered) * weight
         row["mb_alert"] = (
             f"MB stock is not available for {row['compound_code']}. "
             f"Required {_decimal_text(needed)}, available {_decimal_text(left)}, "

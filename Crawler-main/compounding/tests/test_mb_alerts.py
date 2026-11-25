@@ -213,7 +213,9 @@ class MBStockAlertTests(TestCase):
 
         self.assertContains(response, "Waiting for MB")
         self.assertContains(response, "Plan MB first")
-        self.assertNotContains(response, reverse("compounding:send_to_board", args=[crin.id]))
+        # Only the part the stock covers can be sent; the full Send button is not offered.
+        self.assertContains(response, "Send 4 now")
+        self.assertNotContains(response, 'aria-label="Send to board"')
 
     def test_oldest_crin_gets_the_free_mb(self):
         self._sheet(mb_stock="1000")
