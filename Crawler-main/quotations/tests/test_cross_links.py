@@ -26,11 +26,11 @@ class CrossLinkTests(TestCase):
                                            title="Gasket quote")
         self.q2 = Quotation.objects.create(customer_name="Other Ltd", enquiry_id="ENQ-8", title="Other quote")
 
-    def test_the_menu_lists_quotations_above_enquiries(self):
+    def test_the_menu_lists_enquiries_kyc_marketing_then_quotations(self):
         html = self.client.get(reverse("quotations:list")).content.decode()
-        self.assertLess(html.index('href="/quotations/"'), html.index('href="/kyc/"'))
-        self.assertLess(html.index('href="/kyc/"'), html.index('href="/enquiries/"'))
-        self.assertLess(html.index('href="/enquiries/"'), html.index('href="/marketing/"'))
+        self.assertLess(html.index('href="/enquiries/"'), html.index('href="/kyc/"'))
+        self.assertLess(html.index('href="/kyc/"'), html.index('href="/marketing/"'))
+        self.assertLess(html.index('href="/marketing/"'), html.index('href="/quotations/"'))
 
     def test_a_quotation_links_to_its_enquiry_and_its_kyc_customer(self):
         page = self.client.get(reverse("quotations:detail", args=[self.q1.pk]))

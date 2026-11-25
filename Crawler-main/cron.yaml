@@ -13,3 +13,9 @@ cron:
   target: magicwand-backend
   retry_parameters:
     job_retry_limit: 0
+- description: "KYC links: mark expired links and send the reminder emails"
+  url: /kyc/api/cron/kyc-links/
+  schedule: every 1 hours
+  target: magicwand-backend
+  retry_parameters:
+    job_retry_limit: 0

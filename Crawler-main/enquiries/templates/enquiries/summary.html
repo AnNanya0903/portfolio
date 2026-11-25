@@ -47,6 +47,13 @@
 </div>
 
 {% if summary %}
+  {% if summary.ai_pending %}
+  <div class="alert alert-info d-flex align-items-center gap-2" data-summary-ai-pending>
+    <i class="bi bi-hourglass-split"></i>
+    <div>The counts below are up to date. The AI narrative and the details read from quotation PDFs are still being prepared;
+      <a href="{{ request.get_full_path }}" class="alert-link">refresh</a> in a few minutes to see them.</div>
+  </div>
+  {% endif %}
   <div class="row g-4">
     <div class="col-lg-4">
       <div class="card shadow-sm h-100">

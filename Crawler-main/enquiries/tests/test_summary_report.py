@@ -65,3 +65,9 @@ class SummaryReportTests(TestCase):
     def test_a_missing_summary_still_renders(self):
         response = self._get(None)
         self.assertContains(response, "Unable to load summary data")
+
+    def test_a_note_while_the_ai_parts_are_being_prepared(self):
+        pending = _summary()
+        pending["ai_pending"] = True
+        self.assertContains(self._get(pending), "data-summary-ai-pending")
+        self.assertNotContains(self._get(_summary()), "data-summary-ai-pending")

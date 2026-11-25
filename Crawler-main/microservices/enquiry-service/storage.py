@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import string
+import threading
 import time
 from datetime import datetime, date, time as dt_time, timedelta, timezone
 from functools import lru_cache
@@ -56,6 +57,8 @@ logger = logging.getLogger(__name__)
 _metadata = MetaData()
 
 _SUMMARY_CACHE: Dict[str, Tuple[float, SummaryResponse]] = {}
+_SUMMARY_BUILDS: Dict[str, "threading.Thread"] = {}  # the background AI build per filter
+_SUMMARY_LOCK = threading.Lock()
 
 
 _SUMMARY_PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
@@ -852,7 +855,8 @@ def _get_engine() -> Engine:
 
     database_url = os.environ.get("ENQUIRY_DATABASE_URL") or os.environ.get("DATABASE_URL")
     if database_url:
-        _engine = create_engine(database_url, future=True)
+        _engine = create_engine(database_url, future=True,
+                                **({} if database_url.startswith("sqlite") else {"pool_pre_ping": True, "pool_recycle": 1800}))
         if database_url.startswith("sqlite"):
             logger.warning(
                 "Enquiry service is running against SQLite (%s); do not use this configuration in production.",
@@ -897,7 +901,8 @@ def _get_engine() -> Engine:
                 db=db_name,
             )
 
-        _engine = create_engine("postgresql+pg8000://", future=True, creator=getconn)
+        _engine = create_engine("postgresql+pg8000://", future=True, creator=getconn,
+                                pool_pre_ping=True, pool_recycle=1800)
         return _engine
 
     host = os.environ.get("DB_HOST", "localhost")
@@ -909,23 +914,37 @@ def _get_engine() -> Engine:
         )
 
     _engine = create_engine(
-        f"postgresql+pg8000://{db_user}:{db_pass}@{host}:{port}/{db_name}", future=True
+        f"postgresql+pg8000://{db_user}:{db_pass}@{host}:{port}/{db_name}", future=True,
+        pool_pre_ping=True, pool_recycle=1800,
     )
     return _engine
 
 
+_SCHEMA_READY_FOR: Optional[int] = None  # id() of the engine whose tables and columns were already checked
+_SCHEMA_LOCK = threading.Lock()
+
+
 def _ensure_schema() -> None:
+    """Create missing tables and columns. Done once per database connection, not on every request:
+    the checks are many small queries, and repeating them made every page wait on the database."""
+    global _SCHEMA_READY_FOR
     engine = _get_engine()
-    try:
-        _metadata.create_all(engine)
-        _ensure_optional_columns(engine)
-    except (InterfaceError, OperationalError) as exc:
-        if not _is_local_environment() or (engine.url and str(engine.url).startswith("sqlite")):
-            raise
-        logger.warning("Enquiry service database unavailable; switching to SQLite fallback.", exc_info=True)
-        engine = _use_sqlite_fallback_engine()
-        _metadata.create_all(engine)
-        _ensure_optional_columns(engine)
+    if _SCHEMA_READY_FOR == id(engine):
+        return
+    with _SCHEMA_LOCK:
+        if _SCHEMA_READY_FOR == id(engine):
+            return
+        try:
+            _metadata.create_all(engine)
+            _ensure_optional_columns(engine)
+        except (InterfaceError, OperationalError) as exc:
+            if not _is_local_environment() or (engine.url and str(engine.url).startswith("sqlite")):
+                raise
+            logger.warning("Enquiry service database unavailable; switching to SQLite fallback.", exc_info=True)
+            engine = _use_sqlite_fallback_engine()
+            _metadata.create_all(engine)
+            _ensure_optional_columns(engine)
+        _SCHEMA_READY_FOR = id(engine)
 
 
 def _ensure_optional_columns(engine: Engine) -> None:
@@ -1511,34 +1530,103 @@ def get_subdivision_attachment(attachment_id: str) -> Optional[AttachmentMeta]:
     )
 
 
+def _summary_cache_seconds() -> int:
+    try:
+        return int(os.getenv("ENQUIRY_SUMMARY_CACHE_SECONDS", "120"))
+    except (TypeError, ValueError):
+        return 120
+
+
+def _summary_ai_enabled() -> bool:
+    return _summary_use_gemini() and bool((os.getenv("GEMINI_API_KEY") or "").strip())
+
+
+def _summary_ai_wait_seconds() -> float:
+    """How long a request waits for the AI summary before answering with the plain one."""
+    try:
+        return max(float(os.getenv("ENQUIRY_SUMMARY_AI_WAIT_SECONDS", "8")), 0.0)
+    except (TypeError, ValueError):
+        return 8.0
+
+
 def summarize_enquiries(
     *,
     period: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> SummaryResponse:
-    global _SUMMARY_CACHE
+    """The summary for the page, without making the page wait minutes for Gemini.
 
-    cache_seconds = 0
-    try:
-        cache_seconds = int(os.getenv("ENQUIRY_SUMMARY_CACHE_SECONDS", "120"))
-    except (TypeError, ValueError):
-        cache_seconds = 120
-
+    Reading quotation PDFs and writing the narrative with Gemini can take several minutes, longer than
+    the portal waits. So when AI is on, one background build per filter adds the AI parts while requests
+    get the plain summary (counts, prices, materials from the enquiry fields) straight away, marked
+    ai_pending. The next load after the build finishes gets the full summary from the cache.
+    """
     selected_period, filter_start_dt, filter_end_dt = _resolve_summary_date_range(
         period=period,
         start_date=start_date,
         end_date=end_date,
     )
     cache_key = _summary_filter_key(selected_period, start_date, end_date)
+    cache_seconds = _summary_cache_seconds()
     now_ts = time.time()
-    if cache_seconds > 0:
+    with _SUMMARY_LOCK:
         cached = _SUMMARY_CACHE.get(cache_key)
-        if cached is not None:
-            cached_at, cached_response = cached
-            if (now_ts - cached_at) < cache_seconds:
-                return cached_response
+    if cached is not None and cache_seconds > 0 and (now_ts - cached[0]) < cache_seconds:
+        return cached[1]
 
+    if not _summary_ai_enabled():
+        response = _build_summary(filter_start_dt, filter_end_dt, use_ai=False)
+        if cache_seconds > 0:
+            with _SUMMARY_LOCK:
+                _SUMMARY_CACHE[cache_key] = (now_ts, response)
+        return response
+
+    build = _start_ai_summary_build(cache_key, filter_start_dt, filter_end_dt)
+    build.join(_summary_ai_wait_seconds())
+    with _SUMMARY_LOCK:
+        fresh = _SUMMARY_CACHE.get(cache_key)
+    if fresh is not None and fresh[0] >= now_ts:
+        return fresh[1]
+    if cached is not None:
+        # An older full summary is better than a plain one while the new one is built.
+        return cached[1]
+    plain = _build_summary(filter_start_dt, filter_end_dt, use_ai=False)
+    copy = getattr(plain, "model_copy", None) or plain.copy  # pydantic 2 / 1
+    return copy(update={"ai_pending": True})
+
+
+def _start_ai_summary_build(cache_key: str, start_dt: Optional[datetime], end_dt: Optional[datetime]):
+    """Start (or join) the single background build of the AI summary for this filter."""
+    with _SUMMARY_LOCK:
+        running = _SUMMARY_BUILDS.get(cache_key)
+        if running is not None and running.is_alive():
+            return running
+
+        def work() -> None:
+            started = time.time()
+            try:
+                response = _build_summary(start_dt, end_dt, use_ai=True)
+            except Exception as exc:  # never let a background failure go unnoticed or crash the worker
+                logger.warning("enquiry_summary_ai_build_failed key=%s err=%s", cache_key, exc)
+                return
+            with _SUMMARY_LOCK:
+                _SUMMARY_CACHE[cache_key] = (time.time(), response)
+            logger.info("enquiry_summary_ai_build_done key=%s seconds=%.1f", cache_key, time.time() - started)
+
+        thread = threading.Thread(target=work, name=f"enquiry-summary-{cache_key}", daemon=True)
+        _SUMMARY_BUILDS[cache_key] = thread
+        thread.start()
+        return thread
+
+
+def _build_summary(
+    filter_start_dt: Optional[datetime],
+    filter_end_dt: Optional[datetime],
+    *,
+    use_ai: bool,
+) -> SummaryResponse:
+    """Build the summary. use_ai=False skips every Gemini call (PDF reading and the narrative)."""
     enquiries = list_enquiries()
     if filter_start_dt is not None or filter_end_dt is not None:
         filtered_enquiries: List[Enquiry] = []
@@ -1576,7 +1664,7 @@ def summarize_enquiries(
     price_per_piece_values: List[float] = []
     price_per_kg_values: List[float] = []
     price_per_meter_values: List[float] = []
-    pdf_insights = _extract_pdf_insights_with_gemini(enquiries)
+    pdf_insights = _extract_pdf_insights_with_gemini(enquiries) if use_ai else {}
 
     for enquiry in enquiries:
         priority_counts[enquiry.priority] = priority_counts.get(enquiry.priority, 0) + 1
@@ -1764,7 +1852,7 @@ def summarize_enquiries(
         ]
         return len(bullet_lines) >= 5
 
-    if _summary_use_gemini():
+    if use_ai and _summary_use_gemini():
         api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
         if api_key:
             try:
@@ -2065,8 +2153,6 @@ def summarize_enquiries(
         highlights=highlights,
         narrative=narrative,
     )
-    if cache_seconds > 0:
-        _SUMMARY_CACHE[cache_key] = (now_ts, response)
     return response
 
 
