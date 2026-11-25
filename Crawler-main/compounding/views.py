@@ -2981,7 +2981,7 @@ def send_remaining_to_planning(request):
 @require_service_access("compounding_planning")
 @require_http_methods(["POST"])
 def create_crin(request):
-    plan_date = _parse_date(request.POST.get("plan_date") or "") or timezone.localdate()
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
 
     selected_compound = _clean_compound_code(request.POST.get("compound_code") or "")
@@ -3134,7 +3134,7 @@ def delete_crin(request, crin_id: int):
 @require_service_access("compounding_planning")
 @require_http_methods(["POST"])
 def apply_crin(request, crin_id: int):
-    plan_date = _parse_date(request.POST.get("plan_date") or "") or timezone.localdate()
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
     crin = get_object_or_404(CompoundingCRIN, id=crin_id, plan=plan)
 

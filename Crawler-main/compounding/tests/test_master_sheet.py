@@ -271,3 +271,44 @@ class CompoundingMasterSheetTests(TestCase):
         detected_headers, detected_rows, _cols = _sheet_table_with_detected_headers(headers, rows)
         normalized = _normalize_master_sheet_decimal_cells(detected_headers, detected_rows, places=3)
         self.assertEqual(normalized[0][4], "37.477")
+
+
+class CompoundingTimeTests(TestCase):
+    """Times show in IST, and a day follows the 6 AM IST rule, not the UTC clock."""
+
+    def setUp(self) -> None:
+        self.user = get_user_model().objects.create_user(username="time-user", email="time@example.com", password="secret123")
+        self.client.force_login(self.user)
+
+    def test_master_sheet_updated_time_is_shown_in_ist(self):
+        from datetime import datetime, timezone as dt_timezone
+
+        plan = CompoundingPlan.objects.create(plan_date="2026-11-24", cjc_number=700, created_by=self.user)
+        sheet = CompoundingMasterSheet.objects.create(
+            plan=plan, created_by=self.user, headers=["Compound Code", "MB Weight"], rows=[["AG-7020", "100"]],
+        )
+        CompoundingMasterSheet.objects.filter(pk=sheet.pk).update(updated_at=datetime(2026, 11, 24, 10, 0, tzinfo=dt_timezone.utc))
+
+        response = self.client.get(reverse("compounding:planning"), {"date": "2026-11-24"})
+
+        self.assertContains(response, "2026-11-24 15:30 IST")
+        self.assertNotContains(response, "2026-11-24 10:00")
+
+    def test_new_crin_without_a_date_uses_the_business_day_at_the_6am_gap(self):
+        from datetime import datetime, timezone as dt_timezone
+        from unittest import mock
+
+        from compounding.models import CompoundingCRIN
+
+        plan = CompoundingPlan.objects.create(plan_date="2026-11-24", cjc_number=701, created_by=self.user)
+        CompoundingMasterSheet.objects.create(
+            plan=plan, created_by=self.user, headers=["Compound Code", "MB Weight"], rows=[["AG-7020", "100"]],
+        )
+        # 05:45 IST on 25 Nov is still the 24 Nov production day, but the UTC date is already the 25th.
+        at = datetime(2026, 11, 25, 0, 15, tzinfo=dt_timezone.utc)
+        with mock.patch("django.utils.timezone.now", return_value=at):
+            self.client.post(reverse("compounding:create_crin"), {"compound_code": "AG-7020", "quantity": "10"})
+
+        crin = CompoundingCRIN.objects.get()
+        self.assertEqual(crin.plan.plan_date.isoformat(), "2026-11-24")
+
