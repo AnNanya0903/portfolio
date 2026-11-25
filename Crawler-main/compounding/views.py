@@ -2454,7 +2454,6 @@ def iot_dashboard(request):
             "iot_run_compound_options": compound_options,
             "iot_runs": iot_runs,
             "iot_run_quality_choices": CompoundingIoTRun.QUALITY_CHOICES,
-            "iot_batch_type_choices": CompoundingIoTRun.BATCH_TYPE_CHOICES,
             "iot_rejection_reason_choices": CompoundingIoTRun.REJECTION_REASON_CHOICES,
             "iot_batch_crin_options": _iot_batch_crin_options(),
             "iot_open_batch": open_batch,
@@ -2531,7 +2530,8 @@ def start_iot_batch(request):
     machine_id = _iot_dashboard_machine_id()
 
     compound_code = (request.POST.get("compound_code") or "").strip()
-    batch_type = (request.POST.get("batch_type") or "").strip().lower()
+    # Batches started from the dashboard are always FB.
+    batch_type = CompoundingIoTRun.BATCH_FB
     weight, weight_ok = _parse_batch_weight(request.POST.get("batch_weight_kg") or "")
     crin_id = (request.POST.get("crin_id") or "").strip()
 
@@ -2541,9 +2541,6 @@ def start_iot_batch(request):
         return redirect(redirect_url)
     if compound_options and compound_code not in compound_options:
         messages.error(request, "Select a valid compound from MB planning.")
-        return redirect(redirect_url)
-    if batch_type not in {choice[0] for choice in CompoundingIoTRun.BATCH_TYPE_CHOICES}:
-        messages.error(request, "Select whether this is an MB or FB batch.")
         return redirect(redirect_url)
     if not weight_ok:
         messages.error(request, "Enter the batch weight in kg as a number above 0, or leave it blank.")
@@ -2582,7 +2579,7 @@ def start_iot_batch(request):
             crin=crin,
             created_by=request.user,
         )
-    messages.success(request, f"Started a {batch_type.upper()} batch of {compound_code}.")
+    messages.success(request, f"Started an FB batch of {compound_code}.")
     return redirect(redirect_url)
 
 

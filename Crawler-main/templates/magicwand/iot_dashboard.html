@@ -169,12 +169,7 @@
                     </div>
                     <div class="col-md-6">
                       <span class="form-label d-block">Batch type</span>
-                      <div class="btn-group w-100" role="group" aria-label="Batch type">
-                        {% for value, label in iot_batch_type_choices %}
-                        <input type="radio" class="btn-check" name="batch_type" id="iotStartType{{ value }}" value="{{ value }}" autocomplete="off" required {% if forloop.first %}checked{% endif %}>
-                        <label class="btn btn-outline-primary" for="iotStartType{{ value }}">{{ label }}</label>
-                        {% endfor %}
-                      </div>
+                      <div class="form-control-plaintext fw-semibold"><span class="badge text-bg-primary">FB</span></div>
                     </div>
                     <div class="col-md-6">
                       <label for="iotStartWeight" class="form-label">Batch weight (kg) <span class="text-muted">(optional)</span></label>

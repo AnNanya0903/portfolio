@@ -109,7 +109,7 @@ class CompoundingIoTBatchStartEndTests(TestCase):
         )
 
     def _start(self, **overrides):
-        data = {"plan_date": "2026-04-06", "compound_code": "AG-5520", "batch_type": "mb"}
+        data = {"plan_date": "2026-04-06", "compound_code": "AG-5520"}
         data.update(overrides)
         return self.client.post(reverse("compounding:start_iot_batch"), data)
 
@@ -126,7 +126,7 @@ class CompoundingIoTBatchStartEndTests(TestCase):
         run = CompoundingIoTRun.objects.get()
         self.assertEqual(run.machine_id, "mixing-mill-2")
         self.assertEqual(run.compound_code, "AG-5520")
-        self.assertEqual(run.batch_type, "mb")
+        self.assertEqual(run.batch_type, "fb")
         self.assertEqual(run.batch_weight_kg, Decimal("52.500"))
         self.assertEqual(run.crin, self.crin)
         self.assertIsNone(run.ended_at)
@@ -150,12 +150,18 @@ class CompoundingIoTBatchStartEndTests(TestCase):
 
     def test_cannot_start_second_batch_while_one_is_running(self) -> None:
         self._start()
-        self._start(batch_type="fb")
+        self._start()
 
         self.assertEqual(CompoundingIoTRun.objects.count(), 1)
 
-    def test_start_rejects_missing_type_bad_weight_and_closed_crin(self) -> None:
-        self._start(batch_type="")
+    def test_dashboard_batches_are_always_fb(self) -> None:
+        self._start(batch_type="mb")
+
+        self.assertEqual(CompoundingIoTRun.objects.get().batch_type, "fb")
+        response = self.client.get(reverse("compounding:iot_dashboard"), {"date": "2026-04-06"})
+        self.assertNotContains(response, 'name="batch_type"')
+
+    def test_start_rejects_bad_weight_and_closed_crin(self) -> None:
         self._start(batch_weight_kg="-3")
         self._start(batch_weight_kg="abc")
         self.crin.status = CompoundingCRIN.STATUS_CLOSED
@@ -179,7 +185,7 @@ class CompoundingIoTBatchStartEndTests(TestCase):
         self.assertEqual(run.rejection_reason, "")
         self.assertEqual(run.notes, "Smooth")
         # The machine is free again.
-        self._start(batch_type="fb")
+        self._start()
         self.assertEqual(CompoundingIoTRun.objects.filter(ended_at__isnull=True).count(), 1)
 
     def test_rejected_batch_needs_a_reason(self) -> None:
