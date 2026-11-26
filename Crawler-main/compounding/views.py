@@ -3239,14 +3239,18 @@ def create_crin(request):
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
 
+CRIN_LISTING_START = date(2026, 11, 1)
+
+
 def _recent_crin_scope(request, plan: CompoundingPlan) -> Dict[str, Any]:
     """
     Which CRINs a planning screen lists: this day's, plus open ones raised the day before
     (so yesterday evening's CRINs are still there). Older open CRINs are counted, not listed,
     unless "All open" is chosen.
     """
+    # From November 2026 every open CRIN is listed, so nothing raised on or after this date is hidden.
     show_all = (request.GET.get("range") or "").strip().lower() == "all"
-    since = plan.plan_date - timedelta(days=1)
+    since = CRIN_LISTING_START
     if show_all:
         query = models.Q(plan=plan) | models.Q(status=CompoundingCRIN.STATUS_OPEN)
         hidden = 0

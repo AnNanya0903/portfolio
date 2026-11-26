@@ -1,3 +1,4 @@
+from datetime import date
 from datetime import timedelta
 from decimal import Decimal
 
@@ -150,8 +151,9 @@ class OlderOpenCRINTests(TestCase):
 class RecentCRINScopeTests(OlderOpenCRINTests):
     """FB planning and Planning list recent CRINs by default, with older open ones one click away."""
 
-    def _stale_crin(self, days=5):
-        plan = CompoundingPlan.objects.create(plan_date=self.today - timedelta(days=days), cjc_number=490, created_by=self.user)
+    def _stale_crin(self):
+        # Raised before 1 Nov 2026, so it is outside the listing window.
+        plan = CompoundingPlan.objects.create(plan_date=date(2026, 10, 20), cjc_number=490, created_by=self.user)
         return CompoundingCRIN.objects.create(plan=plan, crin_number="CRIN-STALE", compound_code="7020", quantity=600, created_by=self.user)
 
     def test_fb_planning_hides_old_crins_but_keeps_yesterdays(self):
@@ -196,3 +198,14 @@ class RecentCRINScopeTests(OlderOpenCRINTests):
 
         self.assertIn(done.id, [row["id"] for row in response.context["crins"]])
         self.assertNotContains(response, "older open CRIN")
+
+
+class CRINListingFromNovember2026Tests(OlderOpenCRINTests):
+    def test_crin_raised_on_24_nov_is_listed_on_26_nov(self):
+        plan = CompoundingPlan.objects.create(plan_date=date(2026, 11, 24), cjc_number=501, created_by=self.user)
+        crin = CompoundingCRIN.objects.create(plan=plan, crin_number="CRIN-2026-205", compound_code="7020", quantity=2000, created_by=self.user)
+
+        response = self.client.get(reverse("compounding:fb_planning"), {"date": "2026-11-26"})
+
+        self.assertIn(crin.id, [row["id"] for row in response.context["crins"]])
+        self.assertEqual(response.context["hidden_older"], 0)
