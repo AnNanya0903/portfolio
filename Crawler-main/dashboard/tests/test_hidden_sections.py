@@ -56,7 +56,7 @@ class HiddenSectionTests(TestCase):
     @override_settings(MAGICWAND_HIDDEN_SERVICES=HIDE_OTHERS, **STATIC)
     def test_menus_show_kept_sections_and_no_empty_headings(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
-        for text in ("Enquiries", "Marketing", "KYC", "Core ERP"):
+        for text in ("Enquiries", "Marketing", "KYC"):
             self.assertIn(text, page)
         for text in (">Operations</summary>", ">Integrations</summary>", ">Intelligence</summary>",
                      ">Utilities</summary>", ">Collaboration</summary>",
@@ -67,11 +67,11 @@ class HiddenSectionTests(TestCase):
     @override_settings(**STATIC)
     def test_default_menus_hide_the_rarely_used_sections_but_keep_the_rest(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
-        for text in (">Intelligence</summary>", "</i> Gmail AI", "</i> Quotations",
-                     ">Operations</summary>", "</i> Compounding",
-                     "</i> Design Match"):  # Gmail AI, Compounding and Design Match stay visible
+        for text in ("</i> Gmail AI", "</i> Quotations", "</i> Compounding",
+                     "</i> Design Match"):  # shown as top-level links, not inside groups
             self.assertIn(text, page, text)
-        for text in (">Integrations</summary>", ">Utilities</summary>", ">Collaboration</summary>",
+        for text in (">Core ERP</summary>", ">Intelligence</summary>", ">Operations</summary>",
+                     ">Integrations</summary>", ">Utilities</summary>", ">Collaboration</summary>",
                      "</i> Manufacturing", "</i> Deskera MRP", "</i> Accounts Portal",
                      "</i> Documents", "</i> Gasket Counter", "</i> Forum",
                      "Pending Tasks"):
@@ -80,8 +80,10 @@ class HiddenSectionTests(TestCase):
     @override_settings(MAGICWAND_HIDDEN_SERVICES=set(), **STATIC)
     def test_menus_show_every_section_when_nothing_is_hidden(self):
         page = self.client.get(reverse("kyc:list")).content.decode()
-        for text in (">Operations</summary>", ">Integrations</summary>", ">Intelligence</summary>",
+        for text in (">Operations</summary>", ">Integrations</summary>",
                      ">Utilities</summary>", ">Collaboration</summary>",
                      "</i> Manufacturing", "</i> Gmail AI", "</i> Deskera MRP", "</i> Design Match",
                      "</i> Gasket Counter", "</i> Forum"):
             self.assertIn(text, page, text)
+        for text in (">Core ERP</summary>", ">Intelligence</summary>"):
+            self.assertNotIn(text, page, text)
