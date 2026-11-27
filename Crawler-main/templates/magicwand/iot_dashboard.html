@@ -69,11 +69,6 @@
           <a class="btn btn-outline-primary" href="{{ back_url|default:'/' }}">{{ back_label|default:"Back to Home" }}</a>
         </div>
 
-        <div id="iot-unlogged-banner" class="alert alert-danger d-flex align-items-center gap-2 fw-semibold mb-4{% if not iot_show_unlogged_banner %} d-none{% endif %}" role="alert">
-          <i class="bi bi-exclamation-octagon-fill fs-5"></i>
-          <div>Machine running – no batch logged. <span class="fw-normal">Tap <strong>Start batch</strong> to log what is on the mill.</span></div>
-        </div>
-
         <div class="card shadow-sm border-0 mb-4">
           <div class="card-body">
             <div class="row g-3">
@@ -131,14 +126,13 @@
                     <input type="hidden" name="plan_date" value="{{ plan_date }}">
                     <input type="hidden" name="run_id" value="{{ iot_open_batch.pk }}">
                     <div class="col-md-6">
-                      <label for="iotEndQuality" class="form-label">Visual check <span class="text-muted">(optional)</span></label>
-                      <select id="iotEndQuality" name="stock_quality" class="form-select" aria-describedby="iotEndQualityHelp">
-                        <option value="">Not checked</option>
+                      <label for="iotEndQuality" class="form-label">Quality of this batch</label>
+                      <select id="iotEndQuality" name="stock_quality" class="form-select" required>
+                        <option value="">Select quality...</option>
                         {% for value, label in iot_run_quality_choices %}
                         <option value="{{ value }}">{{ label }}</option>
                         {% endfor %}
                       </select>
-                      <div id="iotEndQualityHelp" class="form-text">The batch's quality is its lab result, which stays pending until the lab enters it.</div>
                     </div>
                     <div class="col-md-6" id="iotEndReasonWrap" hidden>
                       <label for="iotEndReason" class="form-label">Why was it rejected?</label>
@@ -215,9 +209,9 @@
                     </select>
                   </div>
                   <div class="col-md-6">
-                    <label for="iotRunQuality" class="form-label">Visual check <span class="text-muted">(optional)</span></label>
-                    <select id="iotRunQuality" name="stock_quality" class="form-select">
-                      <option value="">Not checked</option>
+                    <label for="iotRunQuality" class="form-label">Quality of stock produced</label>
+                    <select id="iotRunQuality" name="stock_quality" class="form-select" required>
+                      <option value="">Select quality...</option>
                       {% for value, label in iot_run_quality_choices %}
                       <option value="{{ value }}">{{ label }}</option>
                       {% endfor %}
@@ -1487,14 +1481,6 @@
     setStatus(selectedRange ? "Range" : "Live", selectedRange ? "text-bg-warning" : "text-bg-success");
   }
 
-  function renderBatchState(state) {
-    const banner = document.getElementById("iot-unlogged-banner");
-    if (!banner || !state) {
-      return;
-    }
-    banner.classList.toggle("d-none", !state.showUnloggedBanner);
-  }
-
   function scheduleNextPoll(delay = pollIntervalMs) {
     if (pollTimer !== null) {
       window.clearTimeout(pollTimer);
@@ -1562,7 +1548,6 @@
         }
       }
       renderPayload(data.latest || null);
-      renderBatchState(data.batchState || null);
       drawChart(latestHistory);
       if (selectedRange) {
         const rawCount = Number(data.historyCount);

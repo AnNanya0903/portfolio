@@ -11,7 +11,6 @@ from django.http import JsonResponse
 from django.conf import settings
 from django.conf.urls.static import static
 from . import views
-from compounding import iot_views as compounding_iot_views
 
 def healthcheck(request):
     """Health check endpoint for load balancers."""
@@ -35,8 +34,6 @@ urlpatterns = [
     path('gmail-ai/search/', views.gmail_ai_search, name='gmail_ai_search'),
     path('gmail-ai/email/<str:message_id>/', views.gmail_ai_email, name='gmail_ai_email'),
     path('api/iot-ingest/', views.iot_ingest, name='iot_ingest'),
-    # Lab result for an IoT batch (compounding mixing mill).
-    path('api/batches/<int:batch_id>/lab-result/', compounding_iot_views.lab_result_api, name='iot_batch_lab_result'),
     path('api/iot-dashboard-data/', views.iot_dashboard_data, name='iot_dashboard_data'),
     path('api/iot-dashboard-summary/', views.iot_dashboard_summary, name='iot_dashboard_summary'),
     path('api/iot-history-export/', views.iot_history_export, name='iot_history_export'),

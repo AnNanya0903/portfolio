@@ -317,65 +317,6 @@ class CompoundingMBPlan(models.Model):
         return f"{self.plan.plan_date}: MB {self.compound_code}"
 
 
-class ProcessGroup(models.Model):
-    """Compounds that run with the same current curve and time on the mill share one standard curve."""
-
-    name = models.CharField(max_length=80, unique=True)
-    description = models.TextField(blank=True, default="")
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    def __str__(self) -> str:
-        return self.name
-
-
-class ProcessGroupCompound(models.Model):
-    """A compound's process group. Compounds are codes from the master sheet, so this is the compound's FK."""
-
-    process_group = models.ForeignKey(ProcessGroup, on_delete=models.CASCADE, related_name="compounds")
-    compound_code = models.CharField(max_length=64, unique=True)
-
-    class Meta:
-        ordering = ["compound_code"]
-
-    def __str__(self) -> str:
-        return f"{self.compound_code} -> {self.process_group}"
-
-
-class StandardCurve(models.Model):
-    """The expected avg_current band for a process group, built from lab-passed batches.
-
-    `points` is a list of {"t": seconds after load_start, "mean", "upper", "lower", "n"} every `step_s`
-    seconds, with upper/lower = mean +/- sigma * standard deviation.
-    """
-
-    process_group = models.ForeignKey(ProcessGroup, on_delete=models.CASCADE, related_name="curves")
-    version = models.PositiveIntegerField()
-    built_from_n = models.PositiveIntegerField()
-    step_s = models.PositiveIntegerField(default=10)
-    sigma = models.FloatField(default=2.0)
-    points = models.JSONField(default=list)
-    energy_mean = models.FloatField(null=True, blank=True)
-    energy_std = models.FloatField(null=True, blank=True)
-    is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
-    )
-    created_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        ordering = ["process_group", "-version"]
-        constraints = [
-            models.UniqueConstraint(fields=["process_group", "version"], name="uniq_curve_version_per_group"),
-        ]
-
-    def __str__(self) -> str:
-        return f"{self.process_group} v{self.version}"
-
-
 class CompoundingIoTRun(models.Model):
     """
     Operator-entered production context for an IoT telemetry run.
@@ -408,51 +349,14 @@ class CompoundingIoTRun(models.Model):
         ("other", "Other"),
     ]
 
-    STATUS_RUNNING = "running"
-    STATUS_COMPLETED = "completed"
-    STATUS_INVALID = "invalid"
-    STATUS_CHOICES = [
-        (STATUS_RUNNING, "Running"),
-        (STATUS_COMPLETED, "Completed"),
-        (STATUS_INVALID, "Invalid"),
-    ]
-
-    SOURCE_MANUAL = "manual"
-    SOURCE_AUTO = "auto"
-    SOURCE_CHOICES = [
-        (SOURCE_MANUAL, "Manual"),
-        (SOURCE_AUTO, "Auto"),
-    ]
-
-    CURVE_IN_BAND = "in_band"
-    CURVE_OUT_OF_BAND = "out_of_band"
-    CURVE_NO_STANDARD = "no_standard"
-    CURVE_STATUS_CHOICES = [
-        (CURVE_IN_BAND, "In band"),
-        (CURVE_OUT_OF_BAND, "Out of band"),
-        (CURVE_NO_STANDARD, "No standard"),
-    ]
-
-    LAB_PENDING = "pending"
-    LAB_PASS = "pass"
-    LAB_FAIL = "fail"
-    LAB_RESULT_CHOICES = [
-        (LAB_PENDING, "Pending"),
-        (LAB_PASS, "Pass"),
-        (LAB_FAIL, "Fail"),
-    ]
-
-    # Compound code of a run the machine detected before anyone logged it.
-    UNASSIGNED_COMPOUND = "UNASSIGNED"
-
     plan = models.ForeignKey(CompoundingPlan, on_delete=models.CASCADE, related_name="iot_runs")
     machine_id = models.CharField(max_length=64, db_index=True, default="")
     compound_code = models.CharField(max_length=64, db_index=True)
     started_at = models.DateTimeField()
     # Empty while a batch started with "Start batch" is still on the machine.
     ended_at = models.DateTimeField(null=True, blank=True)
-    # The operator's optional visual check when the batch comes off. The batch's real quality is lab_result.
-    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, blank=True, default="")
+    # Empty until the batch is ended and graded.
+    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, blank=True, default=QUALITY_GOOD)
     batch_type = models.CharField(max_length=2, choices=BATCH_TYPE_CHOICES, blank=True, default="")
     batch_weight_kg = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
     crin = models.ForeignKey(
@@ -464,49 +368,6 @@ class CompoundingIoTRun(models.Model):
     )
     rejection_reason = models.CharField(max_length=32, choices=REJECTION_REASON_CHOICES, blank=True, default="")
     notes = models.TextField(blank=True, default="")
-    operator = models.CharField(max_length=120, blank=True, default="")
-    process_group = models.ForeignKey(
-        ProcessGroup, on_delete=models.SET_NULL, null=True, blank=True, related_name="batches"
-    )
-    # The curve version this batch was compared with.
-    standard_curve = models.ForeignKey(
-        StandardCurve, on_delete=models.SET_NULL, null=True, blank=True, related_name="batches"
-    )
-
-    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_RUNNING, db_index=True)
-    invalid_reason = models.CharField(max_length=200, blank=True, default="")
-    detection_source = models.CharField(max_length=8, choices=SOURCE_CHOICES, default=SOURCE_MANUAL)
-    # True once the machine's own current trace has been matched to this batch (start/end come from it).
-    run_detected = models.BooleanField(default=False)
-
-    # Batch summary, computed from the stored samples when the batch ends.
-    load_start_ts = models.DateTimeField(
-        null=True, blank=True, help_text="First sample above the loading threshold; curves are aligned on it"
-    )
-    duration_s = models.PositiveIntegerField(null=True, blank=True)
-    energy_kwh = models.FloatField(null=True, blank=True)
-    avg_current = models.FloatField(null=True, blank=True)
-    peak_current = models.FloatField(null=True, blank=True)
-    time_to_peak_s = models.PositiveIntegerField(null=True, blank=True)
-    loading_spike_duration_s = models.PositiveIntegerField(null=True, blank=True)
-
-    # Comparison with the process group's standard curve.
-    curve_status = models.CharField(max_length=16, choices=CURVE_STATUS_CHOICES, blank=True, default="")
-    out_of_band_seconds = models.PositiveIntegerField(null=True, blank=True)
-    energy_deviation_pct = models.FloatField(null=True, blank=True)
-    energy_out_of_band = models.BooleanField(default=False)
-
-    lab_result = models.CharField(max_length=8, choices=LAB_RESULT_CHOICES, default=LAB_PENDING, db_index=True)
-    lab_values = models.JSONField(default=dict, blank=True)
-    lab_remarks = models.TextField(blank=True, default="")
-    lab_result_at = models.DateTimeField(null=True, blank=True)
-    lab_result_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="compounding_iot_lab_results",
-    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -527,14 +388,6 @@ class CompoundingIoTRun(models.Model):
 
     def __str__(self) -> str:
         return f"{self.plan.plan_date}: {self.compound_code} ({self.machine_id or 'machine'})"
-
-    @property
-    def batch_id(self) -> str:
-        return f"B{self.pk:06d}" if self.pk else ""
-
-    @property
-    def counts_in_statistics(self) -> bool:
-        return self.status == self.STATUS_COMPLETED
 
 
 class IoTSample(models.Model):

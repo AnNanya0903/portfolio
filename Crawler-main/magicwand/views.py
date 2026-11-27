@@ -1247,29 +1247,18 @@ def iot_dashboard_data(request):
     )
     since_ts = _coerce_iot_timestamp(request.GET.get("sinceTs"))
     try:
-        data = _fetch_iot_dashboard_data(
-            machine_id,
-            limit,
-            start_ts=start_ts,
-            end_ts=end_ts,
-            max_points=max_points,
-            since_ts=since_ts,
+        return JsonResponse(
+            _fetch_iot_dashboard_data(
+                machine_id,
+                limit,
+                start_ts=start_ts,
+                end_ts=end_ts,
+                max_points=max_points,
+                since_ts=since_ts,
+            )
         )
-        data["batchState"] = _iot_batch_state(_iot_public_machine_id(machine_id) or machine_id)
-        return JsonResponse(data)
     except IoTDashboardFetchError as exc:
         return JsonResponse({"ok": False, "error": str(exc), "machineId": machine_id}, status=exc.status_code)
-
-
-def _iot_batch_state(machine_id: str) -> Optional[Dict[str, Any]]:
-    """Live machine/batch state for the "Machine running - no batch logged" banner."""
-    try:
-        from compounding import iot_batches
-
-        return iot_batches.machine_state(machine_id)
-    except DatabaseError:
-        logger.exception("IoT batch state lookup failed")
-        return None
 
 
 def _stream_local_iot_export(
