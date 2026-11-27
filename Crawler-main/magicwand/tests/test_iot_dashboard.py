@@ -21,6 +21,10 @@ SOURCE_MACHINE_ID = "extrusion-mill-1"
 class IoTDashboardDataTests(TestCase):
     def setUp(self) -> None:
         cache.clear()
+        # These tests cover the live bridge/local path; the sample store has its own tests.
+        sync_patch = patch("compounding.iot_samples.sync_recent")
+        sync_patch.start()
+        self.addCleanup(sync_patch.stop)
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
             username="iot-user",
@@ -610,6 +614,9 @@ def _bridge_payload(ts: int, current: float = 72.5) -> dict:
 )
 class IoTHistoryPayloadTests(TestCase):
     def setUp(self) -> None:
+        sync_patch = patch("compounding.iot_samples.sync_recent")
+        sync_patch.start()
+        self.addCleanup(sync_patch.stop)
         self.user = get_user_model().objects.create_user(username="iot-viewer", password="secret123")
         access, _ = UserServiceAccess.objects.get_or_create(user=self.user)
         access.restrict = True

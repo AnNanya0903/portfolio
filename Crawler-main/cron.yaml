@@ -19,3 +19,9 @@ cron:
   target: magicwand-backend
   retry_parameters:
     job_retry_limit: 0
+- description: "IoT: store new mixing-mill samples from the bridge and detect batches"
+  url: /compounding/api/cron/iot-sync/
+  schedule: every 1 minutes
+  target: magicwand-backend
+  retry_parameters:
+    job_retry_limit: 0

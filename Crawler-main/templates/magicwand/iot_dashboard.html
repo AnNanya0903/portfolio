@@ -541,6 +541,9 @@
   const iotChartMaxPoints = Number("{{ iot_chart_max_points|default:5000 }}") || 5000;
   const iotTimeZoneFeedback = `Times use ${iotTimeZoneLabel} timezone.`;
   let latestHistory = [];
+  // Live view: after one full load, polls ask only for points newer than the last one (sinceTs).
+  let liveHistoryKey = null;
+  let liveWindowMs = 0;
   let latestSignalRows = [];
   let pollTimer = null;
   let fetchInFlight = false;
@@ -966,7 +969,25 @@
     };
   }
 
-  function buildDashboardDataUrl() {
+  function getIncrementalSinceTs() {
+    if (selectedRange || !latestHistory.length || liveHistoryKey !== String(getHistoryFetchLimit())) {
+      return null;
+    }
+    const lastTs = Number(latestHistory[latestHistory.length - 1].ts);
+    return Number.isFinite(lastTs) ? lastTs : null;
+  }
+
+  function mergeLiveHistory(freshPoints) {
+    if (!latestHistory.length) {
+      return freshPoints;
+    }
+    const lastTs = Number(latestHistory[latestHistory.length - 1].ts);
+    const merged = latestHistory.concat(freshPoints.filter((point) => Number(point.ts) > lastTs));
+    const newestTs = Number(merged[merged.length - 1].ts);
+    return merged.filter((point) => Number(point.ts) >= newestTs - liveWindowMs);
+  }
+
+  function buildDashboardDataUrl(sinceTs = null) {
     const url = new URL(iotDataUrl, window.location.origin);
     const machineId = getRequestedMachineId();
     if (machineId) {
@@ -979,6 +1000,9 @@
       url.searchParams.set("maxPoints", String(getSelectedRangeMaxPoints()));
     } else {
       url.searchParams.set("limit", String(getHistoryFetchLimit()));
+      if (sinceTs !== null) {
+        url.searchParams.set("sinceTs", String(sinceTs));
+      }
     }
     return url.toString();
   }
@@ -1497,7 +1521,8 @@
     }
 
     try {
-      const response = await fetch(buildDashboardDataUrl(), {
+      const sinceTs = getIncrementalSinceTs();
+      const response = await fetch(buildDashboardDataUrl(sinceTs), {
         headers: { "Accept": "application/json" },
         cache: "no-store",
         skipGlobalLoader: true,
@@ -1506,7 +1531,22 @@
         throw new Error("HTTP " + response.status);
       }
       const data = await response.json();
-      latestHistory = Array.isArray(data.history) ? data.history : [];
+      const freshHistory = Array.isArray(data.history) ? data.history : [];
+      if (sinceTs !== null) {
+        latestHistory = mergeLiveHistory(freshHistory);
+      } else {
+        latestHistory = freshHistory;
+        if (selectedRange) {
+          liveHistoryKey = null;
+        } else {
+          liveHistoryKey = String(getHistoryFetchLimit());
+          const firstTs = freshHistory.length ? Number(freshHistory[0].ts) : NaN;
+          const lastTs = freshHistory.length ? Number(freshHistory[freshHistory.length - 1].ts) : NaN;
+          liveWindowMs = Number.isFinite(firstTs) && Number.isFinite(lastTs)
+            ? Math.max(lastTs - firstTs, 60 * 1000)
+            : getHistoryFetchLimit() * 2000;
+        }
+      }
       renderPayload(data.latest || null);
       drawChart(latestHistory);
       if (selectedRange) {

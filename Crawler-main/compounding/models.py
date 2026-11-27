@@ -390,6 +390,52 @@ class CompoundingIoTRun(models.Model):
         return f"{self.plan.plan_date}: {self.compound_code} ({self.machine_id or 'machine'})"
 
 
+class IoTSample(models.Model):
+    """One telemetry sample from a machine (~every 2 s), kept so any past day or batch can be replayed.
+
+    Only the named electrical and temperature values are stored; the raw register block stays in the IoT
+    bridge's own store and in its raw export.
+    """
+
+    machine_id = models.CharField(max_length=64)
+    ts_ms = models.BigIntegerField(help_text="Sample time, Unix epoch milliseconds")
+    avg_current = models.FloatField(null=True, blank=True)
+    t_watt = models.FloatField(null=True, blank=True)
+    t_kwh_import = models.FloatField(null=True, blank=True)
+    r_irms = models.FloatField(null=True, blank=True)
+    y_irms = models.FloatField(null=True, blank=True)
+    b_irms = models.FloatField(null=True, blank=True)
+    avg_pf = models.FloatField(null=True, blank=True)
+    a_vrms_ll = models.FloatField(null=True, blank=True)
+    frequency = models.FloatField(null=True, blank=True)
+    ch1_temperature = models.FloatField(null=True, blank=True)
+    ch2_temperature = models.FloatField(null=True, blank=True)
+
+    VALUE_FIELDS = (
+        "avg_current",
+        "t_watt",
+        "t_kwh_import",
+        "r_irms",
+        "y_irms",
+        "b_irms",
+        "avg_pf",
+        "a_vrms_ll",
+        "frequency",
+        "ch1_temperature",
+        "ch2_temperature",
+    )
+
+    class Meta:
+        ordering = ["machine_id", "ts_ms"]
+        constraints = [
+            # Also the (machine_id, ts) index every range read uses; it makes re-syncs idempotent.
+            models.UniqueConstraint(fields=["machine_id", "ts_ms"], name="uniq_iot_sample_per_machine_ts"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.machine_id} @ {self.ts_ms}"
+
+
 class CompoundingStockEntry(models.Model):
     """
     One stock movement. A compound's balance is the sum of its entries.

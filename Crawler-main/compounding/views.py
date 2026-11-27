@@ -21,6 +21,7 @@ from django.http import JsonResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 
@@ -2637,6 +2638,28 @@ def end_iot_batch(request):
         f"Ended the {run.compound_code} batch after {_iot_run_duration_text(run.started_at, run.ended_at)}.",
     )
     return redirect(redirect_url)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def iot_cron_sync(request):
+    """App Engine cron (every minute): copy new samples from the bridge and run batch detection.
+
+    Only App Engine cron sets X-Appengine-Cron; App Engine strips it from outside requests. Problems are
+    reported in the body and the log rather than as an error status, so cron does not pile up retries.
+    """
+    if request.headers.get("X-Appengine-Cron") != "true":
+        return JsonResponse({"error": "only the scheduler may call this"}, status=403)
+    from . import iot_samples
+
+    machine_id = _iot_dashboard_machine_id()
+    result: Dict[str, Any] = {"machineId": machine_id}
+    try:
+        result["sync"] = iot_samples.sync_from_bridge(machine_id) if iot_samples.bridge_enabled() else None
+    except Exception as exc:
+        logger.warning("IoT cron sync failed: %s", exc)
+        result["syncError"] = str(exc)
+    return JsonResponse(result)
 
 
 @login_required

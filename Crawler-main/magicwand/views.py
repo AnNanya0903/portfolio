@@ -539,15 +539,100 @@ def _build_iot_bridge_url(path: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{base_path}{suffix}"
 
 
+def _iot_payload_from_sample(machine_id: str, sample) -> Dict[str, Any]:
+    """A stored sample shaped like a sender payload, for when no full payload is at hand."""
+    return {
+        "machineId": machine_id,
+        "ts": sample.ts_ms,
+        "registers": [],
+        "raw": {field: getattr(sample, field) for field in sample.VALUE_FIELDS if getattr(sample, field) is not None},
+    }
+
+
+def _iot_dashboard_data_from_store(
+    machine_id: str,
+    limit: int,
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    max_points: Optional[int],
+    since_ts: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    """Dashboard data from Django's own sample store, or None when it holds nothing for this view yet
+    (e.g. a range from before samples were first stored), so the caller can fall back to the bridge."""
+    from compounding import iot_samples
+    from compounding.models import IoTSample
+
+    has_time_range = start_ts is not None or end_ts is not None
+    if has_time_range:
+        if not iot_samples.has_samples(machine_id, start_ts, end_ts):
+            return None
+    elif not iot_samples.has_samples(machine_id, int(time.time() * 1000) - 10 * 60 * 1000):
+        return None
+
+    history = iot_samples.compact_history(
+        machine_id, start_ts=start_ts, end_ts=end_ts, limit=0 if has_time_range else limit, since_ts=since_ts
+    )
+    raw_count = len(history)
+    if since_ts is None:
+        history = iot_samples.downsample_points(history, max_points)
+
+    range_query = IoTSample.objects.filter(machine_id=machine_id)
+    if start_ts is not None:
+        range_query = range_query.filter(ts_ms__gte=start_ts)
+    if end_ts is not None:
+        range_query = range_query.filter(ts_ms__lte=end_ts)
+    newest = range_query.order_by("-ts_ms").first()
+    latest_payload = None
+    if not has_time_range:
+        cached = (
+            get_latest_payload() if _iot_local_testing_enabled() else iot_samples.cached_latest_payload(machine_id)
+        )
+        if cached and newest and (_coerce_iot_timestamp(cached.get("ts")) or 0) >= newest.ts_ms:
+            latest_payload = {**cached, "machineId": machine_id}
+    if latest_payload is None and newest is not None:
+        latest_payload = _iot_payload_from_sample(machine_id, newest)
+
+    return {
+        "ok": True,
+        "source": "database",
+        "machineId": machine_id,
+        "limit": limit,
+        "historyCount": raw_count,
+        "returnedCount": len(history),
+        "historyLimited": not has_time_range and limit > 0,
+        "historyDownsampled": raw_count > len(history),
+        "maxPoints": max_points or 0,
+        "startTs": start_ts,
+        "endTs": end_ts,
+        "sinceTs": since_ts,
+        "latest": _serialize_iot_payload(latest_payload),
+        "history": history,
+    }
+
+
 def _fetch_iot_dashboard_data(
     machine_id: str,
     limit: int,
     start_ts: Optional[int] = None,
     end_ts: Optional[int] = None,
     max_points: Optional[int] = None,
+    since_ts: Optional[int] = None,
 ) -> Dict[str, Any]:
     public_machine_id = _iot_public_machine_id(machine_id) or str(machine_id or "").strip()
     source_machine_id = _iot_source_machine_id(machine_id) or str(machine_id or "").strip()
+
+    # Samples are kept in Django's database (compounding.IoTSample); pull anything new from the bridge
+    # first (throttled), then answer from the store whenever it covers the requested view.
+    from compounding import iot_samples
+
+    iot_samples.sync_recent(public_machine_id)
+    try:
+        stored = _iot_dashboard_data_from_store(public_machine_id, limit, start_ts, end_ts, max_points, since_ts)
+    except DatabaseError:
+        logger.exception("IoT sample store read failed; falling back to the live source")
+        stored = None
+    if stored is not None:
+        return stored
 
     if _iot_local_testing_enabled():
         history = [
@@ -1117,6 +1202,15 @@ def iot_ingest(request):
         "registers": registers,
         "raw": raw_map,
     })
+    # Keep every sample, not just the in-memory tail, so days and batches can be replayed.
+    try:
+        from compounding import iot_samples
+
+        public_id = _iot_public_machine_id(latest["machineId"]) or latest["machineId"]
+        iot_samples.store_payloads(public_id, [latest])
+        iot_samples.remember_latest_payload(public_id, latest)
+    except DatabaseError:
+        logger.exception("IoT ingest could not store the sample")
     logger.info(
         "IOT ingest received machine=%s ts=%s register_count=%s signal_count=%s",
         latest["machineId"],
@@ -1151,6 +1245,7 @@ def iot_dashboard_data(request):
         default=getattr(settings, "IOT_HISTORY_API_MAX_POINTS", 2000),
         maximum=getattr(settings, "IOT_HISTORY_API_MAX_POINTS_LIMIT", 2500),
     )
+    since_ts = _coerce_iot_timestamp(request.GET.get("sinceTs"))
     try:
         return JsonResponse(
             _fetch_iot_dashboard_data(
@@ -1159,6 +1254,7 @@ def iot_dashboard_data(request):
                 start_ts=start_ts,
                 end_ts=end_ts,
                 max_points=max_points,
+                since_ts=since_ts,
             )
         )
     except IoTDashboardFetchError as exc:
