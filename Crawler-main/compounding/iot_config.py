@@ -97,75 +97,54 @@ def curve_step_s() -> int:
     return _int("IOT_CURVE_STEP_S", 10)
 
 
-def steady_band_a() -> float:
-    """A "steady" mixing stretch keeps the 10 s curve within this many amps (max - min)."""
-    return _number("IOT_STEADY_BAND_A", 8.0)
+def steady_from_fraction() -> float:
+    """Steady current is the mean current over this part of the batch (30-60 % of its duration)."""
+    return _number("IOT_STEADY_FROM", 0.30)
 
 
-def dip_drop_a() -> float:
-    """A dip is the curve falling this far below the steady mean."""
-    return _number("IOT_DIP_DROP_A", 15.0)
+def steady_to_fraction() -> float:
+    return _number("IOT_STEADY_TO", 0.60)
+
+
+def dip_below_a() -> float:
+    """A dip is the 10 s curve going below this many amps."""
+    return _number("IOT_DIP_BELOW_A", 50.0)
 
 
 def standard_min_batches() -> int:
+    """A compound needs this many normal batches before its standard is built (30 recommended)."""
     return _int("IOT_STANDARD_MIN_BATCHES", 15)
 
 
-def standard_band_method() -> str:
-    """'percentile' (5th-95th) or 'sigma' (mean +/- 2 sigma)."""
-    value = str(getattr(settings, "IOT_STANDARD_BAND", "percentile") or "percentile").lower()
-    return value if value in {"percentile", "sigma"} else "percentile"
-
-
 def standard_percentiles() -> tuple[float, float]:
+    """The band (and each value's allowed range) is this percentile range of the compound's normal batches."""
     return (_number("IOT_STANDARD_LOW_PCT", 5.0), _number("IOT_STANDARD_HIGH_PCT", 95.0))
 
 
-def standard_sigma() -> float:
-    return _number("IOT_STANDARD_SIGMA", 2.0)
+# Comparing a batch with its standard -------------------------------------------------------------------------
+def ok_match_pct() -> float:
+    """OK needs at least this share of the curve inside the band (and every value in range)."""
+    return _number("IOT_OK_MATCH_PCT", 85.0)
 
 
-# Pattern identification and judging ------------------------------------------------------------------------
-def label_min_overlap() -> float:
-    """A detected batch takes an operator log's compound as its label when they overlap this much (IoU)."""
-    return _number("IOT_LABEL_MIN_OVERLAP", 0.7)
+def major_match_pct() -> float:
+    """Below this match % a batch is a Major variation."""
+    return _number("IOT_MAJOR_MATCH_PCT", 70.0)
 
 
-def knn_min_per_compound() -> int:
-    return _int("IOT_KNN_MIN_PER_COMPOUND", 15)
+def major_deviation_pct() -> float:
+    """Energy or duration further off than this (%) is a Major variation."""
+    return _number("IOT_MAJOR_DEVIATION_PCT", 20.0)
 
 
-def knn_k() -> int:
-    return _int("IOT_KNN_K", 5)
+def looks_like_margin_pct() -> float:
+    """Flag "Looks like <other compound>" when another standard fits this many match-% points better."""
+    return _number("IOT_LOOKS_LIKE_MARGIN_PCT", 20.0)
 
 
-def match_threshold_pct() -> float:
-    return _number("MATCH_THRESHOLD", _number("IOT_MATCH_THRESHOLD_PCT", 85.0))
-
-
-def similar_standards_distance() -> float:
-    """Standards whose median curves are closer than this (DTW, A per step) are suggested as one process group."""
-    return _number("IOT_SIMILAR_STANDARDS_DTW", 4.0)
-
-
-# Reconciliation --------------------------------------------------------------------------------------------
-def recon_time_tolerance_s() -> int:
-    return _int("IOT_RECON_TIME_TOLERANCE_S", 180)
-
-
-def recon_mislog_ratio() -> float:
-    """A log shorter than this fraction of the detected batch is Mis-logged."""
-    return _number("IOT_RECON_MISLOG_RATIO", 0.5)
-
-
-def recon_compound_confidence() -> float:
-    """Operator and AI disagreeing counts as Compound mismatch only at this AI confidence (%) or above."""
-    return _number("IOT_RECON_COMPOUND_CONFIDENCE", 80.0)
-
-
-def recon_min_idle_s() -> int:
-    """IDLE / OFF / No-data stretches shorter than this are not listed as their own rows."""
-    return _int("IOT_RECON_MIN_IDLE_S", 300)
+def timeline_min_state_s() -> int:
+    """Idle / off stretches shorter than this are drawn but not listed on their own."""
+    return _int("IOT_TIMELINE_MIN_STATE_S", 300)
 
 
 # Sample storage --------------------------------------------------------------------------------------------

@@ -459,8 +459,28 @@ class DetectedBatch(models.Model):
     # avg_current every curve_step_s seconds from load_at (or start_at when no load point was found).
     curve = models.JSONField(default=list, blank=True)
     curve_step_s = models.PositiveIntegerField(default=10)
+    # Mean current over 30-60 % of the batch, and how many times the curve dips below 50 A after loading.
+    steady_current = models.FloatField(null=True, blank=True)
+    dips = models.PositiveIntegerField(default=0)
+
+    # The operator's entry with the largest time overlap gives the compound; none means "Not logged".
+    log_run = models.ForeignKey(
+        "CompoundingIoTRun", on_delete=models.SET_NULL, null=True, blank=True, related_name="detected_batches"
+    )
+    log_overlap_s = models.PositiveIntegerField(null=True, blank=True)
+    compound_code = models.CharField(max_length=64, blank=True, default="", db_index=True)
+
+    # An admin can keep a batch out of its compound's standard.
+    excluded = models.BooleanField(default=False)
+    excluded_reason = models.CharField(max_length=200, blank=True, default="")
+    excluded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+
+    NOT_LOGGED = "Not logged"
 
     class Meta:
         ordering = ["machine_id", "start_at"]
@@ -468,6 +488,10 @@ class DetectedBatch(models.Model):
 
     def __str__(self) -> str:
         return f"{self.machine_id} batch @ {self.start_at:%Y-%m-%d %H:%M}"
+
+    @property
+    def compound_label(self) -> str:
+        return self.compound_code or self.NOT_LOGGED
 
     @property
     def batch_id(self) -> str:

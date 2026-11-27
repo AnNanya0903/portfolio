@@ -3,7 +3,7 @@
     OFF 0 A; IDLE ~35-40 A flat.
     AG-7020 (~15-16 min, ~10.2 kWh): loading spike 100-115 A for the first ~2 min, steady ~73 A for ~6 min,
         choppy 45-80 A (cutting/sheeting), ends near 45-50 A.
-    AG-FRC 70 (~20 min): no big spike (peak ~77 A), long steady ~68-70 A, choppy end.
+    AG-FRC 70 (~19-22 min): loading peak ~96-107 A, long steady ~67-72 A, choppy end.
 
 Energy: t_kwh_import grows with the current (the same constant all day), scaled so an AG-7020 batch uses
 about 10.25 kWh.
@@ -52,10 +52,12 @@ def ag7020(t: int, duration: int) -> float:
 
 
 def agfrc70(t: int, duration: int) -> float:
-    if t < 60:
-        return 40.0 + t * 0.55
-    if t < 120:
-        return 77.0 - (t - 60) * 0.12
+    if t < 30:
+        return 45.0 + t * 1.8
+    if t < 90:
+        return 101.0 + _wiggle(t, 4.0)  # loading peak ~97-105 A
+    if t < 150:
+        return 101.0 - (t - 90) * 0.53
     if t < duration - 300:
         return 69.0 + _wiggle(t, 1.0)
     if t < duration - 60:
@@ -79,7 +81,15 @@ DAY_PLAN: List[Tuple[Profile, str, str]] = [
     (idle, "12:13:30", "12:24"),
     (agfrc70, "12:24", "12:44"),
     (idle, "12:44", "12:45"),
-    (off, "12:45", "13:30"),
+    (off, "12:45", "13:12"),
+    (idle, "13:12", "13:15"),
+    (agfrc70, "13:15", "13:36"),
+    (idle, "13:36", "13:38"),
+    (agfrc70, "13:38", "13:57:30"),
+    (idle, "13:57:30", "13:58:30"),  # back-to-back FRC batches, split by the new loading peak
+    (agfrc70, "13:58:30", "14:19"),
+    (idle, "14:19", "14:30"),
+    (off, "14:30", "15:00"),
 ]
 
 # kWh per amp-second: makes a 15.5 min AG-7020 batch use ~10.25 kWh.

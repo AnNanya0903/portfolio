@@ -101,7 +101,7 @@ def _batch_spans(points: Sequence[Tuple[int, float]], means: Sequence[float], ma
         for j in range(index, n):
             if points[j][0] > limit:
                 return False
-            if points[j][1] > load_threshold:
+            if means[j] > load_threshold:
                 return True
         return False
 
@@ -230,11 +230,16 @@ def segment_samples(samples: Sequence[Dict[str, Any]], *, machine_id: str = "",
 # Batch numbers --------------------------------------------------------------------------------------------
 def find_load_ts(samples: Sequence[Dict[str, Any]], start_ts: int, end_ts: int,
                  machine_id: str = "") -> Tuple[Optional[int], Optional[float]]:
-    """First sample above the machine's load threshold (default 90 A), else above the fallback (70 A)."""
+    """First moment the 30 s mean passes the machine's load threshold (default 90 A), else the fallback (70 A)."""
+    points = [(s["ts_ms"], float(s["avg_current"])) for s in samples
+              if s.get("avg_current") is not None and start_ts <= s["ts_ms"] < end_ts]
+    if not points:
+        return None, None
+    means = rolling_mean(points, iot_config.rolling_window_s())
     for threshold in (iot_config.load_threshold_a(machine_id), iot_config.load_fallback_a()):
-        for sample in samples:
-            if start_ts <= sample["ts_ms"] < end_ts and (sample.get("avg_current") or 0) > threshold:
-                return sample["ts_ms"], threshold
+        for (ts, _value), mean in zip(points, means):
+            if mean > threshold:
+                return ts, threshold
     return None, None
 
 
@@ -275,18 +280,39 @@ def batch_numbers(samples: Sequence[Dict[str, Any]], start_ts: int, end_ts: int,
     }
     if len(kwh) >= 2 and kwh[-1] >= kwh[0]:  # a drop means the meter was reset; report nothing
         numbers["energy_kwh"] = round(kwh[-1] - kwh[0], 3)
+    numbers["steady_current"] = None
+    numbers["dips"] = 0
     if currents:
         numbers["avg_current"] = round(statistics.fmean(value for _ts, value in currents), 2)
-        peak_ts, peak = max(currents, key=lambda item: item[1])
-        numbers["peak_current"] = round(peak, 2)
-        numbers["time_to_peak_s"] = max(int(round((peak_ts - start_ts) / 1000)), 0)
+        # The loading peak is read on the 30 s mean, so one noisy sample doesn't set it.
+        means = rolling_mean(currents, iot_config.rolling_window_s())
+        peak_index = max(range(len(means)), key=lambda index: means[index])
+        numbers["peak_current"] = round(means[peak_index], 1)
+        numbers["time_to_peak_s"] = max(int(round((currents[peak_index][0] - start_ts) / 1000)), 0)
+        low = start_ts + (end_ts - start_ts) * iot_config.steady_from_fraction()
+        high = start_ts + (end_ts - start_ts) * iot_config.steady_to_fraction()
+        steady = [value for ts, value in currents if low <= ts <= high]
+        if steady:
+            numbers["steady_current"] = round(statistics.fmean(steady), 1)
     load_ts, threshold = find_load_ts(window, start_ts, end_ts, machine_id)
     step = iot_config.curve_step_s()
     numbers["load_ts"] = load_ts
     numbers["load_threshold_a"] = threshold
     numbers["curve"] = resample_curve(window, load_ts if load_ts is not None else start_ts, end_ts, step)
     numbers["curve_step_s"] = step
+    numbers["dips"] = count_dips(numbers["curve"], iot_config.dip_below_a())
     return numbers
+
+
+def count_dips(curve: Sequence[float], below: float) -> int:
+    """How many times the curve drops below `below` amps (each stretch counts once)."""
+    dips = 0
+    under = False
+    for value in curve:
+        if value < below and not under:
+            dips += 1
+        under = value < below
+    return dips
 
 
 # Detection run ----------------------------------------------------------------------------------------------
@@ -300,16 +326,43 @@ def _apply_numbers(batch: DetectedBatch, numbers: Dict[str, Any]) -> None:
     batch.load_threshold_a = numbers["load_threshold_a"]
     batch.curve = numbers["curve"]
     batch.curve_step_s = numbers["curve_step_s"]
+    batch.steady_current = numbers["steady_current"]
+    batch.dips = numbers["dips"]
+
+
+def link_operator_entry(batch: DetectedBatch) -> None:
+    """The operator's entry (same machine) with the largest time overlap gives the batch its compound.
+
+    Typed times are unreliable (a 16 min batch logged as 1 min still overlaps it), so any overlap counts and
+    the batch keeps the machine's own times. No overlapping entry: compound "" ("Not logged").
+    """
+    from .models import CompoundingIoTRun
+
+    candidates = CompoundingIoTRun.objects.filter(machine_id=batch.machine_id, started_at__lt=batch.end_at).exclude(
+        ended_at__lte=batch.start_at
+    )
+    best, best_s = None, 0.0
+    now = timezone.now()
+    for run in candidates:
+        run_end = run.ended_at or max(now, run.started_at)
+        seconds = (min(run_end, batch.end_at) - max(run.started_at, batch.start_at)).total_seconds()
+        if seconds > best_s:
+            best, best_s = run, seconds
+    batch.log_run = best
+    batch.log_overlap_s = int(best_s) if best else None
+    batch.compound_code = best.compound_code if best else ""
 
 
 def _after_batch_saved(batch: DetectedBatch, samples: Sequence[Dict[str, Any]]) -> None:
-    """Hook for the analysis steps that follow detection (pattern identification and judging)."""
+    """Link the operator's entry, then compare the batch with its compound's standard."""
+    link_operator_entry(batch)
+    batch.save(update_fields=["log_run", "log_overlap_s", "compound_code", "updated_at"])
 
 
 def detect_range(machine_id: str, start_ts: int, end_ts: int, *, now_ms: Optional[int] = None) -> Dict[str, Any]:
     """Segment [start_ts, end_ts), replace its MachineSegment rows and create/update/remove DetectedBatches.
 
-    Safe to repeat: a batch keeps its identity (and any manual tag) as long as it overlaps its old self.
+    Safe to repeat: a batch keeps its identity (and its exclusion) as long as it overlaps its old self.
     """
     now_ms = int(timezone.now().timestamp() * 1000) if now_ms is None else now_ms
     samples = iot_samples.samples_between(machine_id, start_ts, end_ts - 1)
