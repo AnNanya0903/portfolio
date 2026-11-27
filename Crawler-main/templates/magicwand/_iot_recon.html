@@ -51,9 +51,9 @@
       {% for row in recon_rows %}
       <tr class="{% if row.kind == 'state' %}text-muted{% endif %}" data-verdict="{{ row.verdict }}">
         <td class="text-nowrap">
-          {% if row.kind == "log" %}<span class="text-muted">—</span>{% else %}
-            {{ row.start_text }}–{{ row.end_text }}
-          {% endif %}
+          {% if row.kind == "log" %}<span class="text-muted">—</span>
+          {% elif row.batch %}<a href="{% url 'compounding:iot_detected_batch' row.batch.pk %}">{{ row.start_text }}–{{ row.end_text }}</a>
+          {% else %}{{ row.start_text }}–{{ row.end_text }}{% endif %}
         </td>
         <td class="text-end">{% if row.kind != "log" %}{{ row.duration_min|floatformat:1 }}{% endif %}</td>
         <td class="text-end">{% if row.energy_kwh is not None %}{{ row.energy_kwh|floatformat:1 }}{% endif %}</td>

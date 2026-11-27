@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% load tz %}
+
+{% block title %}Batch {{ batch.batch_id }}{% endblock %}
+
+{% block auth_content %}
+<section class="py-5">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+          <div>
+            <div class="text-uppercase text-muted small fw-semibold mb-2">Detected batch · {{ batch.machine_id }}</div>
+            <h1 class="display-6 fw-bold mb-2">
+              {{ batch.start_at|timezone:iot_time_zone|date:"H:i" }}–{% if batch.is_open %}now{% else %}{{ batch.end_at|timezone:iot_time_zone|date:"H:i" }}{% endif %}
+              <span class="fs-5 text-muted">{{ batch.start_at|timezone:iot_time_zone|date:"d M Y" }}</span>
+            </h1>
+            <p class="mb-0">
+              {% if batch.match_result == "matches" %}<span class="badge text-bg-success fs-6">Matches standard</span>
+              {% elif batch.match_result == "doesnt_match" %}<span class="badge text-bg-danger fs-6">Doesn't match</span>
+              {% else %}<span class="badge text-bg-light border fs-6">No standard yet</span>{% endif %}
+              {% if batch.judged_label %}<span class="text-muted ms-1">against {{ batch.judged_label }}{% if standard %} v{{ standard.version }}{% endif %}</span>{% endif %}
+              {% if batch.is_open %}<span class="badge text-bg-success ms-1">Running</span>{% endif %}
+              {% if batch.excluded %}<span class="badge text-bg-secondary ms-1" title="{{ batch.excluded_reason }}">Excluded from standards</span>{% endif %}
+            </p>
+            {% if batch.reasons %}
+            <ul class="mt-2 mb-0 text-danger">{% for reason in batch.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+            {% endif %}
+          </div>
+          <a class="btn btn-outline-primary" href="{{ dashboard_url }}">Back to IoT Dashboard</a>
+        </div>
+
+        <div class="row g-3 mb-4">
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">Duration</div>
+            <div class="fs-5 fw-semibold">{% widthratio batch.duration_s 60 1 %} min</div>
+            {% if stats.duration_s %}<div class="small text-muted">standard {% widthratio stats.duration_s.median 60 1 %} min{% if batch.duration_dev_pct is not None %} · {{ batch.duration_dev_pct|floatformat:0 }} %{% endif %}</div>{% endif %}
+          </div></div>
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">Energy</div>
+            <div class="fs-5 fw-semibold">{% if batch.energy_kwh is not None %}{{ batch.energy_kwh|floatformat:1 }} kWh{% else %}—{% endif %}</div>
+            {% if stats.energy_kwh %}<div class="small text-muted">standard {{ stats.energy_kwh.median|floatformat:1 }} kWh{% if batch.energy_dev_pct is not None %} · {{ batch.energy_dev_pct|floatformat:0 }} %{% endif %}</div>{% endif %}
+          </div></div>
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">Peak current</div>
+            <div class="fs-5 fw-semibold">{% if batch.peak_current is not None %}{{ batch.peak_current|floatformat:0 }} A{% else %}—{% endif %}</div>
+            <div class="small text-muted">after {% if batch.time_to_peak_s is not None %}{{ batch.time_to_peak_s }} s{% else %}—{% endif %}{% if batch.peak_time_dev_s is not None %} · {{ batch.peak_time_dev_s|stringformat:"+d" }} s vs standard{% endif %}</div>
+          </div></div>
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">Match</div>
+            <div class="fs-5 fw-semibold">{% if batch.match_pct is not None %}{{ batch.match_pct|floatformat:0 }} %{% else %}—{% endif %}</div>
+            <div class="small text-muted">{% if batch.dtw_distance is not None %}DTW {{ batch.dtw_distance|floatformat:1 }} A{% else %}inside the band{% endif %}</div>
+          </div></div>
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">AI pattern</div>
+            <div class="fs-6 fw-semibold">{% if batch.predicted_label %}{{ batch.predicted_label }} ({{ batch.prediction_confidence|floatformat:0 }} %){% else %}Unknown pattern{% endif %}</div>
+            {% if batch.prediction_alternatives %}<div class="small text-muted">{% for alt in batch.prediction_alternatives %}{{ alt.label }} {{ alt.confidence|floatformat:0 }} %{% if not forloop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+            {% if batch.prediction_method %}<div class="small text-muted">by {{ batch.prediction_method|upper }}</div>{% endif %}
+          </div></div>
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">Operator log</div>
+            <div class="fs-6 fw-semibold">{% if batch.log_run %}{{ batch.log_run.compound_code }}{% else %}Not logged{% endif %}</div>
+            {% if batch.log_run %}<div class="small text-muted">{{ batch.log_run.started_at|timezone:iot_time_zone|date:"H:i" }}–{% if batch.log_run.ended_at %}{{ batch.log_run.ended_at|timezone:iot_time_zone|date:"H:i" }}{% else %}running{% endif %} · overlap {% widthratio batch.log_overlap 1 100 %} %</div>{% endif %}
+          </div></div>
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">Mixing stretch</div>
+            <div class="fs-6 fw-semibold">{% if features.steady_mean is not None %}{{ features.steady_mean|floatformat:0 }} A for {% widthratio features.steady_len_s 60 1 %} min{% else %}—{% endif %}</div>
+            <div class="small text-muted">{{ features.dips|default:0 }} dip{{ features.dips|pluralize }} after it</div>
+          </div></div>
+          <div class="col-6 col-md-3"><div class="border rounded-3 p-3 h-100">
+            <div class="text-uppercase text-muted small fw-semibold mb-1">Label</div>
+            <div class="fs-6 fw-semibold">{{ batch.label_compound|default:"—" }}</div>
+            <div class="small text-muted">{% if batch.tagged_compound %}tagged{% if batch.tagged_by %} by {{ batch.tagged_by.get_full_name|default:batch.tagged_by.username }}{% endif %}{% elif batch.label_compound %}from the log{% else %}not labelled{% endif %}</div>
+          </div></div>
+        </div>
+
+        <div class="card shadow-sm border-0 mb-4">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+              <h2 class="h4 mb-0">Current vs standard</h2>
+              <span class="small text-muted">{% if standard %}{{ chart.standardLabel }} · {{ standard.built_from_n }} batches · {% if standard.band_method == "sigma" %}mean ± 2σ{% else %}5th–95th percentile{% endif %}{% else %}No standard for this pattern yet{% endif %}</span>
+            </div>
+            <div style="height: 360px;"><canvas id="batch-curve" role="img" aria-label="The batch's current curve over the standard band"></canvas></div>
+            <p class="small text-muted mt-2 mb-0">{% if chart.aligned %}Time runs from the loading point, so batches line up whatever time they started. Red marks where the batch leaves the band.{% else %}No loading point was found, so the curve runs from the batch start.{% endif %}</p>
+          </div>
+        </div>
+
+        {% if can_tag %}
+        <div class="card shadow-sm border-0">
+          <div class="card-body">
+            <h2 class="h5 mb-3">Tag this batch</h2>
+            <form method="post" action="{% url 'compounding:iot_tag_detected_batch' batch.pk %}" class="row g-3 align-items-end">
+              {% csrf_token %}
+              <div class="col-md-4">
+                <label for="tag-compound" class="form-label">Compound</label>
+                <input id="tag-compound" name="compound_code" class="form-control" list="tag-compounds" value="{{ batch.tagged_compound }}" maxlength="64" placeholder="From the log">
+                <datalist id="tag-compounds">{% for code in compound_choices %}<option value="{{ code }}">{% endfor %}</datalist>
+              </div>
+              <div class="col-md-5">
+                <div class="form-check mb-1">
+                  <input class="form-check-input" type="checkbox" name="excluded" value="1" id="tag-excluded" {% if batch.excluded %}checked{% endif %}>
+                  <label class="form-check-label" for="tag-excluded">Leave out of standards (mis-tagged or abnormal)</label>
+                </div>
+                <input name="excluded_reason" class="form-control form-control-sm" maxlength="200" value="{{ batch.excluded_reason }}" placeholder="Why (optional)" aria-label="Why it is left out">
+              </div>
+              <div class="col-md-3"><button type="submit" class="btn btn-primary w-100">Save tag</button></div>
+            </form>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+{{ chart|json_script:"batch-chart-data" }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+  (function () {
+    const canvas = document.getElementById("batch-curve");
+    if (!canvas || typeof Chart === "undefined") return;
+    const data = JSON.parse(document.getElementById("batch-chart-data").textContent);
+    const css = getComputedStyle(document.documentElement);
+    const text = css.getPropertyValue("--bs-body-color").trim() || "#212529";
+    const grid = css.getPropertyValue("--bs-border-color").trim() || "#dee2e6";
+    const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+    const band = new Map((data.standard || []).map((p) => [p.t, p]));
+    const outside = (t, y) => { const p = band.get(t); return p ? (y > p.upper || y < p.lower) : false; };
+    const datasets = [];
+    if (data.standard.length) {
+      datasets.push(
+        { label: "Band upper", data: data.standard.map((p) => ({ x: p.t, y: p.upper })), borderColor: "rgba(13,110,253,.3)", backgroundColor: "rgba(13,110,253,.12)", borderWidth: 1, pointRadius: 0, fill: "+1", order: 3 },
+        { label: "Band lower", data: data.standard.map((p) => ({ x: p.t, y: p.lower })), borderColor: "rgba(13,110,253,.3)", borderWidth: 1, pointRadius: 0, fill: false, order: 3 },
+        { label: "Standard median", data: data.standard.map((p) => ({ x: p.t, y: p.median })), borderColor: "rgba(13,110,253,.75)", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false, order: 2 },
+      );
+    }
+    datasets.push({
+      label: "This batch",
+      data: data.curve.map((y, i) => ({ x: i * data.step, y })),
+      borderColor: "#198754", borderWidth: 2.5, pointRadius: 0, fill: false, order: 1,
+      segment: { borderColor: (ctx) => (outside(ctx.p1.parsed.x, ctx.p1.parsed.y) ? "#dc3545" : "#198754") },
+    });
+    new Chart(canvas, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+        interaction: { mode: "nearest", axis: "x", intersect: false },
+        plugins: {
+          legend: { labels: { color: text, filter: (item) => item.text !== "Band lower" } },
+          tooltip: { callbacks: { title: (items) => items.length ? fmt(items[0].parsed.x) : "", label: (item) => `${item.dataset.label}: ${item.parsed.y.toFixed(1)} A` } },
+        },
+        scales: {
+          x: { type: "linear", title: { display: true, text: data.aligned ? "Time from loading (min:s)" : "Time from start (min:s)", color: text }, ticks: { color: text, callback: (v) => fmt(v) }, grid: { color: grid } },
+          y: { beginAtZero: true, title: { display: true, text: "Average current (A)", color: text }, ticks: { color: text }, grid: { color: grid } },
+        },
+      },
+    });
+  })();
+</script>
+{% endblock %}

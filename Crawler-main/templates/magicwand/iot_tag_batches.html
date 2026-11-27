@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% load tz %}
+
+{% block title %}Tag Batches{% endblock %}
+
+{% block auth_content %}
+<section class="py-5">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+          <div>
+            <div class="text-uppercase text-muted small fw-semibold mb-2">Compounding · IoT · supervisor</div>
+            <h1 class="display-6 fw-bold mb-2">Tag past batches</h1>
+            <p class="text-muted mb-0">One-time seeding of the reference set: tag 15–20 detected batches per compound. A tag wins over the operator log; leave out batches that are abnormal.</p>
+          </div>
+          <a class="btn btn-outline-primary" href="{{ standards_url }}">Standards &amp; process groups</a>
+        </div>
+
+        {% if label_counts %}
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          {% for label, count in label_counts %}
+          <span class="badge {% if count >= min_batches %}text-bg-success{% else %}text-bg-light border{% endif %}">{{ label }}: {{ count }} / {{ min_batches }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <form method="get" class="d-flex align-items-center gap-2 mb-3">
+          <a class="btn btn-sm btn-outline-secondary" href="?date={{ previous_day }}" aria-label="Previous day">‹</a>
+          <label class="visually-hidden" for="tag-day">Day</label>
+          <input id="tag-day" type="date" name="date" value="{{ day|date:'Y-m-d' }}" class="form-control form-control-sm" style="max-width: 12rem;" onchange="this.form.submit()">
+          <a class="btn btn-sm btn-outline-secondary" href="?date={{ next_day }}" aria-label="Next day">›</a>
+        </form>
+
+        <div class="card shadow-sm border-0">
+          <div class="card-body">
+            {% if batches %}
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="date" value="{{ day|date:'Y-m-d' }}">
+              <datalist id="tag-compounds">{% for code in compound_choices %}<option value="{{ code }}">{% endfor %}</datalist>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead>
+                    <tr><th scope="col">Batch</th><th scope="col" class="text-end">Min</th><th scope="col" class="text-end">kWh</th><th scope="col" class="text-end">Peak A</th><th scope="col">AI / log</th><th scope="col">Tag compound</th><th scope="col">Leave out</th></tr>
+                  </thead>
+                  <tbody>
+                    {% for batch in batches %}
+                    <tr>
+                      <td class="text-nowrap"><a href="{% url 'compounding:iot_detected_batch' batch.pk %}">{{ batch.start_at|timezone:iot_time_zone|date:"H:i" }}–{{ batch.end_at|timezone:iot_time_zone|date:"H:i" }}</a><input type="hidden" name="b{{ batch.pk }}-present" value="1"></td>
+                      <td class="text-end">{% widthratio batch.duration_s 60 1 %}</td>
+                      <td class="text-end">{% if batch.energy_kwh is not None %}{{ batch.energy_kwh|floatformat:1 }}{% endif %}</td>
+                      <td class="text-end">{% if batch.peak_current is not None %}{{ batch.peak_current|floatformat:0 }}{% endif %}</td>
+                      <td class="small">{% if batch.predicted_label %}AI {{ batch.predicted_label }} {{ batch.prediction_confidence|floatformat:0 }} %{% else %}AI unknown{% endif %}<br>{% if batch.log_run %}Log {{ batch.log_run.compound_code }}{% else %}Not logged{% endif %}</td>
+                      <td><label class="visually-hidden" for="b{{ batch.pk }}-compound">Compound</label><input id="b{{ batch.pk }}-compound" name="b{{ batch.pk }}-compound" class="form-control form-control-sm" list="tag-compounds" maxlength="64" value="{{ batch.tagged_compound }}" placeholder="{{ batch.label_compound|default:'Untagged' }}"></td>
+                      <td>
+                        <div class="form-check"><input class="form-check-input" type="checkbox" name="b{{ batch.pk }}-excluded" value="1" id="b{{ batch.pk }}-excluded" {% if batch.excluded %}checked{% endif %}><label class="form-check-label small" for="b{{ batch.pk }}-excluded">Leave out</label></div>
+                        <input name="b{{ batch.pk }}-reason" class="form-control form-control-sm mt-1" maxlength="200" value="{{ batch.excluded_reason }}" placeholder="Why" aria-label="Why it is left out">
+                      </td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              <button type="submit" class="btn btn-primary">Save tags</button>
+            </form>
+            {% else %}
+            <p class="text-muted mb-0">No finished batches detected on {{ day|date:"d M Y" }}. Run <code>iot_sync_samples</code> and <code>iot_detect_batches</code> for older days first.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
