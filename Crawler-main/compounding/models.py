@@ -546,6 +546,35 @@ class DetectedBatch(models.Model):
     excluded = models.BooleanField(default=False)
     excluded_reason = models.CharField(max_length=200, blank=True, default="")
 
+    # Pattern identification: the nearest standard (DTW), or kNN on the features once enough batches exist.
+    predicted_key = models.CharField(max_length=100, blank=True, default="")
+    predicted_label = models.CharField(max_length=80, blank=True, default="")
+    prediction_confidence = models.FloatField(null=True, blank=True)
+    prediction_alternatives = models.JSONField(default=list, blank=True)  # [{"key", "label", "confidence"}]
+    prediction_method = models.CharField(max_length=8, blank=True, default="")
+
+    # Judgement against a standard (pattern only).
+    MATCH_OK = "matches"
+    MATCH_NO = "doesnt_match"
+    MATCH_NO_STANDARD = "no_standard"
+    MATCH_CHOICES = [
+        (MATCH_OK, "Matches standard"),
+        (MATCH_NO, "Doesn't match"),
+        (MATCH_NO_STANDARD, "No standard yet"),
+    ]
+    judged_key = models.CharField(max_length=100, blank=True, default="")
+    judged_label = models.CharField(max_length=80, blank=True, default="")
+    standard = models.ForeignKey(
+        "StandardCurve", on_delete=models.SET_NULL, null=True, blank=True, related_name="judged_batches"
+    )
+    match_pct = models.FloatField(null=True, blank=True)
+    dtw_distance = models.FloatField(null=True, blank=True)
+    energy_dev_pct = models.FloatField(null=True, blank=True)
+    duration_dev_pct = models.FloatField(null=True, blank=True)
+    peak_time_dev_s = models.IntegerField(null=True, blank=True)
+    match_result = models.CharField(max_length=12, choices=MATCH_CHOICES, blank=True, default="")
+    reasons = models.JSONField(default=list, blank=True)  # at most two short strings
+
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 

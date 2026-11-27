@@ -88,14 +88,15 @@ KWH_PER_AMP_SECOND = 10.25 / _AG7020_AMP_SECONDS
 
 
 def build_payloads(plan: Sequence[Tuple[Profile, str, str]] = DAY_PLAN, kwh_start: float = 5000.0,
-                   day: date = DAY) -> List[Dict]:
+                   day: date = DAY, scale: float = 1.0) -> List[Dict]:
+    """Samples every 2 s for the plan; `scale` multiplies the current (and so the energy)."""
     payloads: List[Dict] = []
     kwh = kwh_start
     for profile, start, end in plan:
         start_ms, end_ms = ist_ms(start, day), ist_ms(end, day)
         duration = (end_ms - start_ms) // 1000
         for t in range(0, duration, 2):
-            current = round(max(profile(t, duration), 0.0), 2)
+            current = round(max(profile(t, duration), 0.0) * scale, 2)
             payloads.append({
                 "machineId": SOURCE_MACHINE,
                 "ts": start_ms + t * 1000,
@@ -126,9 +127,7 @@ def make_detected_batch(profile: Profile, start: str, end: str, *, day: date = D
     from compounding import iot_patterns, iot_segments
     from compounding.models import DetectedBatch
 
-    payloads = build_payloads([(profile, start, end)], day=day)
-    for item in payloads:
-        item["raw"]["avg_current"] = round(item["raw"]["avg_current"] * scale, 2)
+    payloads = build_payloads([(profile, start, end)], day=day, scale=scale)
     start_ts, end_ts = ist_ms(start, day), ist_ms(end, day)
     numbers = iot_segments.batch_numbers(as_rows(payloads), start_ts, end_ts, machine_id)
     batch = DetectedBatch(
