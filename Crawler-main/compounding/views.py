@@ -2462,6 +2462,12 @@ def iot_dashboard(request):
             ),
             "iot_time_zone": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),
             "iot_time_zone_label": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),
+            # A past ?date= opens the chart on that whole day; today stays on the live view.
+            "iot_range_date": (
+                plan.plan_date.isoformat()
+                if request.GET.get("date") and plan.plan_date != compounding_business_date()
+                else ""
+            ),
         },
     )
 

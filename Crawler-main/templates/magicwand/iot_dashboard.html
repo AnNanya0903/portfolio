@@ -75,7 +75,7 @@
               <div class="col-md-4">
                 <div class="border rounded-3 p-3 h-100">
                   <div class="text-uppercase text-muted small fw-semibold mb-2">Machine ID</div>
-                  <div id="iot-machine-id" class="fs-5 fw-semibold">No data yet</div>
+                  <div id="iot-machine-id" class="fs-5 fw-semibold" data-machine-id="{{ iot_machine_id|default:'' }}">{{ iot_machine_id|default:"No data yet" }}</div>
                 </div>
               </div>
               <div class="col-md-4">
@@ -86,7 +86,7 @@
               </div>
               <div class="col-md-4">
                 <div class="border rounded-3 p-3 h-100">
-                  <div class="text-uppercase text-muted small fw-semibold mb-2">Register Count</div>
+                  <div class="text-uppercase text-muted small fw-semibold mb-2" id="iot-register-count-label">Register Count</div>
                   <div id="iot-register-count" class="fs-5 fw-semibold">0</div>
                 </div>
               </div>
@@ -560,6 +560,21 @@
     { key: "ch2_temperature", label: "CH-2 Temperature", color: "#59b6ff", axis: "right", unit: "°C" },
   ];
 
+  function getRequestedMachineId() {
+    return (machineIdNode.dataset.machineId || "").trim();
+  }
+
+  // History points are compact ({ts, avg_current, ...}); older payloads nested values in signalsByKey.
+  function readHistoryValue(entry, key) {
+    if (!entry) {
+      return null;
+    }
+    if (Object.prototype.hasOwnProperty.call(entry, key)) {
+      return entry[key];
+    }
+    return entry.signalsByKey ? entry.signalsByKey[key] : null;
+  }
+
   function buildAxisScale(values) {
     if (!values.length) {
       return { min: 0, max: 1, range: 1 };
@@ -650,7 +665,7 @@
         values: history
           .map((entry) => ({
             ts: entry.ts,
-            value: entry.signalsByKey ? entry.signalsByKey[series.key] : null,
+            value: readHistoryValue(entry, series.key),
           }))
           .filter((entry) => typeof entry.value === "number" && Number.isFinite(entry.value)),
       }))
@@ -953,8 +968,8 @@
 
   function buildDashboardDataUrl() {
     const url = new URL(iotDataUrl, window.location.origin);
-    const machineId = (machineIdNode.textContent || "").trim();
-    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+    const machineId = getRequestedMachineId();
+    if (machineId) {
       url.searchParams.set("machineId", machineId);
     }
     if (selectedRange) {
@@ -970,8 +985,8 @@
 
   function buildHistoryExportUrl() {
     const url = new URL(iotExportUrl, window.location.origin);
-    const machineId = (machineIdNode.textContent || "").trim();
-    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+    const machineId = getRequestedMachineId();
+    if (machineId) {
       url.searchParams.set("machineId", machineId);
     }
     if (selectedRange) {
@@ -992,7 +1007,7 @@
       data: (Array.isArray(history) ? history : [])
         .map((entry) => {
           const ts = Number(entry && entry.ts);
-          const value = entry && entry.signalsByKey ? entry.signalsByKey[series.key] : null;
+          const value = readHistoryValue(entry, series.key);
           if (!Number.isFinite(ts) || typeof value !== "number" || !Number.isFinite(value)) {
             return null;
           }
@@ -1411,7 +1426,7 @@
 
   function renderPayload(payload) {
     if (!payload) {
-      machineIdNode.textContent = "No data yet";
+      machineIdNode.textContent = getRequestedMachineId() || "No data yet";
       timestampNode.textContent = "—";
       registerCountNode.textContent = "0";
       latestHistory = [];
@@ -1423,9 +1438,19 @@
       return;
     }
 
-    machineIdNode.textContent = payload.machineId || "Unknown";
+    machineIdNode.textContent = payload.machineId || getRequestedMachineId() || "Unknown";
     timestampNode.textContent = payload.ts ? formatDashboardDateTime(payload.ts) : "—";
-    registerCountNode.textContent = Array.isArray(payload.registers) ? String(payload.registers.length) : "0";
+    // The sender posts named values in `raw` and often no register array; count whichever it sent.
+    const registerCount = Array.isArray(payload.registers) ? payload.registers.length : 0;
+    const rawSignalCount = payload.raw && typeof payload.raw === "object" ? Object.keys(payload.raw).length : 0;
+    const countLabelNode = document.getElementById("iot-register-count-label");
+    if (registerCount || !rawSignalCount) {
+      registerCountNode.textContent = String(registerCount);
+      if (countLabelNode) countLabelNode.textContent = "Register Count";
+    } else {
+      registerCountNode.textContent = String(rawSignalCount);
+      if (countLabelNode) countLabelNode.textContent = "Signal Count";
+    }
     latestSignalRows = payload.signalRows || [];
     renderSignals(payload.signalRows || []);
     renderRegisterRows(payload.registerRows || []);
@@ -1441,8 +1466,8 @@
 
   function buildSummaryUrl(force = false) {
     const url = new URL(iotSummaryUrl, window.location.origin);
-    const machineId = (machineIdNode.textContent || "").trim();
-    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+    const machineId = getRequestedMachineId();
+    if (machineId) {
       url.searchParams.set("machineId", machineId);
     }
     if (selectedRange) {
@@ -1587,7 +1612,15 @@
     }
   });
 
-  fetchLatestPayload();
+  // A past ?date= opens on that whole day (in the dashboard time zone) instead of the live tail.
+  const initialRangeDay = "{{ iot_range_date|default:''|escapejs }}";
+  if (initialRangeDay && rangeStartInput && rangeEndInput) {
+    rangeStartInput.value = `${initialRangeDay}T00:00`;
+    rangeEndInput.value = `${initialRangeDay}T23:59:59`;
+    applySelectedRange();
+  } else {
+    fetchLatestPayload();
+  }
 
   const summaryOpen = document.getElementById("iot-summary-open");
   const summaryModal = document.getElementById("iotSummaryModal");
