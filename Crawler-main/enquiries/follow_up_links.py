@@ -51,9 +51,14 @@ def latest_revision(enquiry_id: str, enquiry: Optional[Mapping[str, Any]] = None
     slugs = _enq_no_slugs(enquiry_id, enquiry)
     if not slugs:
         return None
-    for record in ShareLink.objects.filter(enq_no__in=slugs).order_by("-created_at")[:_SCAN_LIMIT]:
+    from quotations.share_links import is_replaced
+
+    for record in (ShareLink.objects.filter(enq_no__in=slugs, revoked_at__isnull=True)
+                   .order_by("-created_at")[:_SCAN_LIMIT]):
         data = _load(record)
         if data and str(data.get("enquiry_id") or "") == str(enquiry_id) and data.get("pdf_content_b64"):
+            if is_replaced(record, data):  # a version replaced since: never send it again
+                continue
             return record, data
     return None
 
@@ -108,7 +113,7 @@ def _generate(enquiry_id: str, latest: ShareLink, data: dict) -> Tuple[str, str]
     payload = {**data, "password_hash": make_password(password), "requires_password": True}
     token = signing.dumps(payload, salt=SALT, compress=True)
     record = ShareLink.objects.create(id=secrets.token_urlsafe(9), token=token, brand=latest.brand or "magicwand",
-                                      enq_no=latest.enq_no)
+                                      enq_no=latest.enq_no, quotation_version_id=latest.quotation_version_id)
     url = base + reverse("enquiries:share_pretty", args=[record.brand, record.enq_no, record.id])
     logger.info("Generated a follow-up share link for enquiry %s (revision %s)", enquiry_id, latest.id)
     return url, password

@@ -370,8 +370,18 @@
             <dt class="col-5 text-muted">Owner</dt>
             <dd class="col-7">{{ enquiry.assigned_to }}</dd>
           {% endif %}
+          <dt class="col-5 text-muted">Email thread</dt>
+          <dd class="col-7" data-email-thread>
+            {% if email_thread and email_thread.has_email_thread %}<i class="bi bi-link-45deg"></i> {{ email_thread.email_subject|default:"Linked" }}{% else %}<span class="text-muted">Not linked</span>{% endif %}
+            <a class="small ms-1" href="{% url 'enquiries:email_link' enquiry.enquiry_id %}?next={{ request.get_full_path|urlencode }}">{% if email_thread and email_thread.has_email_thread %}Change{% else %}Link enquiry email{% endif %}</a>
+          </dd>
         </dl>
       </div>
+    </div>
+    {% include 'enquiries/_quotations_card.html' %}
+    <div class="card shadow-sm mt-4 overflow-hidden" data-quotation-timeline>
+      <div class="card-body pb-0"><h2 class="h5 mb-2">Quotation timeline</h2></div>
+      {% include 'quotations/_timeline.html' with events=quotation_timeline show_quotation=True %}
     </div>
     <div class="card shadow-sm mt-4">
       <div class="card-body">

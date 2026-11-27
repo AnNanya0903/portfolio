@@ -12,7 +12,9 @@
     <p class="page-subtitle">
       <span class="qt-code">{{ quotation.number }}</span> · {{ quotation.customer_name }}
       {% if quotation.customer %}(code {% if mw_service_access.kyc|default:False %}<a class="qt-code text-decoration-none" href="{% url 'kyc:detail' quotation.customer.pk %}" title="Open in KYC">{{ quotation.customer.code }}</a>{% else %}<span class="qt-code">{{ quotation.customer.code }}</span>{% endif %}){% endif %}
-      {% if quotation.enquiry_id %} · {% if mw_service_access.enquiries|default:False %}<a class="text-decoration-none" href="{% url 'enquiries:detail' quotation.enquiry_id %}" title="Open the enquiry">Enquiry #{{ quotation.enquiry_id }}</a>{% else %}Enquiry #{{ quotation.enquiry_id }}{% endif %}{% endif %}
+      · <span data-quotation-enquiry>{% if quotation.enquiry_id %}{% if mw_service_access.enquiries|default:False %}<a class="qt-code text-decoration-none" href="{% url 'enquiries:detail' quotation.enquiry_id %}" title="Open the enquiry">{{ quotation.enquiry_id }}</a>{% else %}<span class="qt-code">{{ quotation.enquiry_id }}</span>{% endif %}{% else %}<span class="text-warning-emphasis">No enquiry linked</span>{% endif %}</span>
+      {% if quotation.enquiry_reference %} · <span class="qt-muted" title="Customer reference">Ref. {{ quotation.enquiry_reference }}</span>{% endif %}
+      {% if can_link_enquiry %}<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline" data-bs-toggle="modal" data-bs-target="#enquiryModal" data-change-enquiry>{% if quotation.enquiry_id %}Change enquiry{% else %}Link to enquiry{% endif %}</button>{% endif %}
       <span class="qt-chip qt-chip--{{ quotation.status }} ms-2">{{ quotation.get_status_display }}</span>
     </p>
   </div>
@@ -24,25 +26,71 @@
     <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
       <div>
         <div class="qt-label">PDF to send to the customer</div>
-        <div class="fw-semibold"><i class="bi bi-file-earmark-pdf me-1"></i>{{ active.pdf_name|default:"Quotation PDF" }}</div>
-        <div class="qt-muted">Version {{ active.number }}, approved {{ active.decided_at|date:"d M Y" }}{% if active.decided_by %} by {{ active.decided_by.get_full_name|default:active.decided_by.username }}{% endif %}</div>
+        <div class="fw-semibold"><i class="bi bi-file-earmark-pdf me-1"></i>{{ quotation.number }}.pdf</div>
+        <div class="qt-muted">Version {{ active.number }}, approved {{ active.decided_at|date:"d M Y" }}{% if active.decided_by %} by {{ active.decided_by.get_full_name|default:active.decided_by.username }}{% endif %}{% if active.sha256 %} · SHA-256 <span class="qt-code" title="{{ active.sha256 }}">{{ active.sha256|slice:":12" }}…</span>{% endif %}</div>
+        {% if quotation.sent_at %}<div class="qt-muted mt-1" data-sent-info>Sent {{ quotation.sent_at|date:"d M Y, H:i" }}{% if quotation.sent_by %} by {{ quotation.sent_by.get_full_name|default:quotation.sent_by.username }}{% endif %}{% if quotation.sent_to %} to {{ quotation.sent_to }}{% endif %}{% if quotation.sent_cc %} (CC {{ quotation.sent_cc }}){% endif %}</div>{% endif %}
       </div>
       <div class="d-flex gap-2 flex-wrap">
         <a class="btn btn-success" href="{% url 'quotations:version_pdf' active.pk %}" target="_blank" rel="noopener"><i class="bi bi-eye me-1"></i> Open PDF</a>
-        {% if quotation.status != 'sent' %}
-        <form method="post" action="{% url 'quotations:mark_sent' quotation.pk %}">{% csrf_token %}
-          <button type="submit" class="btn btn-outline-success"><i class="bi bi-send-check me-1"></i> Mark as sent to customer</button>
-        </form>
+        {% if can_send and needs_enquiry_first %}
+          <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#enquiryModal" data-send-button data-needs-enquiry><i class="bi bi-send me-1"></i> {% if quotation.status == 'sent' %}Resend{% else %}Send to Customer{% endif %}</button>
+        {% elif can_send and quotation.status == 'approved' %}
+          <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#sendModal" data-send-button><i class="bi bi-send me-1"></i> Send to Customer</button>
+        {% elif can_send and quotation.status == 'sent' %}
+          <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#sendModal" data-resend-button><i class="bi bi-arrow-repeat me-1"></i> Resend</button>
+        {% endif %}
+        {% if quotation.proforma_unlocked %}
+          <a class="btn btn-primary" href="{% url 'quotations:proforma' quotation.pk %}" data-proforma-hook><i class="bi bi-receipt me-1"></i> Create Proforma Invoice</a>
         {% endif %}
       </div>
     </div>
+    {% if can_send and password_failed and quotation.status == 'sent' %}
+      <form method="post" action="{% url 'quotations:send_password' quotation.pk %}" class="alert alert-warning py-2 mt-2 mb-0 d-flex flex-wrap align-items-center gap-2" data-password-retry>{% csrf_token %}
+        <span class="small">The quotation was sent, but the separate email with the link's password failed.</span>
+        <button type="submit" class="btn btn-sm btn-warning">Send the password again</button>
+      </form>
+    {% endif %}
+    {% if can_send and quotation.status == 'approved' %}
+      <form method="post" action="{% url 'quotations:mark_sent' quotation.pk %}" class="mt-2"
+            onsubmit="return confirm('Record {{ quotation.number|escapejs }} as sent outside the portal? Nothing is emailed.');">{% csrf_token %}
+        <button type="submit" class="btn btn-link btn-sm p-0 qt-muted">Already sent it from Gmail? Mark as sent</button>
+      </form>
+    {% endif %}
+    {% if can_send and quotation.status == 'sent' %}
+      <div class="row g-3 mt-1" data-customer-response>
+        <div class="col-md-6">
+          <form method="post" action="{% url 'quotations:respond' quotation.pk %}" class="border rounded p-3 bg-white h-100">{% csrf_token %}
+            <input type="hidden" name="answer" value="accepted">
+            <div class="fw-semibold mb-2 text-success"><i class="bi bi-check2-circle"></i> Customer accepted</div>
+            <input name="reference" maxlength="120" class="form-control form-control-sm mb-2" placeholder="PO / reference number (optional)">
+            <textarea name="note" rows="2" class="form-control form-control-sm mb-2" placeholder="Note (optional)"></textarea>
+            <button type="submit" class="btn btn-sm btn-success">Mark accepted</button>
+          </form>
+        </div>
+        <div class="col-md-6">
+          <form method="post" action="{% url 'quotations:respond' quotation.pk %}" class="border rounded p-3 bg-white h-100">{% csrf_token %}
+            <input type="hidden" name="answer" value="declined">
+            <div class="fw-semibold mb-2 text-danger"><i class="bi bi-x-circle"></i> Customer declined</div>
+            <textarea name="reason" rows="3" class="form-control form-control-sm mb-2" placeholder="Reason (required)" required></textarea>
+            <button type="submit" class="btn btn-sm btn-outline-danger">Mark declined</button>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+    {% if quotation.status == 'accepted' or quotation.status == 'declined' %}
+      <div class="mt-2 small" data-response-info>
+        <strong>{{ quotation.get_status_display }}</strong>{% if quotation.responded_at %} on {{ quotation.responded_at|date:"d M Y" }}{% endif %}{% if quotation.customer_reference %} · PO / reference {{ quotation.customer_reference }}{% endif %}
+        {% if quotation.customer_response_note %}<div class="qt-comment">{{ quotation.customer_response_note }}</div>{% endif %}
+      </div>
+    {% endif %}
   </div>
 {% else %}
   <div class="qt-waiting mb-4" data-no-active-pdf>
     <div class="fw-semibold"><i class="bi bi-hourglass-split me-1"></i>No PDF to send yet</div>
     <div class="qt-muted">
       {% if quotation.status == 'revision' %}Management asked for a revision. The new PDF will appear here once it is uploaded and approved.
-      {% else %}The latest version is waiting for management approval. Do not send an older PDF.{% endif %}
+      {% elif quotation.status == 'draft' %}This is a draft. Costing submits it for approval when it is ready.
+      {% else %}Waiting for management approval – do not send an older version.{% endif %}
     </div>
   </div>
 {% endif %}
@@ -59,11 +107,12 @@
         <a href="{% url 'quotations:version_excel' latest.pk %}">Download the Excel working</a>{% endif %}
         {% if latest.price_note %} · Quoted price: {{ latest.price_note }}{% endif %}
       </p>
+      <iframe src="{% url 'quotations:version_pdf' latest.pk %}" title="Version {{ latest.number }} PDF" class="w-100 border rounded mb-3" style="height: 520px;" data-pdf-preview></iframe>
       <form method="post" action="{% url 'quotations:decide' quotation.pk %}" enctype="multipart/form-data">
         {% csrf_token %}
         <input type="hidden" name="version" value="{{ latest.pk }}">
         <div class="mb-3">
-          <label class="form-label small" for="{{ decision_form.comment.id_for_label }}">Comment</label>
+          <label class="form-label small" for="{{ decision_form.comment.id_for_label }}">Comment (the reason is required to reject)</label>
           {{ decision_form.comment }}
         </div>
         <div class="mb-3">
@@ -75,6 +124,16 @@
           <button type="submit" name="decision" value="approve" class="btn btn-success"><i class="bi bi-check2-circle me-1"></i> Price is good, OK to send</button>
           <button type="submit" name="decision" value="revise" class="btn btn-outline-danger"><i class="bi bi-arrow-repeat me-1"></i> Price needs revision</button>
         </div>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if can_cost and is_draft %}
+    <div class="card border-0 shadow-sm p-4 mb-4" data-submit-card>
+      <h5 class="mb-1">Draft version {{ latest.number }}</h5>
+      <p class="qt-muted mb-3"><a href="{% url 'quotations:version_pdf' latest.pk %}" target="_blank" rel="noopener">Open the PDF</a>. Submit it when it is ready for management.</p>
+      <form method="post" action="{% url 'quotations:submit' quotation.pk %}">{% csrf_token %}
+        <button type="submit" class="btn btn-primary"><i class="bi bi-send-check me-1"></i> Submit for approval</button>
       </form>
     </div>
     {% endif %}
@@ -105,7 +164,7 @@
     {% if can_cost %}
     <div class="card border-0 shadow-sm p-4" data-upload-card>
       <h5 class="mb-1">Upload a new version</h5>
-      <p class="qt-muted mb-3">The new version replaces every earlier one and goes to management for approval.</p>
+      <p class="qt-muted mb-3">The new version replaces every earlier one.{% if quotation.status == 'approved' or quotation.status == 'sent' or quotation.status == 'accepted' or quotation.status == 'declined' %} This quotation was approved, so it goes back to management for approval.{% endif %}</p>
       <form method="post" action="{% url 'quotations:version_new' quotation.pk %}" enctype="multipart/form-data">
         {% csrf_token %}
         <div class="row g-3">
@@ -114,33 +173,21 @@
           <div class="col-12">{% include 'quotations/_field.html' with field=version_form.price_note %}</div>
           <div class="col-12">{% include 'quotations/_field.html' with field=version_form.note %}</div>
         </div>
-        <button type="submit" class="btn btn-primary mt-3"><i class="bi bi-upload me-1"></i> Upload for approval</button>
+        <div class="d-flex gap-2 flex-wrap mt-3">
+          <button type="submit" name="action" value="submit" class="btn btn-primary"><i class="bi bi-upload me-1"></i> Submit for approval</button>
+          {% if quotation.status == 'draft' or quotation.status == 'revision' or quotation.status == 'pending' %}<button type="submit" name="action" value="draft" class="btn btn-outline-secondary">Save as draft</button>{% endif %}
+        </div>
       </form>
     </div>
     {% endif %}
   </div>
 
   <div class="col-lg-5">
-    <div class="card border-0 shadow-sm overflow-hidden" data-tracker>
-      <div class="px-4 pt-3"><h5 class="mb-2">Tracker</h5></div>
-      {% for event in events %}
-        <div class="qt-event">
-          <div class="d-flex justify-content-between gap-2 flex-wrap">
-            <span class="qt-chip qt-chip--{{ event.action }}">{{ event.get_action_display }}</span>
-            <span class="qt-muted">{{ event.created_at|date:"d M Y, H:i" }}</span>
-          </div>
-          <div class="qt-muted mt-1">
-            {% if event.version %}Version {{ event.version.number }}{% endif %}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}
-          </div>
-          {% if event.comment %}<div class="qt-comment mt-1">{{ event.comment }}</div>{% endif %}
-          {% if event.file %}<div class="mt-1"><a href="{% url 'quotations:event_file' event.pk %}"><i class="bi bi-file-earmark-spreadsheet"></i> {{ event.file_name|default:"Corrected Excel" }}</a></div>{% endif %}
-        </div>
-      {% empty %}
-        <div class="qt-event qt-muted">Nothing yet.</div>
-      {% endfor %}
-    </div>
+    {% include 'quotations/_tracker_card.html' %}
   </div>
 </div>
+{% else %}
+<div class="row g-4"><div class="col-lg-7">{% include 'quotations/_tracker_card.html' %}</div></div>
 {% endif %}
 
 {% if can_cost %}
@@ -162,4 +209,6 @@
   </div>
 </div>
 {% endif %}
+{% if send %}{% include 'quotations/_send_modal.html' %}{% endif %}
+{% if can_link_enquiry %}{% include 'quotations/_change_enquiry_modal.html' %}{% endif %}
 {% endblock %}

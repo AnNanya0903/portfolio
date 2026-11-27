@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import cron_views, negotiation_views, views
+from . import cron_views, email_link_views, merge_views, negotiation_views, views
 from magicwand.access import require_service_access
 
 app_name = "enquiries"
@@ -26,6 +26,8 @@ urlpatterns = [
     path("upload-pdf/", _enquiries(views.upload_pdf_enquiry), name="upload_pdf_enquiry"),
     path("summary/", _enquiries(views.summary), name="summary"),
     path("gmail-queue/", _enquiries(views.gmail_queue), name="gmail_queue"),
+    path("<str:enquiry_id>/email-link/", _enquiries(email_link_views.email_link), name="email_link"),
+    path("<str:enquiry_id>/merge/", _enquiries(merge_views.merge), name="merge"),
     path("<str:enquiry_id>/work-order/", _enquiries(views.work_order_convert), name="work_order_convert"),
     path("<str:enquiry_id>/follow-up/", _enquiries(views.follow_up), name="follow_up"),
     path(

@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+
+{% block title %}Link older quotations to enquiries - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}{% include 'quotations/_styles.html' %}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'quotations:list' %}" class="qt-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Quotations</a>
+    <h2 class="page-title">Link older quotations to their enquiries</h2>
+    <p class="page-subtitle">Suggested from the same customer (name or email domain) and a matching subject. Nothing is linked until you confirm it or pick the right enquiry. {{ unlinked }} quotation{{ unlinked|pluralize }} still without an enquiry. New suggestions: <code>python manage.py suggest_quotation_enquiries</code>.</p>
+  </div>
+</div>
+
+<div class="qt-tabs mb-3">
+  {% for tab in tabs %}<a class="qt-tab {% if status == tab.key %}active{% endif %}" href="?status={{ tab.key }}">{{ tab.label }} ({{ tab.count }})</a>{% endfor %}
+</div>
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead><tr><th>Quotation</th><th>Suggested enquiry</th><th>Reason</th><th>Confidence</th><th style="min-width: 320px;"></th></tr></thead>
+      <tbody>
+        {% for row in page %}
+          <tr data-suggestion="{{ row.quotation.number }}">
+            <td><a class="qt-code text-decoration-none" href="{% url 'quotations:detail' row.quotation.pk %}">{{ row.quotation.number }}</a>
+              <div class="small">{{ row.quotation.customer_name }}</div>
+              <div class="qt-muted">{{ row.quotation.title }}{% if row.quotation.enquiry_reference %} · Ref. {{ row.quotation.enquiry_reference }}{% endif %} · {{ row.quotation.created_at|date:"d M Y" }}</div></td>
+            <td>{% if row.enquiry_id %}<a class="qt-code text-decoration-none" href="{% url 'enquiries:detail' row.enquiry_id %}" target="_blank" rel="noopener">{{ row.enquiry_id }}</a>
+              <div class="small">{{ row.enquiry_customer }}</div><div class="qt-muted">{{ row.enquiry_subject }}</div>{% else %}<span class="text-muted small">No match</span>{% endif %}</td>
+            <td class="small">{{ row.reason }}</td>
+            <td>{% if row.confidence %}<span class="qt-chip qt-chip--{% if row.confidence == 'high' %}approved{% elif row.confidence == 'medium' %}pending{% else %}revision{% endif %}">{{ row.get_confidence_display }}</span>{% endif %}</td>
+            <td>
+              {% if row.status == 'pending' or row.status == 'rejected' %}
+              <form method="post" class="d-flex flex-wrap gap-2 align-items-center">{% csrf_token %}
+                <input type="hidden" name="suggestion" value="{{ row.pk }}"><input type="hidden" name="status" value="{{ status }}">
+                {% if row.enquiry_id %}<button type="submit" name="action" value="confirm" class="btn btn-sm btn-success">Confirm {{ row.enquiry_id }}</button>{% endif %}
+                <input name="enquiry_id" class="form-control form-control-sm" style="max-width: 150px;" placeholder="or pick ENQ" list="enquiryOptions" data-enquiry-picker="1" autocomplete="off">
+                <button type="submit" name="action" value="pick" class="btn btn-sm btn-outline-primary">Link</button>
+                {% if row.status == 'pending' %}<button type="submit" name="action" value="reject" class="btn btn-sm btn-link text-danger" formnovalidate>Reject</button>{% endif %}
+              </form>
+              {% else %}<span class="qt-muted">{{ row.get_status_display }}{% if row.decided_by %} by {{ row.decided_by.get_full_name|default:row.decided_by.username }}{% endif %}{% if row.decided_at %}, {{ row.decided_at|date:"d M Y" }}{% endif %}</span>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="5" class="text-center text-muted py-5">Nothing here.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% include 'quotations/_enquiry_picker.html' %}
+{% if page.has_other_pages %}
+<div class="d-flex justify-content-end align-items-center gap-2 mt-3 qt-muted">
+  {% if page.has_previous %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ status }}&page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  Page {{ page.number }} of {{ page.paginator.num_pages }}
+  {% if page.has_next %}<a class="btn btn-sm btn-outline-secondary" href="?status={{ status }}&page={{ page.next_page_number }}">Next</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

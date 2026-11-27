@@ -35,6 +35,31 @@
   {% endfor %}
 </div>
 
+{% if ready %}
+{# Approved, OK to send: what the CRO has to email, oldest approval first. #}
+<div class="card border-0 shadow-sm overflow-hidden" data-ready-to-send>
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead><tr><th>Quotation</th><th>Version</th><th>Enquiry</th><th>Customer</th><th>Approved</th><th></th></tr></thead>
+      <tbody>
+        {% for row in page %}
+          <tr data-ready-row="{{ row.number }}">
+            <td class="text-nowrap"><a class="qt-code text-decoration-none" href="{% url 'quotations:detail' row.pk %}">{{ row.number }}</a><div class="qt-muted">{{ row.title }}</div></td>
+            <td>v{{ row.ready_version.number|default:"?" }}{% if row.ready_version.number > 1 %} <span class="qt-muted">(revised)</span>{% endif %}</td>
+            <td class="text-nowrap">{% if row.enquiry_id %}{% if mw_service_access.enquiries|default:False %}<a class="qt-code text-decoration-none" href="{% url 'enquiries:detail' row.enquiry_id %}">{{ row.enquiry_id }}</a>{% else %}<span class="qt-code">{{ row.enquiry_id }}</span>{% endif %}{% else %}<span class="text-warning-emphasis small">Not linked</span>{% endif %}
+              {% if row.enquiry_reference %}<div class="qt-muted">Ref. {{ row.enquiry_reference }}</div>{% endif %}</td>
+            <td>{{ row.customer_name }}</td>
+            <td class="qt-muted text-nowrap">{{ row.ready_version.decided_at|date:"d M Y, H:i" }}{% if row.ready_version.decided_by %}<br>{{ row.ready_version.decided_by.get_full_name|default:row.ready_version.decided_by.username }}{% endif %}</td>
+            <td class="text-end">{% if can_send %}<a class="btn btn-sm btn-primary" href="{% url 'quotations:detail' row.pk %}?send=1" data-send-link><i class="bi bi-send me-1"></i>{% if row.enquiry_id %}Send to customer{% else %}Link enquiry, then send{% endif %}</a>{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-5">Nothing waiting to be sent.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
 <div class="card border-0 shadow-sm overflow-hidden">
   <div class="table-responsive">
     <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
@@ -51,7 +76,7 @@
             </td>
             <td>
               <a class="text-decoration-none" href="{% url 'quotations:detail' row.pk %}">{{ row.title }}</a>
-              {% if row.enquiry_id %}<div class="qt-muted">{% if mw_service_access.enquiries|default:False %}<a href="{% url 'enquiries:detail' row.enquiry_id %}" class="text-decoration-none" title="Open the enquiry">Enquiry #{{ row.enquiry_id }}</a>{% else %}Enquiry #{{ row.enquiry_id }}{% endif %}</div>{% endif %}
+              {% if row.enquiry_id or row.enquiry_reference %}<div class="qt-muted">{% if row.enquiry_id %}{% if mw_service_access.enquiries|default:False %}<a href="{% url 'enquiries:detail' row.enquiry_id %}" class="qt-code text-decoration-none" title="Open the enquiry">{{ row.enquiry_id }}</a>{% else %}{{ row.enquiry_id }}{% endif %}{% endif %}{% if row.enquiry_id and row.enquiry_reference %} · {% endif %}{% if row.enquiry_reference %}Ref. {{ row.enquiry_reference }}{% endif %}</div>{% endif %}
             </td>
             <td><span class="qt-chip qt-chip--{{ row.status }}">{{ row.get_status_display }}</span></td>
             <td class="text-nowrap">{{ row.updated_at|date:"d M Y" }}</td>
@@ -65,6 +90,7 @@
     </table>
   </div>
 </div>
+{% endif %}
 
 {% if page.has_other_pages %}
 <div class="d-flex justify-content-end align-items-center gap-2 mt-3 qt-muted">

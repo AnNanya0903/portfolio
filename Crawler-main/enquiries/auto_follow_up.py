@@ -751,11 +751,12 @@ def _note_marketing_reply(enquiry_id: str, sender, replied: List[Mapping[str, An
 
 def record_start(enquiry_id: str, stage: str, *, sent: Mapping[str, Any], customer_email: str, cc: List[str],
                  subject: str, user=None, document_no: str = "", share_url: str = "", share_password: str = "",
-                 started_at: Optional[datetime] = None) -> Optional[FollowUpStart]:
+                 started_at: Optional[datetime] = None, restart: bool = False) -> Optional[FollowUpStart]:
     """The quotation / PI was emailed: its sequence starts (thread, customer email and subject stored now).
 
     A revised quotation or PI of a sequence already running does not restart it (the follow-ups carry the
-    latest revision's link anyway); the existing start is returned.
+    latest revision's link anyway); the existing start is returned. With `restart` (the quotations portal's send of
+    an approved version) a new start is made, so the schedule counts again from this email.
     """
     if stage != MARKETING_STAGE:
         thread_id = str((sent or {}).get("threadId") or "")
@@ -763,7 +764,7 @@ def record_start(enquiry_id: str, stage: str, *, sent: Mapping[str, Any], custom
             return None
         existing = (FollowUpStart.objects.filter(enquiry_id=str(enquiry_id), stage=stage)
                     .order_by("-started_at").first())
-        if existing is not None:
+        if existing is not None and not restart:
             return existing
     return FollowUpStart.objects.create(
         enquiry_id=str(enquiry_id), stage=stage, gmail_thread_id=str((sent or {}).get("threadId") or ""),

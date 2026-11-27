@@ -1,0 +1,88 @@
+{# The CRO's send box: send (Approved) or resend (Sent) the approved PDF, in the enquiry's email thread. #}
+<div class="modal fade" id="sendModal" tabindex="-1" aria-labelledby="sendModalTitle" aria-hidden="true" data-send-modal>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <form class="modal-content" method="post" novalidate data-send-form
+          action="{% if send_resend %}{% url 'quotations:resend' quotation.pk %}{% else %}{% url 'quotations:send' quotation.pk %}{% endif %}">
+      {% csrf_token %}
+      <div class="modal-header">
+        <h5 class="modal-title" id="sendModalTitle">{% if send_resend %}Resend{% else %}Send{% endif %} {{ quotation.number }} to the customer</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        {% if send_error %}<div class="alert alert-danger py-2" data-send-error>{{ send_error }}</div>{% endif %}
+        <p class="qt-muted mb-3">From <strong>{{ send_from }}</strong></p>
+
+        <div class="mb-3">
+          <label class="form-label small fw-semibold" for="sendTo">To</label>
+          <input id="sendTo" name="to" type="email" multiple class="form-control form-control-sm" required
+                 value="{{ send.to|join:', ' }}" placeholder="customer@company.com" data-send-to>
+          {% if not send.to %}<div class="form-text text-danger" data-missing-email>The enquiry has no customer email. Add it here; it will be saved on the enquiry.</div>
+          {% else %}<div class="form-text">From the enquiry. Separate several addresses with commas.</div>{% endif %}
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold" for="sendCc">CC</label>
+          <input id="sendCc" name="cc" type="email" multiple class="form-control form-control-sm"
+                 value="{{ send.cc|join:', ' }}" placeholder="Add more addresses">
+          <div class="form-text">The enquiry's other customer emails and its CCs. Remove or add addresses as needed.</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold" for="sendSubject">Subject</label>
+          <input id="sendSubject" name="subject" class="form-control form-control-sm" maxlength="300"
+                 value="{{ send.subject }}" {% if send.subject_locked %}readonly aria-readonly="true"{% endif %} data-send-subject>
+          {% if send.subject_locked %}
+            <div class="form-text"><i class="bi bi-link-45deg"></i> Replies in the customer's own email thread. The subject cannot be changed, so the thread is not broken.</div>
+          {% else %}
+            <div class="alert alert-warning py-1 px-2 mt-2 mb-0 small" data-new-thread-notice>No linked email – this will start a new thread.
+              {% if quotation.enquiry_id %}<a href="{% url 'enquiries:email_link' quotation.enquiry_id %}?next={{ request.get_full_path|urlencode }}">Link the enquiry email</a> first to reply in the customer's thread.{% endif %}</div>
+          {% endif %}
+        </div>
+        <div class="mb-3">
+          <label class="form-label small fw-semibold" for="sendBody">Message</label>
+          <textarea id="sendBody" name="body" rows="11" class="form-control form-control-sm" required>{{ send.body }}</textarea>
+          <div class="form-text">The line “[Link to the quotation – added when the email is sent]” becomes the online link to version {{ send.version.number }}. Its password is <strong>never</strong> in this email: it follows in a separate email in the same thread.{% if send.subject_locked %} The customer's last message is quoted under yours.{% endif %}</div>
+        </div>
+        <div class="border rounded p-2 d-flex justify-content-between align-items-center" data-attachment>
+          <span><i class="bi bi-paperclip"></i> <strong>{{ send.attachment_name }}</strong> <span class="qt-muted">latest approved version {{ send.version.number }}{% if send.version.number > 1 %} (revised){% endif %} · cannot be replaced</span></span>
+          <a href="{% url 'quotations:version_pdf' send.version.pk %}" target="_blank" rel="noopener" class="small">Preview</a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-primary" data-send-submit>
+          <span class="spinner-border spinner-border-sm me-1 d-none" aria-hidden="true"></span>
+          <span data-label>{% if send_resend %}Resend{% else %}Send{% endif %}</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+(function () {
+  var form = document.querySelector('[data-send-form]');
+  if (!form) return;
+  var to = form.querySelector('[data-send-to]');
+  function check() {
+    if (!to.value.trim()) { to.setCustomValidity('Add the customer email address.'); }
+    else { to.setCustomValidity(''); }
+  }
+  to.addEventListener('input', check);
+  form.addEventListener('submit', function (event) {
+    check();
+    if (!form.checkValidity()) {
+      event.preventDefault();
+      form.reportValidity();
+      return;
+    }
+    var button = form.querySelector('[data-send-submit]');
+    if (button.disabled) { event.preventDefault(); return; }
+    button.disabled = true;
+    button.querySelector('.spinner-border').classList.remove('d-none');
+    button.querySelector('[data-label]').textContent = 'Sending…';
+  });
+  {% if open_send %}
+  document.addEventListener('DOMContentLoaded', function () {
+    if (window.bootstrap) { bootstrap.Modal.getOrCreateInstance(document.getElementById('sendModal')).show(); }
+  });
+  {% endif %}
+})();
+</script>

@@ -1,0 +1,200 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{% if is_new %}Add SubEnquiry{% else %}SubEnquiry {{ subdivision.code|upper }}{% endif %}{% endblock %}
+
+{% block extra_css %}
+<style>
+  .form-section {
+    background: #f8fbff;
+    border: 1px solid rgba(13, 81, 143, 0.08);
+    border-radius: 1rem;
+    padding: 1.5rem;
+  }
+  .form-section + .form-section {
+    margin-top: 1.5rem;
+  }
+  .form-section-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #3c4f6b;
+    margin-bottom: 1.25rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <a class="btn btn-link px-0" href="{% url 'enquiries:detail' enquiry.enquiry_id %}">
+      <i class="bi bi-arrow-left"></i> Back to enquiry
+    </a>
+    <h1 class="display-6 mb-0">
+      {% if is_new %}
+        Add SubEnquiry for {{ enquiry.enquiry_id }}
+      {% else %}
+        SubEnquiry {{ subdivision.subdivision_id }}
+      {% endif %}
+    </h1>
+    <p class="text-muted mb-0">Manage a sub-enquiry with its own attachments and workflow.</p>
+  </div>
+  {% if not is_new %}
+    <div class="text-end">
+      <span class="badge text-bg-secondary">Status: {{ subdivision.status|default:'open'|upper }}</span>
+    </div>
+  {% endif %}
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form method="post" enctype="multipart/form-data" data-enquiry-calculations="true" novalidate>
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      {{ form.parent_enquiry_id }}
+      {{ form.subdivision_id }}
+      <div class="mb-3">
+        {% include 'enquiries/_form_field.html' with field=form.code %}
+      </div>
+      {% if form.fields.status %}
+        <section class="form-section">
+          <h3 class="form-section-title">Workflow</h3>
+          <div class="row g-3">
+            <div class="col-md-4 col-lg-3">
+              {% include 'enquiries/_form_field.html' with field=form.status %}
+            </div>
+          </div>
+        </section>
+      {% endif %}
+
+      <section class="form-section">
+        <h3 class="form-section-title">Customer Details</h3>
+        <div class="row g-3">
+          <div class="col-md-4">{% include 'enquiries/_form_field.html' with field=form.customer_name %}</div>
+          <div class="col-md-4">{% include 'enquiries/_form_field.html' with field=form.project_name %}</div>
+          <div class="col-md-4">{% include 'enquiries/_form_field.html' with field=form.subject %}</div>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-4">{% include 'enquiries/_form_field.html' with field=form.channel %}</div>
+          <div class="col-md-4">{% include 'enquiries/_form_field.html' with field=form.priority %}</div>
+          <div class="col-md-4">{% include 'enquiries/_form_field.html' with field=form.assigned_to %}</div>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6 col-lg-3">{% include 'enquiries/_form_field.html' with field=form.customer_reference %}</div>
+          <div class="col-md-6 col-lg-3">{% include 'enquiries/_form_field.html' with field=form.material_customer %}</div>
+          <div class="col-md-6 col-lg-3">{% include 'enquiries/_form_field.html' with field=form.currency %}</div>
+          <div class="col-md-6 col-lg-3">{% include 'enquiries/_form_field.html' with field=form.conversion_rate %}</div>
+        </div>
+        <div class="row">
+          <div class="col-12">{% include 'enquiries/_form_field.html' with field=form.description %}</div>
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h3 class="form-section-title">Design</h3>
+        <div class="row g-3">
+          {% for item in design_fields %}
+            <div class="{{ item.column_class }}">
+              {% include 'enquiries/_form_field.html' with field=item.field %}
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h3 class="form-section-title">Production</h3>
+        <div class="row g-3">
+          {% for item in production_fields %}
+            <div class="{{ item.column_class }}">
+              {% include 'enquiries/_form_field.html' with field=item.field %}
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h3 class="form-section-title">Compounding</h3>
+        <div class="row g-3">
+          {% for item in compounding_fields %}
+            <div class="{{ item.column_class }}">
+              {% include 'enquiries/_form_field.html' with field=item.field %}
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="form-section">
+        <h3 class="form-section-title">Costing</h3>
+        <div class="row g-3">
+          {% for item in costing_fields %}
+            <div class="{{ item.column_class }}">
+              {% include 'enquiries/_form_field.html' with field=item.field %}
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <div class="row">
+        <div class="col-12">{% include 'enquiries/_form_field.html' with field=form.remarks %}</div>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-6 col-lg-4">{% include 'enquiries/_form_field.html' with field=form.profile %}</div>
+        <div class="col-md-6 col-lg-4">{% include 'enquiries/_form_field.html' with field=form.attachments %}</div>
+      </div>
+
+      {% if subdivision and subdivision.profile_attachments %}
+        <div class="mb-3">
+          <strong class="d-block mb-2">Profile</strong>
+          <ul class="list-unstyled">
+            {% for attachment in subdivision.profile_attachments %}
+              <li class="mb-1">
+                <a href="{% url 'enquiries:download_subdivision_attachment' enquiry.enquiry_id subdivision.subdivision_id attachment.attachment_id %}" target="_blank" rel="noopener">
+                  {{ attachment.file_name }}
+                </a>
+                <small class="text-muted ms-1">({{ attachment.size_bytes|filesizeformat }})</small>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+      {% if subdivision and subdivision.general_attachments %}
+        <div class="mb-3">
+          <strong class="d-block mb-2">Attachments</strong>
+          <ul class="list-unstyled">
+            {% for attachment in subdivision.general_attachments %}
+              <li class="mb-1">
+                <a href="{% url 'enquiries:download_subdivision_attachment' enquiry.enquiry_id subdivision.subdivision_id attachment.attachment_id %}" target="_blank" rel="noopener">
+                  {{ attachment.file_name }}
+                </a>
+                <small class="text-muted ms-1">({{ attachment.size_bytes|filesizeformat }})</small>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endif %}
+
+      <div class="d-flex gap-2 flex-wrap align-items-center">
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-save me-1"></i>{% if is_new %}Create SubEnquiry{% else %}Save changes{% endif %}
+        </button>
+        <a class="btn btn-outline-secondary" href="{% url 'enquiries:detail' enquiry.enquiry_id %}">Cancel</a>
+        {% if not is_new %}
+          <a class="btn btn-outline-primary" href="{% url 'enquiries:subdivision_preview' enquiry.enquiry_id subdivision.subdivision_id %}" target="_blank" rel="noopener">
+            <i class="bi bi-link-45deg me-1"></i>Generate Link
+          </a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if not is_new %}
+  <form method="post" action="{% url 'enquiries:subdivision_delete' enquiry.enquiry_id subdivision.subdivision_id %}" class="mt-3">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Delete this sub-enquiry?');">
+      <i class="bi bi-trash"></i> Delete SubEnquiry
+    </button>
+  </form>
+{% endif %}
+{% endblock %}

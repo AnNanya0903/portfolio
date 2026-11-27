@@ -1735,14 +1735,15 @@ def board(request: HttpRequest) -> HttpResponse:
         work_order_rows = work_orders.converted_for(page_ids)
         from quotations import links as quotation_links
 
-        quotation_counts = quotation_links.counts_for_enquiries(page_ids)
+        quotation_summaries = quotation_links.summaries_for_enquiries(page_ids)
         kyc_suggestions = kyc_links.suggestions_for(
             e.get("customer_name") for e in enquiries_page if str(e.get("enquiry_id")) not in kyc_customers)
         for enquiry in enquiries_page:
             enquiry["auto_paused"] = str(enquiry.get("enquiry_id")) in paused_ids
             contact = contacts.get(str(enquiry.get("enquiry_id")))
             enquiry["kyc_customer"] = kyc_customers.get(str(enquiry.get("enquiry_id")))
-            enquiry["quotation_count"] = quotation_counts.get(str(enquiry.get("enquiry_id")), 0)
+            enquiry["quotations"] = quotation_summaries.get(str(enquiry.get("enquiry_id")), [])
+            enquiry["quotation_count"] = len(enquiry["quotations"])
             enquiry["work_order"] = work_order_rows.get(str(enquiry.get("enquiry_id")))
             # Automatic follow-ups: "Gmail thread not found" / "Email bounced", and "moved to Marketing".
             enquiry["follow_up_flag"] = contact.get_follow_up_flag_display() if contact and contact.follow_up_flag else ""
@@ -1757,6 +1758,7 @@ def board(request: HttpRequest) -> HttpResponse:
                                                or str(enquiry.get("customer_email") or "").strip())
             enquiry["other_customer_emails_saved"] = customer_emails.split(
                 contact.other_customer_emails if contact else "")
+            enquiry["email_linked"] = bool(contact and contact.has_email_thread)
             _attach_order_tracking(enquiry, contacts.get(str(enquiry.get("enquiry_id"))),
                                    status_email_rows.get(str(enquiry.get("enquiry_id")), {}))
             summary = summaries.get(str(enquiry.get("enquiry_id")))
@@ -2288,6 +2290,15 @@ def delete_enquiry(request: HttpRequest, enquiry_id: str) -> JsonResponse:
     This proxies a delete call to the enquiry microservice and returns a lightweight JSON response
     suitable for AJAX callers on the board view.
     """
+    from quotations.models import Quotation
+
+    linked = list(Quotation.objects.filter(enquiry_id=str(enquiry_id)).order_by("id").values_list("number", flat=True))
+    if linked:
+        # A revision is a new version of the same quotation on the same enquiry: the enquiry is never deleted and
+        # made again. True duplicates are merged by an administrator.
+        return JsonResponse({"error": f"{enquiry_id} cannot be deleted: quotation{'s' if len(linked) > 1 else ''} "
+                                      f"{', '.join(linked)} {'are' if len(linked) > 1 else 'is'} linked to it. "
+                                      "If it is a duplicate, ask an administrator to merge it."}, status=409)
     api_root = _get_api_root()
     try:
         services.delete_enquiry(api_root, enquiry_id, request=request)
@@ -2666,6 +2677,20 @@ def detail(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "column_matrix": _build_column_matrix_display(enquiry),
         "lost_reasons": negotiation.LOST_REASONS,
     }
+    from quotations import links as quotation_links
+
+    context["quotation_timeline"] = quotation_links.events_for_enquiry(enquiry_id)
+    from quotations import roles as quotation_roles
+    from quotations.roles import sees_workings
+
+    context["sees_workings"] = sees_workings(request.user)
+    context["enquiry_quotations"] = quotation_links.summaries_for_enquiries([enquiry_id]).get(str(enquiry_id), [])
+    context["quotation_versions"] = quotation_links.version_history(enquiry_id)
+    context["ready_quotations"] = [
+        {"quotation": q, "version": q.active_version} for q in quotation_links.ready_to_send(enquiry_id)]
+    context["can_send_quotation"] = quotation_roles.can_send(request.user)
+    context["can_merge_enquiry"] = quotation_roles.is_admin(request.user)
+    context["email_thread"] = EnquiryContact.objects.filter(enquiry_id=str(enquiry_id)).first()
     return render(request, "enquiries/detail.html", context)
 
 
@@ -2933,6 +2958,21 @@ def export_pdf(request: HttpRequest, enquiry_id: str) -> HttpResponse:
     return response
 
 
+def _share_quotation_choices(enquiry_id: str) -> Dict[str, Any]:
+    """The enquiry's quotations for Generate Link: each with its latest approved version (None while the latest
+    version waits for approval or needs revision: then it cannot be shared)."""
+    from quotations.models import Quotation
+
+    if not enquiry_id:
+        return {"share_quotations": [], "share_quotations_sendable": False}
+    items = [{"quotation": q, "version": q.active_version}
+             for q in Quotation.objects.filter(enquiry_id=str(enquiry_id)).order_by("-updated_at", "-id")]
+    return {"share_quotations": items, "share_quotations_sendable": any(i["version"] for i in items)}
+
+
+WAITING_FOR_APPROVAL = "Waiting for management approval – do not send an older version."
+
+
 @login_required
 def preview(request: HttpRequest, enquiry_id: str) -> HttpResponse:
     api_root = _get_api_root()
@@ -2961,9 +3001,11 @@ def preview(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "back_url": reverse("enquiries:detail", args=[enquiry_id]),
         "heading": f"Generate Share Link for Enquiry {enquiry_id}",
         "column_matrix": _build_column_matrix_display(enquiry),
-        "requires_pdf_upload": not _record_has_pdf(enquiry),
-        "existing_pdf_name": _first_pdf_name(enquiry),
+        # No silent fallback to a PDF attached to the enquiry: the portal's approved quotation, or an upload.
+        "requires_pdf_upload": True,
+        "existing_pdf_name": "",
         "share_error": None,
+        **_share_quotation_choices(enquiry_id),
     }
     return render(request, "enquiries/preview.html", context)
 
@@ -3097,9 +3139,11 @@ def _render_preview_response(
         "heading": f"Generate Share Link for Enquiry {enquiry.get('enquiry_id') or ''}",
         "column_matrix": _build_column_matrix_display(enquiry) if enquiry else {"columns": [], "rows": []},
         "hidden_errors": hidden_error_msgs2,
-        "requires_pdf_upload": not _record_has_pdf(enquiry),
-        "existing_pdf_name": _first_pdf_name(enquiry),
+        "requires_pdf_upload": True,
+        "existing_pdf_name": "",
         "share_error": share_error,
+        "selected_share_quotation": request.POST.get("share_quotation") or "",
+        **_share_quotation_choices(enquiry.get("enquiry_id") or enquiry_id),
     }
     return render(request, "enquiries/preview.html", context)
 
@@ -3153,11 +3197,13 @@ def _collect_share_values_from_enquiry(enquiry: Mapping[str, Any] | None) -> Dic
     return values
 
 
-def _build_share_url(request: HttpRequest, token: str, *, enq_no: str = "enquiry") -> str:
+def _build_share_url(request: HttpRequest, token: str, *, enq_no: str = "enquiry",
+                     quotation_version_id: Optional[int] = None) -> str:
     enq_no_slug = slugify(str(enq_no or "enquiry")).upper() or "ENQUIRY"
     share_id = secrets.token_urlsafe(9)
     try:
-        ShareLink.objects.create(id=share_id, token=token, brand="magicwand", enq_no=enq_no_slug)
+        ShareLink.objects.create(id=share_id, token=token, brand="magicwand", enq_no=enq_no_slug,
+                                 quotation_version_id=quotation_version_id)
     except Exception:
         share_id = None
 
@@ -3180,6 +3226,7 @@ def _create_share_link_from_values(
     pdf_bytes: bytes,
     pdf_filename: str = "enquiry.pdf",
     pdf_content_type: str = "application/pdf",
+    quotation_version_id: Optional[int] = None,
 ) -> Dict[str, str]:
     share_password = (share_password or "").strip()
     if not share_password:
@@ -3205,6 +3252,7 @@ def _create_share_link_from_values(
         request,
         token,
         enq_no=str((values or {}).get("enq_number") or enquiry_id or "enquiry"),
+        quotation_version_id=quotation_version_id,
     )
     return {
         "share_url": share_url,
@@ -3298,7 +3346,30 @@ def generate_link(request: HttpRequest) -> HttpResponse:
     pdf_bytes: Optional[bytes] = None
     pdf_filename = "enquiry.pdf"
     pdf_content_type = "application/pdf"
-    if pdf_file:
+    shared_version = None
+    shared_quotation = None
+    choices = _share_quotation_choices(enquiry_id)["share_quotations"] if mode != "subdivision" else []
+    if choices:
+        # The enquiry has quotations in the portal: only the latest APPROVED version of the chosen one is shared.
+        from quotations import workflow as quotation_workflow
+
+        wanted = request.POST.get("share_quotation") or ""
+        if not wanted and len(choices) == 1:
+            wanted = str(choices[0]["quotation"].pk)
+        chosen = next((c for c in choices if str(c["quotation"].pk) == wanted), None)
+        if chosen is None:
+            return _render_preview_response(request, form, mode, error_message="Choose which quotation to share.",
+                                            share_error="quotation")
+        if chosen["version"] is None:
+            return _render_preview_response(request, form, mode, error_message=WAITING_FOR_APPROVAL,
+                                            share_error="quotation")
+        try:
+            shared_version, pdf_bytes = quotation_workflow.approved_pdf(chosen["quotation"])
+        except quotation_workflow.WorkflowError as exc:
+            return _render_preview_response(request, form, mode, error_message=str(exc), share_error="quotation")
+        shared_quotation = chosen["quotation"]
+        pdf_filename = f"{shared_quotation.number}.pdf"
+    elif pdf_file:
         try:
             pdf_bytes = pdf_file.read()
         except Exception:
@@ -3317,10 +3388,7 @@ def generate_link(request: HttpRequest) -> HttpResponse:
         )
         if download:
             pdf_bytes, pdf_filename, pdf_content_type = download
-    elif enquiry_id:
-        download = _download_primary_pdf(api_root, enquiry_id, existing_enquiry, request)
-        if download:
-            pdf_bytes, pdf_filename, pdf_content_type = download
+    # No silent fallback to the PDF attached to the enquiry: without a quotation in the portal, upload the PDF.
 
     if not pdf_bytes:
         return _render_preview_response(
@@ -3350,6 +3418,9 @@ def generate_link(request: HttpRequest) -> HttpResponse:
     for extra in ("conversion_rate",):
         if extra in normalised:
             values.setdefault(extra, normalised[extra])
+    if shared_version is not None:
+        values.update({"quotation_number": shared_quotation.number, "quotation_version": shared_version.number,
+                       "quotation_id": shared_quotation.pk, "quotation_version_id": shared_version.pk})
     share_result = _create_share_link_from_values(
         request,
         values,
@@ -3358,6 +3429,7 @@ def generate_link(request: HttpRequest) -> HttpResponse:
         pdf_bytes=pdf_bytes,
         pdf_filename=pdf_filename,
         pdf_content_type=pdf_content_type,
+        quotation_version_id=shared_version.pk if shared_version is not None else None,
     )
 
     context = {
@@ -3408,6 +3480,13 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
     if not share_email.password_matches(data, password):
         messages.error(request, "This share link could not be verified. Please create it again.")
         return redirect("enquiries:board")
+    from quotations import share_links
+
+    if share_links.is_replaced(record, data):
+        messages.error(request, "A newer version of this quotation was approved, so this link was replaced. "
+                                "Generate a new link.")
+        return redirect("enquiries:preview", str(data.get("enquiry_id") or "")) if data.get("enquiry_id") \
+            else redirect("enquiries:board")
     enquiry_id = str(data.get("enquiry_id") or "")
     api_root = _get_api_root()
     try:
@@ -3483,12 +3562,13 @@ def send_share_email(request: HttpRequest) -> HttpResponse:
 def share(request: HttpRequest, brand: str | None = None, enq_no: str | None = None, token: str | None = None) -> HttpResponse:
     """Public-ish share page that renders selected fields with branding."""
     token = token or request.GET.get("t") or ""
+    share_record: Optional[ShareLink] = None
     # If pretty URL used, token may actually be an opaque share id. Resolve via DB if present.
     if brand and enq_no and token and ":" not in token:
         try:
-            record = ShareLink.objects.filter(id=token).first()
-            if record:
-                token = record.token
+            share_record = ShareLink.objects.filter(id=token).first()
+            if share_record:
+                token = share_record.token
         except Exception:
             # Leave token as-is; fallback below will handle BadSignature
             pass
@@ -3500,6 +3580,11 @@ def share(request: HttpRequest, brand: str | None = None, enq_no: str | None = N
     except signing.BadSignature:
         messages.error(request, "Invalid or expired share link.")
         return redirect("enquiries:board")
+    from quotations import share_links
+
+    if share_links.is_replaced(share_record, data):
+        # A newer version of this quotation was approved: this link shows nothing any more.
+        return render(request, "enquiries/share_replaced.html", status=410)
 
     api_root = _get_api_root()
     enquiry_status: Optional[str] = None
@@ -3536,6 +3621,8 @@ def share(request: HttpRequest, brand: str | None = None, enq_no: str | None = N
     items: List[Dict[str, Any]] = []
     for key, value in data.items():
         if key in {"currency", "conversion_rate", "pdf_content_b64", "pdf_filename", "pdf_content_type", "requires_password"}:
+            continue
+        if key in share_links.HIDDEN_KEYS:
             continue
         label = DETAIL_FIELD_LABELS.get(key, key.replace("_", " ").title())
         items.append({"key": key, "label": label, "value": value})
@@ -3664,6 +3751,11 @@ def share_action(request: HttpRequest) -> HttpResponse:
         data = signing.loads(token, salt="enquiry-share")
     except signing.BadSignature:
         return JsonResponse({"error": "Invalid or expired share token."}, status=400)
+    from quotations import share_links
+
+    if share_links.is_replaced(None, data):
+        return JsonResponse({"error": "This quotation has been replaced. Please use the latest link sent to you."},
+                            status=410)
     enquiry_id = data.get("enquiry_id")
     if not enquiry_id:
         return JsonResponse({"error": "Share link is missing an enquiry reference."}, status=400)

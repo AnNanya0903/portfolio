@@ -1,0 +1,39 @@
+{# The searchable "Enquiry number" picker: every input with data-enquiry-picker suggests enquiries (ENQ number,   #}
+{# customer, subject) from the enquiry service as you type. Include once per page.                                 #}
+<datalist id="enquiryOptions"></datalist>
+<script>
+(function () {
+  if (window.__enquiryPicker) return;
+  window.__enquiryPicker = true;
+  var list = document.getElementById('enquiryOptions');
+  var url = '{% url "quotations:enquiry_search" %}';
+  var timer = null;
+  function load(input) {
+    var words = input.value.trim();
+    fetch(url + '?q=' + encodeURIComponent(words), {credentials: 'same-origin'})
+      .then(function (r) { return r.json().catch(function () { return {enquiries: []}; }); })
+      .then(function (data) {
+        list.innerHTML = '';
+        (data.enquiries || []).forEach(function (e) {
+          var option = document.createElement('option');
+          option.value = e.enquiry_id;
+          option.label = [e.customer_name, e.subject].filter(Boolean).join(' · ');
+          list.appendChild(option);
+        });
+        var hint = input.parentElement && input.parentElement.querySelector('[data-enquiry-picker-error]');
+        if (hint) { hint.textContent = data.error || ''; }
+      })
+      .catch(function () {});
+  }
+  document.addEventListener('input', function (event) {
+    var input = event.target;
+    if (!input.matches || !input.matches('[data-enquiry-picker]')) return;
+    clearTimeout(timer);
+    timer = setTimeout(function () { load(input); }, 200);
+  });
+  document.addEventListener('focusin', function (event) {
+    var input = event.target;
+    if (input.matches && input.matches('[data-enquiry-picker]') && !list.children.length) load(input);
+  });
+})();
+</script>

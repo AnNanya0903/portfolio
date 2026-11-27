@@ -1,7 +1,11 @@
 <style>
   .qt-chip { display: inline-flex; align-items: center; font-size: 0.72rem; font-weight: 600;
              padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-  .qt-chip--pending { background: #fffbeb; color: #b45309; }
+  .qt-chip--pending, .qt-chip--submitted { background: #fffbeb; color: #b45309; }
+  .qt-chip--draft { background: #f8fafc; color: #334155; border: 1px dashed #cbd5e1; }
+  .qt-chip--accepted { background: #dcfce7; color: #166534; }
+  .qt-chip--declined, .qt-chip--send_failed { background: #fef2f2; color: #b91c1c; }
+  .qt-chip--resent, .qt-chip--email_linked { background: #eff6ff; color: #1d4ed8; }
   .qt-chip--revision, .qt-chip--price_modified { background: #fef2f2; color: #b91c1c; }
   .qt-chip--approved { background: #ecfdf5; color: #047857; }
   .qt-chip--sent { background: #eff6ff; color: #1d4ed8; }

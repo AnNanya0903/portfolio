@@ -1,0 +1,50 @@
+{# The enquiry's quotations: what is ready to send, each quotation with its current version, and every version. #}
+{% for item in ready_quotations %}
+  <div class="alert alert-success d-flex flex-wrap justify-content-between align-items-center gap-2 mt-4 mb-0" data-ready-banner="{{ item.quotation.number }}">
+    <div>
+      <strong>{% if item.version.number > 1 %}Revised quotation ready to send (v{{ item.version.number }}){% else %}Quotation ready to send (v{{ item.version.number }}){% endif %}</strong>
+      <div class="small">{{ item.quotation.number }} · {{ enquiry.enquiry_id }} · {{ item.quotation.customer_name }} · approved {{ item.version.decided_at|date:"d M Y, H:i" }}{% if item.version.decided_by %} by {{ item.version.decided_by.get_full_name|default:item.version.decided_by.username }}{% endif %}</div>
+    </div>
+    {% if can_send_quotation %}<a class="btn btn-sm btn-primary" href="{% url 'quotations:detail' item.quotation.pk %}?send=1" data-ready-send><i class="bi bi-send me-1"></i> Send to customer</a>{% endif %}
+  </div>
+{% endfor %}
+<div class="card shadow-sm mt-4 overflow-hidden" data-enquiry-quotations>
+  <div class="card-body pb-2 d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <h2 class="h5 mb-0">Quotations</h2>
+    <div class="d-flex gap-2 align-items-center">
+      {% if mw_service_access.quotations|default:False %}<a class="btn btn-sm btn-outline-primary" href="{% url 'quotations:new' %}?enquiry={{ enquiry.enquiry_id|urlencode }}&customer_name={{ enquiry.customer_name|default:''|urlencode }}" title="A quotation for another item or project of this enquiry. A revision is a new version of an existing quotation."><i class="bi bi-plus-lg"></i> Quotation</a>{% endif %}
+      {% if can_merge_enquiry %}<a class="btn btn-sm btn-outline-danger" href="{% url 'enquiries:merge' enquiry.enquiry_id %}" data-merge-link>Merge duplicate…</a>{% endif %}
+    </div>
+  </div>
+  {% if enquiry_quotations %}
+    <ul class="list-group list-group-flush">
+      {% for q in enquiry_quotations %}
+        <li class="list-group-item d-flex justify-content-between flex-wrap gap-2" data-enquiry-quotation="{{ q.number }}">
+          <span><a class="fw-semibold text-decoration-none" href="{% url 'quotations:detail' q.pk %}">{{ q.number }}</a> v{{ q.version }} · {{ q.title }}</span>
+          <span class="small text-muted">{{ q.label }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+    {% if quotation_versions %}
+    <div class="table-responsive border-top">
+      <table class="table table-sm align-middle mb-0 small" data-version-history>
+        <thead><tr><th class="ps-3">Quotation</th><th>Version</th><th>Status</th><th>Approved</th><th>Sent</th>{% if sees_workings %}<th>Revision reason</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for row in quotation_versions %}
+            <tr>
+              <td class="ps-3"><a class="text-decoration-none" href="{% url 'quotations:detail' row.quotation.pk %}">{{ row.quotation.number }}</a></td>
+              <td>v{{ row.version.number }}</td>
+              <td>{{ row.version.get_status_display }}</td>
+              <td>{% if row.approved_at %}{{ row.approved_at|date:"d M Y" }}{% if row.approved_by %} · {{ row.approved_by.get_full_name|default:row.approved_by.username }}{% endif %}{% else %}—{% endif %}</td>
+              <td>{% if row.sent_at %}{{ row.sent_at|date:"d M Y" }}{% else %}—{% endif %}</td>
+              {% if sees_workings %}<td>{{ row.revision_reason|default:"—" }}</td>{% endif %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% else %}
+    <div class="card-body pt-0 text-muted small">No quotation is linked to this enquiry yet.</div>
+  {% endif %}
+</div>

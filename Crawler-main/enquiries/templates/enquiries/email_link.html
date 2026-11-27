@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+
+{% block title %}Link enquiry email - {{ enquiry_id }}{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'enquiries:board' %}" class="text-muted small text-decoration-none"><i class="bi bi-arrow-left"></i> Enquiries</a>
+    <h2 class="page-title">Link enquiry email</h2>
+    <p class="page-subtitle">Enquiry #{{ enquiry_id }}: pick the customer's original email in {{ mailbox }}.
+      The quotation and the proforma invoice will be sent as replies in that thread.</p>
+  </div>
+</div>
+
+{% if contact and contact.has_email_thread %}
+<div class="alert alert-success d-flex justify-content-between align-items-center flex-wrap gap-2" data-linked-thread>
+  <div>
+    <i class="bi bi-link-45deg me-1"></i> Linked to “<strong>{{ contact.email_subject|default:"(no subject)" }}</strong>”
+    {% if contact.email_linked_at %}<span class="small text-muted">· {{ contact.email_linked_at|date:"d M Y, H:i" }}{% if contact.email_linked_by %} by {{ contact.email_linked_by.get_full_name|default:contact.email_linked_by.username }}{% endif %}</span>{% endif %}
+  </div>
+  <form method="post">{% csrf_token %}
+    <input type="hidden" name="action" value="unlink">
+    <button type="submit" class="btn btn-sm btn-outline-secondary" onclick="return confirm('Unlink this email? The next quotation will start a new thread.');">Unlink</button>
+  </form>
+</div>
+{% else %}
+<div class="alert alert-light border small">Not linked. Enquiries from phone, WhatsApp or a visit can stay unlinked: their quotation starts a new email thread.</div>
+{% endif %}
+
+<form method="get" class="d-flex gap-2 mb-3" role="search">
+  <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" style="max-width: 420px;"
+         placeholder="Search the mailbox, e.g. from:buyer@customer.com or a word in the subject" aria-label="Search the mailbox">
+  {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+  <button type="submit" class="btn btn-sm btn-outline-secondary">Search</button>
+  {% if q %}<a class="btn btn-sm btn-link" href="?all=1{% if next %}&next={{ next|urlencode }}{% endif %}">Show all recent</a>{% endif %}
+</form>
+
+{% if error %}<div class="alert alert-warning">{{ error }}</div>{% endif %}
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table align-middle mb-0">
+      <thead><tr><th>From</th><th>Subject</th><th>Received</th><th></th></tr></thead>
+      <tbody>
+        {% for mail in emails %}
+        <tr>
+          <td class="small text-break" style="max-width:220px;">{{ mail.sender }}</td>
+          <td><div class="fw-semibold">{{ mail.subject }}</div><div class="small text-muted text-truncate" style="max-width:520px;">{{ mail.snippet }}</div></td>
+          <td class="small text-nowrap">{% if mail.date.year %}{{ mail.date|date:"d M Y, H:i" }}{% else %}{{ mail.date }}{% endif %}</td>
+          <td class="text-end">
+            <form method="post">{% csrf_token %}
+              <input type="hidden" name="message" value="{{ mail.id }}">
+              {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+              <button type="submit" class="btn btn-sm {% if contact.gmail_thread_id == mail.thread_id %}btn-success{% else %}btn-outline-primary{% endif %}">
+                {% if contact.gmail_thread_id == mail.thread_id %}Linked{% else %}Link this email{% endif %}</button>
+            </form>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="4" class="text-center text-muted py-4">{% if error %}The mailbox could not be read.{% else %}No email matches.{% endif %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

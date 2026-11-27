@@ -284,6 +284,20 @@ ENQUIRY_FOLLOW_UP_CC = config('ENQUIRY_FOLLOW_UP_CC',
                               default='customerservice@avigiri.com,rabin@avigiri.com,apai@avigiri.com')
 MARKETING_FOLLOW_UP_CC = config('MARKETING_FOLLOW_UP_CC',
                                 default='kumar@avigiri.com,manju@avigiri.com,apai@avigiri.com')
+
+# Quotations: the CRO emails approved quotations from the shared customer mailbox (quotations/mailer.py).
+# GMAIL_API sends with the portal Google sign-in of the QUOTATION_MAILBOX_ADDRESS user (no password stored).
+# SMTP and MS_GRAPH are reserved for later and refuse to send until implemented.
+QUOTATION_MAIL_PROVIDER = config('QUOTATION_MAIL_PROVIDER', default='GMAIL_API')
+QUOTATION_MAILBOX_ADDRESS = config('QUOTATION_MAILBOX_ADDRESS', default='customerservice@avigiri.com')
+QUOTATION_MAILBOX_NAME = config('QUOTATION_MAILBOX_NAME', default='AVIGIRI Customer Service')
+QUOTATION_VALIDITY_DAYS = config('QUOTATION_VALIDITY_DAYS', default=30, cast=int)  # shown in the email body
+QUOTATION_MAX_PDF_MB = config('QUOTATION_MAX_PDF_MB', default=10, cast=int)
+# When management approves a version, the CRO / Customer Service are told it is ready to send (quotations/notify.py):
+# users given the CRO section, and the members of these KYC departments (comma separated). In the app always;
+# by email too when QUOTATION_READY_NOTIFY_EMAIL is on.
+QUOTATION_READY_NOTIFY_DEPARTMENTS = config('QUOTATION_READY_NOTIFY_DEPARTMENTS', default='Sales')
+QUOTATION_READY_NOTIFY_EMAIL = config('QUOTATION_READY_NOTIFY_EMAIL', default=False, cast=bool)
 # A No-response lead's Marketing Follow-up 1 goes this many days after the enquiry's closing email
 # (0 = the next hourly run), so the customer never gets two emails the same day. Rejected leads: next run.
 MARKETING_NO_RESPONSE_FIRST_DELAY_DAYS = config('MARKETING_NO_RESPONSE_FIRST_DELAY_DAYS', default=2, cast=int)

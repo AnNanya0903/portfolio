@@ -23,6 +23,7 @@ SERVICE_DEFINITIONS: Dict[str, str] = {
     "quotations": "Quotations",
     "quotation_costing": "Quotations: upload and costing",
     "quotation_approval": "Quotations: price approval",
+    "quotation_send": "Quotations: email to customer (CRO)",
     "deskera": "Deskera",
     "mrp": "Manufacturing",
     "accounts": "Accounts",

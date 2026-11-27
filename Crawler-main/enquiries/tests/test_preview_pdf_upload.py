@@ -1,4 +1,5 @@
-"""Preview page: the quotation PDF can always be uploaded, also when the enquiry already has a PDF."""
+"""Preview page (Generate Link): without a quotation in the portal the PDF must be uploaded; the PDF attached to
+the enquiry is never used silently."""
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -25,11 +26,21 @@ class PreviewPdfUploadTests(TestCase):
         with patch("enquiries.views.services.fetch_enquiry", return_value=dict(enquiry)):
             return self.client.get(reverse("enquiries:preview", args=["ENQ-9"]))
 
-    def test_upload_shown_and_optional_when_enquiry_has_a_pdf(self):
+    def test_upload_required_even_when_enquiry_has_a_pdf(self):
         response = self._preview(WITH_PDF)
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'name="share_pdf" accept="application/pdf">')
-        self.assertContains(response, "<strong>customer-rfq.pdf</strong>")
+        self.assertContains(response, 'name="share_pdf" accept="application/pdf" required>')
+        self.assertNotContains(response, "already attached to this enquiry")
+
+    def test_no_silent_fallback_to_the_enquiry_pdf(self):
+        with patch("enquiries.views.services.fetch_enquiry", return_value=dict(WITH_PDF)), \
+             patch("enquiries.views.services.download_attachment") as download:
+            response = self.client.post(reverse("enquiries:generate_link"), {
+                "mode": "update", "enquiry_id": "ENQ-9", "subject": "Gaskets", "customer_name": "Acme"})
+        self.assertEqual(response.status_code, 200)
+        download.assert_not_called()
+        self.assertFalse(ShareLink.objects.exists())
+        self.assertContains(response, "Upload a PDF to generate the share link.")
 
     def test_upload_required_when_enquiry_has_no_pdf(self):
         response = self._preview(WITHOUT_PDF)

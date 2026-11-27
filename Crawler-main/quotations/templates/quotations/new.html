@@ -9,7 +9,7 @@
   <div>
     <a href="{% url 'quotations:list' %}" class="qt-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Quotations</a>
     <h2 class="page-title">Upload quotation</h2>
-    <p class="page-subtitle">Upload the PDF for the customer and the Excel working. Management approves it before it can be sent.</p>
+    <p class="page-subtitle">Upload the PDF for the customer and the Excel working. Save it as a draft, or submit it: management approves it before it can be sent.</p>
   </div>
 </div>
 
@@ -20,8 +20,12 @@
     <div class="col-sm-4">{% include 'quotations/_field.html' with field=form.customer_code %}</div>
     <div class="col-sm-8">{% include 'quotations/_field.html' with field=form.customer_name %}
       <div class="form-text">Filled from KYC when you pick a customer code.</div></div>
-    <div class="col-sm-8">{% include 'quotations/_field.html' with field=form.title %}</div>
-    <div class="col-sm-4">{% include 'quotations/_field.html' with field=form.enquiry_id %}</div>
+    <div class="col-sm-6">{% include 'quotations/_field.html' with field=form.enquiry_id %}
+      <div class="form-text" data-enquiry-picker-error></div>
+      <div class="form-text">The enquiry this quotation answers. A revision is a new version of the same quotation, not a new quotation.</div></div>
+    <div class="col-sm-6">{% include 'quotations/_field.html' with field=form.enquiry_reference %}
+      <div class="form-text">The customer's own reference, if any.</div></div>
+    <div class="col-12">{% include 'quotations/_field.html' with field=form.title %}</div>
     <div class="col-sm-6">{% include 'quotations/_field.html' with field=form.pdf %}
       <div class="form-text">This is what the customer will receive.</div></div>
     <div class="col-sm-6">{% include 'quotations/_field.html' with field=form.excel %}
@@ -30,8 +34,10 @@
     <div class="col-12">{% include 'quotations/_field.html' with field=form.note %}</div>
   </div>
   <datalist id="kycCustomerOptions"></datalist>
+  {% include 'quotations/_enquiry_picker.html' %}
   <div class="d-flex gap-2 mt-4">
-    <button type="submit" class="btn btn-primary"><i class="bi bi-upload me-1"></i> Upload for approval</button>
+    <button type="submit" name="action" value="submit" class="btn btn-primary"><i class="bi bi-upload me-1"></i> Submit for approval</button>
+    <button type="submit" name="action" value="draft" class="btn btn-outline-secondary">Save as draft</button>
     <a class="btn btn-outline-secondary" href="{% url 'quotations:list' %}">Cancel</a>
   </div>
 </form>

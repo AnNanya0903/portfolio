@@ -97,6 +97,11 @@
       flex: 1 1 0;
     }
   }
+  .qt-board-status { font-size:.7rem; font-weight:600; padding:1px 6px; border-radius:999px; background:#f1f5f9; color:#475569; }
+  .qt-board-status--approved { background:#ecfdf5; color:#047857; }
+  .qt-board-status--revision, .qt-board-status--declined { background:#fef2f2; color:#b91c1c; }
+  .qt-board-status--pending { background:#fffbeb; color:#b45309; }
+  .qt-board-status--sent, .qt-board-status--accepted { background:#eff6ff; color:#1d4ed8; }
 </style>
 {% endblock %}
 
@@ -332,8 +337,10 @@
             {% if enquiry.customer_email_saved %}<div class="small text-muted text-truncate" style="max-width:180px;">{{ enquiry.customer_email_saved }}</div>{% endif %}
             {% for other in enquiry.other_customer_emails_saved %}<div class="small text-muted text-truncate" style="max-width:180px;" title="Copied (CC) on every email">CC: {{ other }}</div>{% endfor %}
             {% if mw_service_access.quotations|default:False %}
-              <div class="small">{% if enquiry.quotation_count %}<a href="{% url 'quotations:list' %}?q={{ enquiry.enquiry_id|urlencode }}" class="text-decoration-none" title="Quotations of this enquiry"><i class="bi bi-file-earmark-text"></i> Quotations ({{ enquiry.quotation_count }})</a>{% else %}<a href="{% url 'quotations:new' %}?enquiry={{ enquiry.enquiry_id|urlencode }}{% if enquiry.kyc_customer %}&customer={{ enquiry.kyc_customer.code|urlencode }}{% endif %}&customer_name={{ enquiry.customer_name|default:''|urlencode }}" class="text-decoration-none text-muted" title="Upload a quotation for this enquiry"><i class="bi bi-plus-lg"></i> Quotation</a>{% endif %}</div>
+              {% for q in enquiry.quotations %}<div class="small text-nowrap" data-enquiry-quotation="{{ q.number }}"><a href="{% url 'quotations:detail' q.pk %}" class="text-decoration-none" title="{{ q.title }}: {{ q.label }}"><i class="bi bi-file-earmark-text"></i> {{ q.number }} v{{ q.version }}</a> <span class="qt-board-status qt-board-status--{{ q.status }}">{{ q.status_display }}</span></div>{% endfor %}
+              <div class="small"><a href="{% url 'quotations:new' %}?enquiry={{ enquiry.enquiry_id|urlencode }}{% if enquiry.kyc_customer %}&customer={{ enquiry.kyc_customer.code|urlencode }}{% endif %}&customer_name={{ enquiry.customer_name|default:''|urlencode }}" class="text-decoration-none text-muted" title="{% if enquiry.quotation_count %}A quotation for another item or project of this enquiry. A revision is a new version of the quotation above.{% else %}Upload a quotation for this enquiry{% endif %}"><i class="bi bi-plus-lg"></i> Quotation</a></div>
             {% endif %}
+            <div class="small"><a href="{% url 'enquiries:email_link' enquiry.enquiry_id %}?next={{ request.get_full_path|urlencode }}" class="text-decoration-none{% if not enquiry.email_linked %} text-muted{% endif %}" data-email-link title="{% if enquiry.email_linked %}The quotation will reply in the customer's email thread{% else %}Pick the customer's original email so the quotation replies in its thread{% endif %}"><i class="bi bi-{% if enquiry.email_linked %}link-45deg{% else %}envelope-plus{% endif %}"></i> {% if enquiry.email_linked %}Email linked{% else %}Link enquiry email{% endif %}</a></div>
             {% if enquiry.kyc_customer %}
               <div class="small">{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' enquiry.kyc_customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ enquiry.kyc_customer.customer_code|default:enquiry.kyc_customer.code }}</a>{% else %}<span class="text-muted">{{ enquiry.kyc_customer.customer_code|default:enquiry.kyc_customer.code }}</span>{% endif %}</div>
             {% elif enquiry.kyc_suggestion %}

@@ -1,0 +1,114 @@
+{% extends 'base.html' %}
+
+{% block title %}Gmail Lead Queue{% endblock %}
+
+{% block extra_css %}
+<style>
+  .event-reason {
+    font-size: 0.85rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-4">
+  <div>
+    <a class="btn btn-link px-0" href="{% url 'enquiries:board' %}">
+      <i class="bi bi-arrow-left"></i> Back to board
+    </a>
+    <h1 class="display-6 mb-0">Gmail lead queue</h1>
+    <p class="text-muted mb-0">Inspect inbound Gmail signals and promote high-intent leads into live enquiries.</p>
+  </div>
+  <div class="ms-auto d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-primary" href="{% url 'enquiries:summary' %}">
+      <i class="bi bi-graph-up me-1"></i> Summary report
+    </a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <h5 class="mb-0">Lead queue</h5>
+    <form method="get" class="d-flex align-items-center gap-2">
+      <label class="text-muted small mb-0" for="eventStatus">Filter</label>
+      <select class="form-select form-select-sm" id="eventStatus" name="event_status" onchange="this.form.submit()">
+        {% for value,label in event_filters %}
+        <option value="{{ value }}"{% if event_status == value %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Received</th>
+          <th>Sender</th>
+          <th>Subject</th>
+          <th>Status</th>
+          <th>Score</th>
+          <th class="text-end">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in email_events %}
+        <tr>
+          <td class="text-nowrap">
+            {% if event.received_at_dt %}
+              {{ event.received_at_dt|date:"Y-m-d H:i" }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            <div class="fw-semibold">{{ event.sender|default:'—' }}</div>
+            <div class="text-muted small">{{ event.mailbox }}</div>
+          </td>
+          <td>
+            <div class="fw-semibold">{{ event.subject|default:'(no subject)' }}</div>
+            {% if event.reason %}
+              <div class="text-muted event-reason">{{ event.reason }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge bg-light text-dark status-chip">{{ event.status|default:'pending' }}</span>
+            {% if event.created_enquiry_id %}
+              <div class="mt-1">
+                <a href="{% url 'enquiries:detail' event.created_enquiry_id %}">#{{ event.created_enquiry_id }}</a>
+              </div>
+            {% endif %}
+          </td>
+          <td>{{ event.detection_score|default:0 }}</td>
+          <td class="text-end">
+            {% if event.status == 'pending' %}
+              <form method="post" action="?event_status={{ event_status }}" class="d-flex flex-column gap-2">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="promote_event" />
+                <input type="hidden" name="message_id" value="{{ event.message_id }}" />
+                <div class="d-flex gap-2">
+                  <select class="form-select form-select-sm" name="priority">
+                    {% for value,label in priority_choices %}
+                      <option value="{{ value }}"{% if value == default_priority %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <input type="text" name="assigned_to" class="form-control form-control-sm" placeholder="Assignee" />
+                </div>
+                <button class="btn btn-primary btn-sm" type="submit">
+                  <i class="bi bi-arrow-right-circle me-1"></i> Promote
+                </button>
+              </form>
+            {% else %}
+              <span class="text-muted small">No action</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" class="text-center text-muted py-5">No email events found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
