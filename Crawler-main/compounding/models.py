@@ -317,6 +317,65 @@ class CompoundingMBPlan(models.Model):
         return f"{self.plan.plan_date}: MB {self.compound_code}"
 
 
+class ProcessGroup(models.Model):
+    """Compounds that run with the same current curve and time on the mill share one standard curve."""
+
+    name = models.CharField(max_length=80, unique=True)
+    description = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class ProcessGroupCompound(models.Model):
+    """A compound's process group. Compounds are codes from the master sheet, so this is the compound's FK."""
+
+    process_group = models.ForeignKey(ProcessGroup, on_delete=models.CASCADE, related_name="compounds")
+    compound_code = models.CharField(max_length=64, unique=True)
+
+    class Meta:
+        ordering = ["compound_code"]
+
+    def __str__(self) -> str:
+        return f"{self.compound_code} -> {self.process_group}"
+
+
+class StandardCurve(models.Model):
+    """The expected avg_current band for a process group, built from lab-passed batches.
+
+    `points` is a list of {"t": seconds after load_start, "mean", "upper", "lower", "n"} every `step_s`
+    seconds, with upper/lower = mean +/- sigma * standard deviation.
+    """
+
+    process_group = models.ForeignKey(ProcessGroup, on_delete=models.CASCADE, related_name="curves")
+    version = models.PositiveIntegerField()
+    built_from_n = models.PositiveIntegerField()
+    step_s = models.PositiveIntegerField(default=10)
+    sigma = models.FloatField(default=2.0)
+    points = models.JSONField(default=list)
+    energy_mean = models.FloatField(null=True, blank=True)
+    energy_std = models.FloatField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["process_group", "-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["process_group", "version"], name="uniq_curve_version_per_group"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.process_group} v{self.version}"
+
+
 class CompoundingIoTRun(models.Model):
     """
     Operator-entered production context for an IoT telemetry run.
@@ -406,6 +465,13 @@ class CompoundingIoTRun(models.Model):
     rejection_reason = models.CharField(max_length=32, choices=REJECTION_REASON_CHOICES, blank=True, default="")
     notes = models.TextField(blank=True, default="")
     operator = models.CharField(max_length=120, blank=True, default="")
+    process_group = models.ForeignKey(
+        ProcessGroup, on_delete=models.SET_NULL, null=True, blank=True, related_name="batches"
+    )
+    # The curve version this batch was compared with.
+    standard_curve = models.ForeignKey(
+        StandardCurve, on_delete=models.SET_NULL, null=True, blank=True, related_name="batches"
+    )
 
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_RUNNING, db_index=True)
     invalid_reason = models.CharField(max_length=200, blank=True, default="")

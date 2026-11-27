@@ -15,7 +15,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from . import iot_config, iot_samples
+from . import iot_config, iot_curves, iot_samples
 from .models import CompoundingIoTRun
 
 logger = logging.getLogger(__name__)
@@ -148,6 +148,7 @@ def finalize_batch(run: CompoundingIoTRun, *, save: bool = True) -> CompoundingI
     run.loading_spike_duration_s = summary["loading_spike_duration_s"]
     apply_validity(run)
     update_fields = SUMMARY_FIELDS + ["updated_at"]
+    update_fields += iot_curves.evaluate_batch(run, samples)
     if save:
         run.save(update_fields=sorted(set(update_fields)))
     return run
