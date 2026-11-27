@@ -208,11 +208,12 @@ class CompoundingIoTBatchStartEndTests(TestCase):
         run.refresh_from_db()
         self.assertEqual(run.rejection_reason, "")
 
-    def test_end_requires_quality_and_cannot_end_twice(self) -> None:
+    def test_end_without_quality_is_allowed_and_cannot_end_twice(self) -> None:
         self._start()
         run = CompoundingIoTRun.objects.get()
 
-        self._end(run, stock_quality="")
+        # The visual check is optional; quality is the lab result, which stays pending.
+        self._end(run, stock_quality="bogus")
         run.refresh_from_db()
         self.assertIsNone(run.ended_at)
 

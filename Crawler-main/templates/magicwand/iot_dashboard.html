@@ -126,13 +126,14 @@
                     <input type="hidden" name="plan_date" value="{{ plan_date }}">
                     <input type="hidden" name="run_id" value="{{ iot_open_batch.pk }}">
                     <div class="col-md-6">
-                      <label for="iotEndQuality" class="form-label">Quality of this batch</label>
-                      <select id="iotEndQuality" name="stock_quality" class="form-select" required>
-                        <option value="">Select quality...</option>
+                      <label for="iotEndQuality" class="form-label">Visual check <span class="text-muted">(optional)</span></label>
+                      <select id="iotEndQuality" name="stock_quality" class="form-select" aria-describedby="iotEndQualityHelp">
+                        <option value="">Not checked</option>
                         {% for value, label in iot_run_quality_choices %}
                         <option value="{{ value }}">{{ label }}</option>
                         {% endfor %}
                       </select>
+                      <div id="iotEndQualityHelp" class="form-text">The batch's quality is its lab result, which stays pending until the lab enters it.</div>
                     </div>
                     <div class="col-md-6" id="iotEndReasonWrap" hidden>
                       <label for="iotEndReason" class="form-label">Why was it rejected?</label>
@@ -209,9 +210,9 @@
                     </select>
                   </div>
                   <div class="col-md-6">
-                    <label for="iotRunQuality" class="form-label">Quality of stock produced</label>
-                    <select id="iotRunQuality" name="stock_quality" class="form-select" required>
-                      <option value="">Select quality...</option>
+                    <label for="iotRunQuality" class="form-label">Visual check <span class="text-muted">(optional)</span></label>
+                    <select id="iotRunQuality" name="stock_quality" class="form-select">
+                      <option value="">Not checked</option>
                       {% for value, label in iot_run_quality_choices %}
                       <option value="{{ value }}">{{ label }}</option>
                       {% endfor %}

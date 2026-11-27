@@ -47,6 +47,7 @@ from .models import (
     compounding_business_date,
     next_compounding_cjc_number,
 )
+from . import iot_batches
 from .records import (
     RecordImportError,
     RecordSaveError,
@@ -2505,11 +2506,12 @@ def save_iot_run(request):
     if ended_at <= started_at:
         messages.error(request, "End time must be later than start time.")
         return redirect(redirect_url)
-    if stock_quality not in {choice[0] for choice in CompoundingIoTRun.QUALITY_CHOICES}:
-        messages.error(request, "Select the quality of stock produced.")
+    # The operator's visual check is optional; the batch's quality is its lab result, pending until entered.
+    if stock_quality and stock_quality not in {choice[0] for choice in CompoundingIoTRun.QUALITY_CHOICES}:
+        messages.error(request, "Select a valid visual check, or leave it blank.")
         return redirect(redirect_url)
 
-    CompoundingIoTRun.objects.create(
+    run = CompoundingIoTRun.objects.create(
         plan=plan,
         machine_id=machine_id,
         compound_code=compound_code,
@@ -2519,7 +2521,14 @@ def save_iot_run(request):
         notes=notes[:2000],
         created_by=request.user,
     )
-    messages.success(request, f"Saved IoT production context for {compound_code}.")
+    iot_batches.finalize_batch(run)
+    if run.status == CompoundingIoTRun.STATUS_INVALID:
+        messages.warning(
+            request,
+            f"Saved {compound_code}, but it is marked invalid: {run.invalid_reason}. It is left out of statistics.",
+        )
+    else:
+        messages.success(request, f"Saved IoT production context for {compound_code}.")
     return redirect(redirect_url)
 
 
@@ -2581,6 +2590,8 @@ def start_iot_batch(request):
             started_at=timezone.now(),
             ended_at=None,
             stock_quality="",
+            status=CompoundingIoTRun.STATUS_RUNNING,
+            detection_source=CompoundingIoTRun.SOURCE_MANUAL,
             batch_type=batch_type,
             batch_weight_kg=weight,
             crin=crin,
@@ -2607,8 +2618,9 @@ def end_iot_batch(request):
     rejection_reason = (request.POST.get("rejection_reason") or "").strip().lower()
     notes = (request.POST.get("notes") or "").strip()
 
-    if stock_quality not in {choice[0] for choice in CompoundingIoTRun.QUALITY_CHOICES}:
-        messages.error(request, "Select the quality of the batch before ending it.")
+    # The visual check is optional: the batch's quality is its lab result, pending until the lab enters it.
+    if stock_quality and stock_quality not in {choice[0] for choice in CompoundingIoTRun.QUALITY_CHOICES}:
+        messages.error(request, "Select a valid visual check, or leave it blank.")
         return redirect(redirect_url)
     if stock_quality == CompoundingIoTRun.QUALITY_REJECTED:
         if rejection_reason not in {choice[0] for choice in CompoundingIoTRun.REJECTION_REASON_CHOICES}:
@@ -2633,10 +2645,18 @@ def end_iot_batch(request):
         if notes:
             run.notes = notes[:2000]
         run.save(update_fields=["ended_at", "stock_quality", "rejection_reason", "notes", "updated_at"])
-    messages.success(
-        request,
-        f"Ended the {run.compound_code} batch after {_iot_run_duration_text(run.started_at, run.ended_at)}.",
-    )
+    iot_batches.finalize_batch(run)
+    if run.status == CompoundingIoTRun.STATUS_INVALID:
+        messages.warning(
+            request,
+            f"Ended the {run.compound_code} batch, but it is marked invalid: {run.invalid_reason}. "
+            "It is left out of statistics.",
+        )
+    else:
+        messages.success(
+            request,
+            f"Ended the {run.compound_code} batch after {_iot_run_duration_text(run.started_at, run.ended_at)}.",
+        )
     return redirect(redirect_url)
 
 
