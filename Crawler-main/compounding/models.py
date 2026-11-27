@@ -625,6 +625,31 @@ class MachineSegment(models.Model):
         return max(int((self.end_at - self.start_at).total_seconds()), 0)
 
 
+
+class IoTRunCorrection(models.Model):
+    """Audit trail: a supervisor replaced an operator log's times with the machine's detected times."""
+
+    run = models.ForeignKey("CompoundingIoTRun", on_delete=models.CASCADE, related_name="corrections")
+    detected_batch = models.ForeignKey(
+        DetectedBatch, on_delete=models.SET_NULL, null=True, blank=True, related_name="corrections"
+    )
+    corrected_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    corrected_at = models.DateTimeField(default=timezone.now)
+    verdict = models.CharField(max_length=32, blank=True, default="")
+    old_started_at = models.DateTimeField()
+    old_ended_at = models.DateTimeField(null=True, blank=True)
+    new_started_at = models.DateTimeField()
+    new_ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-corrected_at"]
+
+    def __str__(self) -> str:
+        return f"Correction of run {self.run_id} at {self.corrected_at:%Y-%m-%d %H:%M}"
+
+
 class CompoundingStockEntry(models.Model):
     """
     One stock movement. A compound's balance is the sum of its entries.

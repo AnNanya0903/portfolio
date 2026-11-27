@@ -1,0 +1,91 @@
+{% load tz %}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="border rounded-3 p-3 h-100">
+      <div class="text-uppercase text-muted small fw-semibold mb-1">Batches detected</div>
+      <div class="fs-4 fw-bold">{{ recon_summary.batches }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="border rounded-3 p-3 h-100">
+      <div class="text-uppercase text-muted small fw-semibold mb-1">Log matches</div>
+      <div class="fs-4 fw-bold">{{ recon_summary.log_matches }} / {{ recon_summary.batches }}</div>
+      <div class="small text-muted">{{ recon_summary.issues }} row{{ recon_summary.issues|pluralize }} to check</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-6">
+    <div class="border rounded-3 p-3 h-100">
+      <div class="text-uppercase text-muted small fw-semibold mb-1">Per compound</div>
+      {% if recon_summary.compounds %}
+      <table class="table table-sm table-borderless mb-0 small">
+        <thead><tr><th scope="col" class="ps-0">Compound</th><th scope="col" class="text-end">Batches</th><th scope="col" class="text-end">Avg min</th><th scope="col" class="text-end pe-0">Avg kWh</th></tr></thead>
+        <tbody>
+          {% for item in recon_summary.compounds %}
+          <tr><td class="ps-0 fw-semibold">{{ item.compound }}</td><td class="text-end">{{ item.count }}</td><td class="text-end">{{ item.avg_minutes|floatformat:1 }}</td><td class="text-end pe-0">{% if item.avg_kwh is not None %}{{ item.avg_kwh|floatformat:1 }}{% else %}–{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="text-muted small">No finished batches yet.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if recon_rows %}
+<div class="table-responsive">
+  <table class="table table-sm align-middle mb-0" id="iotReconTable">
+    <thead>
+      <tr>
+        <th scope="col">Detected</th>
+        <th scope="col" class="text-end">Min</th>
+        <th scope="col" class="text-end">kWh</th>
+        <th scope="col">AI pattern</th>
+        <th scope="col">Match</th>
+        <th scope="col">Operator log</th>
+        <th scope="col">Verdict</th>
+        {% if recon_can_correct %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in recon_rows %}
+      <tr class="{% if row.kind == 'state' %}text-muted{% endif %}" data-verdict="{{ row.verdict }}">
+        <td class="text-nowrap">
+          {% if row.kind == "log" %}<span class="text-muted">—</span>{% else %}
+            {{ row.start_text }}–{{ row.end_text }}
+          {% endif %}
+        </td>
+        <td class="text-end">{% if row.kind != "log" %}{{ row.duration_min|floatformat:1 }}{% endif %}</td>
+        <td class="text-end">{% if row.energy_kwh is not None %}{{ row.energy_kwh|floatformat:1 }}{% endif %}</td>
+        <td>{{ row.ai_pattern }}</td>
+        <td class="small">
+          {% if row.match_result == "matches" %}<span class="text-success fw-semibold">{{ row.match }}</span>
+          {% elif row.match_result == "doesnt_match" %}<span class="text-danger fw-semibold">{{ row.match }}</span>
+          {% else %}<span class="text-muted">{{ row.match }}</span>{% endif %}
+        </td>
+        <td class="small">{{ row.log_text|default:"—" }}{% if row.extra_logs %} <span class="text-muted">(+{{ row.extra_logs }} more)</span>{% endif %}</td>
+        <td>
+          <span class="badge text-bg-{{ row.tone }}{% if row.tone == 'light' %} border{% endif %}">{{ row.verdict_label }}</span>
+          {% if row.reason %}<div class="small text-muted">{{ row.reason }}</div>{% endif %}
+        </td>
+        {% if recon_can_correct %}
+        <td class="text-end">
+          {% if row.correctable %}
+          <form method="post" action="{% url 'compounding:iot_accept_machine_times' %}" class="m-0">
+            {% csrf_token %}
+            <input type="hidden" name="date" value="{{ recon_date }}">
+            <input type="hidden" name="batch_id" value="{{ row.batch.pk }}">
+            <input type="hidden" name="log_id" value="{{ row.log.pk }}">
+            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Accept machine times</button>
+          </form>
+          {% endif %}
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted small mb-0">No machine data for this date yet.</p>
+{% endif %}
