@@ -69,6 +69,11 @@
           <a class="btn btn-outline-primary" href="{{ back_url|default:'/' }}">{{ back_label|default:"Back to Home" }}</a>
         </div>
 
+        <div id="iot-unlogged-banner" class="alert alert-danger d-flex align-items-center gap-2 fw-semibold mb-4{% if not iot_show_unlogged_banner %} d-none{% endif %}" role="alert">
+          <i class="bi bi-exclamation-octagon-fill fs-5"></i>
+          <div>Machine running – no batch logged. <span class="fw-normal">Tap <strong>Start batch</strong> to log what is on the mill.</span></div>
+        </div>
+
         <div class="card shadow-sm border-0 mb-4">
           <div class="card-body">
             <div class="row g-3">
@@ -1482,6 +1487,14 @@
     setStatus(selectedRange ? "Range" : "Live", selectedRange ? "text-bg-warning" : "text-bg-success");
   }
 
+  function renderBatchState(state) {
+    const banner = document.getElementById("iot-unlogged-banner");
+    if (!banner || !state) {
+      return;
+    }
+    banner.classList.toggle("d-none", !state.showUnloggedBanner);
+  }
+
   function scheduleNextPoll(delay = pollIntervalMs) {
     if (pollTimer !== null) {
       window.clearTimeout(pollTimer);
@@ -1549,6 +1562,7 @@
         }
       }
       renderPayload(data.latest || null);
+      renderBatchState(data.batchState || null);
       drawChart(latestHistory);
       if (selectedRange) {
         const rawCount = Number(data.historyCount);
