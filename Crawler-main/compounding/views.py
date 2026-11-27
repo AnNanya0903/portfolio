@@ -2659,6 +2659,13 @@ def iot_cron_sync(request):
     except Exception as exc:
         logger.warning("IoT cron sync failed: %s", exc)
         result["syncError"] = str(exc)
+    from . import iot_segments
+
+    try:
+        result["detection"] = iot_segments.detect_recent(machine_id)
+    except Exception as exc:
+        logger.exception("IoT batch detection failed")
+        result["detectError"] = str(exc)
     return JsonResponse(result)
 
 

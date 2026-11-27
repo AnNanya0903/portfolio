@@ -436,6 +436,79 @@ class IoTSample(models.Model):
         return f"{self.machine_id} @ {self.ts_ms}"
 
 
+
+class DetectedBatch(models.Model):
+    """A batch the machine ran, found in the current trace (compounding.iot_segments).
+
+    Kept apart from the operator's log (CompoundingIoTRun): the two are compared in the reconciliation
+    table, and the log is only changed when a supervisor accepts the machine's times.
+    """
+
+    machine_id = models.CharField(max_length=64)
+    start_at = models.DateTimeField()
+    # The start of the next segment; for a batch still on the machine, the latest sample so far.
+    end_at = models.DateTimeField()
+    is_open = models.BooleanField(default=False, help_text="Still running when last detected")
+    load_at = models.DateTimeField(null=True, blank=True, help_text="First sample above the load threshold")
+    load_threshold_a = models.FloatField(null=True, blank=True)
+    duration_s = models.PositiveIntegerField(default=0)
+    energy_kwh = models.FloatField(null=True, blank=True)
+    avg_current = models.FloatField(null=True, blank=True)
+    peak_current = models.FloatField(null=True, blank=True)
+    time_to_peak_s = models.PositiveIntegerField(null=True, blank=True)
+    # avg_current every curve_step_s seconds from load_at (or start_at when no load point was found).
+    curve = models.JSONField(default=list, blank=True)
+    curve_step_s = models.PositiveIntegerField(default=10)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["machine_id", "start_at"]
+        indexes = [models.Index(fields=["machine_id", "start_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.machine_id} batch @ {self.start_at:%Y-%m-%d %H:%M}"
+
+    @property
+    def batch_id(self) -> str:
+        return f"D{self.pk:06d}" if self.pk else ""
+
+
+class MachineSegment(models.Model):
+    """One stretch of a machine's day in a single state; consecutive segments cover the day without gaps."""
+
+    STATE_OFF = "off"
+    STATE_IDLE = "idle"
+    STATE_BATCH = "batch"
+    STATE_NO_DATA = "no_data"
+    STATE_CHOICES = [
+        (STATE_OFF, "Off"),
+        (STATE_IDLE, "Idle"),
+        (STATE_BATCH, "Batch"),
+        (STATE_NO_DATA, "No data"),
+    ]
+
+    machine_id = models.CharField(max_length=64)
+    state = models.CharField(max_length=8, choices=STATE_CHOICES)
+    start_at = models.DateTimeField()
+    end_at = models.DateTimeField()
+    is_open = models.BooleanField(default=False)
+    detected_batch = models.ForeignKey(
+        DetectedBatch, on_delete=models.SET_NULL, null=True, blank=True, related_name="segments"
+    )
+
+    class Meta:
+        ordering = ["machine_id", "start_at"]
+        indexes = [models.Index(fields=["machine_id", "start_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.machine_id} {self.state} {self.start_at:%H:%M}-{self.end_at:%H:%M}"
+
+    @property
+    def duration_s(self) -> int:
+        return max(int((self.end_at - self.start_at).total_seconds()), 0)
+
+
 class CompoundingStockEntry(models.Model):
     """
     One stock movement. A compound's balance is the sum of its entries.
