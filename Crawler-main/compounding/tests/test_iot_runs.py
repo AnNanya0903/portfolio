@@ -67,7 +67,7 @@ class CompoundingIoTRunViewTests(TestCase):
         self.assertContains(response, "AG-5520")
 
     @override_settings(DEBUG=False, IOT_PORTAL_URL="https://iot.magicwand.biz", IOT_MACHINE_ID_DEFAULT="mixing-mill-2")
-    def test_iot_dashboard_shows_logged_runs_in_the_machine_vs_log_table(self) -> None:
+    def test_iot_dashboard_lists_saved_compounds_with_time_taken(self) -> None:
         self.client.post(
             reverse("compounding:save_iot_run"),
             {
@@ -82,10 +82,9 @@ class CompoundingIoTRunViewTests(TestCase):
         response = self.client.get(reverse("compounding:iot_dashboard"), {"date": "2026-04-06"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'id="iotReconTable"')
-        # No machine data that day, so the log is listed on its own.
-        self.assertContains(response, "AG-5520 10:00–11:30")
-        self.assertContains(response, "No machine run")
+        self.assertContains(response, "Time taken")
+        self.assertContains(response, 'id="iotRunsTable"')
+        self.assertContains(response, "1 h 30 min")
 
 
 IOT_SETTINGS = dict(DEBUG=False, IOT_PORTAL_URL="https://iot.magicwand.biz", IOT_MACHINE_ID_DEFAULT="mixing-mill-2")

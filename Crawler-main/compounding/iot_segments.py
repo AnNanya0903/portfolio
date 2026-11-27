@@ -303,10 +303,7 @@ def _apply_numbers(batch: DetectedBatch, numbers: Dict[str, Any]) -> None:
 
 
 def _after_batch_saved(batch: DetectedBatch, samples: Sequence[Dict[str, Any]]) -> None:
-    """The analysis that follows detection: label, features, pattern prediction and judgement."""
-    from . import iot_patterns
-
-    iot_patterns.analyze_batch(batch)
+    """Hook for the analysis steps that follow detection (pattern identification and judging)."""
 
 
 def detect_range(machine_id: str, start_ts: int, end_ts: int, *, now_ms: Optional[int] = None) -> Dict[str, Any]:

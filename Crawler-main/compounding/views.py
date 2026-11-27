@@ -2419,10 +2419,18 @@ def iot_dashboard(request):
     plan = _get_or_create_plan(plan_date, user=request.user)
     machine_id = _iot_dashboard_machine_id()
     compound_options = _iot_run_compound_options(plan)
-    from .iot_views import recon_context
-
-    # The machine-vs-log table for the plan's calendar day (replaces the old "Compounds run" table).
-    recon = recon_context(machine_id, plan.plan_date, request.user)
+    iot_runs = [
+        {
+            "compound_code": run.compound_code,
+            "batch_type": run.get_batch_type_display(),
+            "started_at": run.started_at,
+            "ended_at": run.ended_at,
+            "time_taken": _iot_run_duration_text(run.started_at, run.ended_at),
+            "stock_quality": run.get_stock_quality_display() if run.ended_at else "Running",
+            "rejection_reason": run.get_rejection_reason_display(),
+        }
+        for run in plan.iot_runs.all().order_by("-started_at", "-id")[:50]
+    ]
     open_batch = _open_iot_batch(machine_id)
     return render(
         request,
@@ -2445,7 +2453,7 @@ def iot_dashboard(request):
             "plan_date": plan.plan_date.isoformat(),
             "iot_machine_id": machine_id,
             "iot_run_compound_options": compound_options,
-            **recon,
+            "iot_runs": iot_runs,
             "iot_run_quality_choices": CompoundingIoTRun.QUALITY_CHOICES,
             "iot_rejection_reason_choices": CompoundingIoTRun.REJECTION_REASON_CHOICES,
             "iot_batch_crin_options": _iot_batch_crin_options(),
@@ -2659,21 +2667,6 @@ def iot_cron_sync(request):
         logger.exception("IoT batch detection failed")
         result["detectError"] = str(exc)
     return JsonResponse(result)
-
-
-@csrf_exempt
-@require_http_methods(["GET", "POST"])
-def iot_cron_standards(request):
-    """App Engine cron (weekly): rebuild every standard curve that has new normal batches."""
-    if request.headers.get("X-Appengine-Cron") != "true":
-        return JsonResponse({"error": "only the scheduler may call this"}, status=403)
-    from . import iot_standards
-
-    try:
-        return JsonResponse({"standards": iot_standards.rebuild_all()})
-    except Exception as exc:
-        logger.exception("Weekly standard rebuild failed")
-        return JsonResponse({"error": str(exc)})
 
 
 @login_required

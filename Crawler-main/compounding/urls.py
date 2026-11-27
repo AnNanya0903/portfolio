@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import iot_views, views
+from . import views
 
 app_name = "compounding"
 
@@ -26,15 +26,6 @@ urlpatterns = [
     path("iot-dashboard/batch/end/", views.end_iot_batch, name="end_iot_batch"),
     # Called by App Engine cron every minute (cron.yaml): store new IoT samples and detect batches.
     path("api/cron/iot-sync/", views.iot_cron_sync, name="iot_cron_sync"),
-    # Weekly (cron.yaml): rebuild standard curves from new normal batches.
-    path("api/cron/iot-standards/", views.iot_cron_standards, name="iot_cron_standards"),
-    path("iot-dashboard/reconciliation/", iot_views.recon_partial, name="iot_recon_partial"),
-    path("iot-dashboard/reconciliation.csv", iot_views.recon_csv, name="iot_recon_csv"),
-    path("iot-dashboard/reconciliation/accept/", iot_views.accept_machine_times, name="iot_accept_machine_times"),
-    path("iot-dashboard/detected/<int:batch_id>/", iot_views.detected_batch_detail, name="iot_detected_batch"),
-    path("iot-dashboard/detected/<int:batch_id>/tag/", iot_views.tag_detected_batch, name="iot_tag_detected_batch"),
-    path("iot-dashboard/tag-batches/", iot_views.tag_batches, name="iot_tag_batches"),
-    path("iot-dashboard/standards/", iot_views.standards, name="iot_standards"),
     path("planning/", views.planning, name="planning"),
     path("board/", views.display, name="display"),
     path("planning/crin/", views.create_crin, name="create_crin"),

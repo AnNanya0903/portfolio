@@ -437,73 +437,6 @@ class IoTSample(models.Model):
 
 
 
-class ProcessGroup(models.Model):
-    """Compounds whose current patterns cannot be told apart; they share one standard and one prediction."""
-
-    name = models.CharField(max_length=80, unique=True)
-    description = models.TextField(blank=True, default="")
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["name"]
-
-    def __str__(self) -> str:
-        return self.name
-
-
-class ProcessGroupCompound(models.Model):
-    """A compound's process group (compounds are master-sheet codes, so this is the compound's FK)."""
-
-    process_group = models.ForeignKey(ProcessGroup, on_delete=models.CASCADE, related_name="compounds")
-    compound_code = models.CharField(max_length=64, unique=True)
-
-    class Meta:
-        ordering = ["compound_code"]
-
-    def __str__(self) -> str:
-        return f"{self.compound_code} -> {self.process_group}"
-
-
-class StandardCurve(models.Model):
-    """The standard current graph for one compound, or for one process group, built from normal batches.
-
-    `points`: [{"t": seconds after load, "median", "lower", "upper"}] every `step_s` seconds; the band is the
-    5th-95th percentile (or mean +/- 2 sigma). `stats`: {"duration_s"|"energy_kwh"|"peak_current"|
-    "time_to_peak_s"|"steady_len_s"|"steady_mean": {"median", "low", "high"}}.
-    """
-
-    # "compound:<code>" or "group:<id>"
-    key = models.CharField(max_length=100, db_index=True)
-    compound_code = models.CharField(max_length=64, blank=True, default="")
-    process_group = models.ForeignKey(
-        ProcessGroup, on_delete=models.CASCADE, null=True, blank=True, related_name="standards"
-    )
-    version = models.PositiveIntegerField()
-    built_from_n = models.PositiveIntegerField()
-    source_batch_ids = models.JSONField(default=list, blank=True)
-    step_s = models.PositiveIntegerField(default=10)
-    band_method = models.CharField(max_length=12, default="percentile")
-    points = models.JSONField(default=list)
-    stats = models.JSONField(default=dict, blank=True)
-    is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
-    )
-    created_at = models.DateTimeField(default=timezone.now)
-
-    class Meta:
-        ordering = ["key", "-version"]
-        constraints = [models.UniqueConstraint(fields=["key", "version"], name="uniq_standard_version_per_key")]
-
-    def __str__(self) -> str:
-        return f"{self.label} v{self.version}"
-
-    @property
-    def label(self) -> str:
-        return self.process_group.name if self.process_group_id else self.compound_code
-
-
 class DetectedBatch(models.Model):
     """A batch the machine ran, found in the current trace (compounding.iot_segments).
 
@@ -526,55 +459,6 @@ class DetectedBatch(models.Model):
     # avg_current every curve_step_s seconds from load_at (or start_at when no load point was found).
     curve = models.JSONField(default=list, blank=True)
     curve_step_s = models.PositiveIntegerField(default=10)
-    # Pattern features: steady_mean, steady_len_s, dips, peak_current, time_to_peak_s, duration_s, energy_kwh.
-    features = models.JSONField(default=dict, blank=True)
-
-    # The operator log with the largest overlap, and how much they overlap (intersection over union).
-    log_run = models.ForeignKey(
-        "CompoundingIoTRun", on_delete=models.SET_NULL, null=True, blank=True, related_name="detected_batches"
-    )
-    log_overlap = models.FloatField(null=True, blank=True)
-    # A supervisor's tag (one-time seeding of the reference set); wins over the log.
-    tagged_compound = models.CharField(max_length=64, blank=True, default="")
-    tagged_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
-    )
-    tagged_at = models.DateTimeField(null=True, blank=True)
-    # The compound this batch is known to be: the tag, else the log's compound when they overlap >= 70 %.
-    label_compound = models.CharField(max_length=64, blank=True, default="", db_index=True)
-    # Left out of standards and of the classifier's reference set (mis-tagged or abnormal).
-    excluded = models.BooleanField(default=False)
-    excluded_reason = models.CharField(max_length=200, blank=True, default="")
-
-    # Pattern identification: the nearest standard (DTW), or kNN on the features once enough batches exist.
-    predicted_key = models.CharField(max_length=100, blank=True, default="")
-    predicted_label = models.CharField(max_length=80, blank=True, default="")
-    prediction_confidence = models.FloatField(null=True, blank=True)
-    prediction_alternatives = models.JSONField(default=list, blank=True)  # [{"key", "label", "confidence"}]
-    prediction_method = models.CharField(max_length=8, blank=True, default="")
-
-    # Judgement against a standard (pattern only).
-    MATCH_OK = "matches"
-    MATCH_NO = "doesnt_match"
-    MATCH_NO_STANDARD = "no_standard"
-    MATCH_CHOICES = [
-        (MATCH_OK, "Matches standard"),
-        (MATCH_NO, "Doesn't match"),
-        (MATCH_NO_STANDARD, "No standard yet"),
-    ]
-    judged_key = models.CharField(max_length=100, blank=True, default="")
-    judged_label = models.CharField(max_length=80, blank=True, default="")
-    standard = models.ForeignKey(
-        "StandardCurve", on_delete=models.SET_NULL, null=True, blank=True, related_name="judged_batches"
-    )
-    match_pct = models.FloatField(null=True, blank=True)
-    dtw_distance = models.FloatField(null=True, blank=True)
-    energy_dev_pct = models.FloatField(null=True, blank=True)
-    duration_dev_pct = models.FloatField(null=True, blank=True)
-    peak_time_dev_s = models.IntegerField(null=True, blank=True)
-    match_result = models.CharField(max_length=12, choices=MATCH_CHOICES, blank=True, default="")
-    reasons = models.JSONField(default=list, blank=True)  # at most two short strings
-
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -623,31 +507,6 @@ class MachineSegment(models.Model):
     @property
     def duration_s(self) -> int:
         return max(int((self.end_at - self.start_at).total_seconds()), 0)
-
-
-
-class IoTRunCorrection(models.Model):
-    """Audit trail: a supervisor replaced an operator log's times with the machine's detected times."""
-
-    run = models.ForeignKey("CompoundingIoTRun", on_delete=models.CASCADE, related_name="corrections")
-    detected_batch = models.ForeignKey(
-        DetectedBatch, on_delete=models.SET_NULL, null=True, blank=True, related_name="corrections"
-    )
-    corrected_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
-    )
-    corrected_at = models.DateTimeField(default=timezone.now)
-    verdict = models.CharField(max_length=32, blank=True, default="")
-    old_started_at = models.DateTimeField()
-    old_ended_at = models.DateTimeField(null=True, blank=True)
-    new_started_at = models.DateTimeField()
-    new_ended_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ["-corrected_at"]
-
-    def __str__(self) -> str:
-        return f"Correction of run {self.run_id} at {self.corrected_at:%Y-%m-%d %H:%M}"
 
 
 class CompoundingStockEntry(models.Model):

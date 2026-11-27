@@ -25,10 +25,3 @@ cron:
   target: magicwand-backend
   retry_parameters:
     job_retry_limit: 0
-- description: "IoT: rebuild the mixing mill's standard curves from the week's normal batches"
-  url: /compounding/api/cron/iot-standards/
-  schedule: every monday 06:00
-  timezone: Asia/Kolkata
-  target: magicwand-backend
-  retry_parameters:
-    job_retry_limit: 0
