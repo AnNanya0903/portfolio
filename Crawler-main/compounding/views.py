@@ -2669,6 +2669,21 @@ def iot_cron_sync(request):
     return JsonResponse(result)
 
 
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def iot_cron_standards(request):
+    """App Engine cron (weekly): rebuild every standard curve that has new normal batches."""
+    if request.headers.get("X-Appengine-Cron") != "true":
+        return JsonResponse({"error": "only the scheduler may call this"}, status=403)
+    from . import iot_standards
+
+    try:
+        return JsonResponse({"standards": iot_standards.rebuild_all()})
+    except Exception as exc:
+        logger.exception("Weekly standard rebuild failed")
+        return JsonResponse({"error": str(exc)})
+
+
 @login_required
 @require_service_access("compounding_planning")
 @require_http_methods(["GET"])

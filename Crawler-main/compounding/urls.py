@@ -26,6 +26,8 @@ urlpatterns = [
     path("iot-dashboard/batch/end/", views.end_iot_batch, name="end_iot_batch"),
     # Called by App Engine cron every minute (cron.yaml): store new IoT samples and detect batches.
     path("api/cron/iot-sync/", views.iot_cron_sync, name="iot_cron_sync"),
+    # Weekly (cron.yaml): rebuild standard curves from new normal batches.
+    path("api/cron/iot-standards/", views.iot_cron_standards, name="iot_cron_standards"),
     path("planning/", views.planning, name="planning"),
     path("board/", views.display, name="display"),
     path("planning/crin/", views.create_crin, name="create_crin"),
