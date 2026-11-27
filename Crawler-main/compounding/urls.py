@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import iot_views, views
 
 app_name = "compounding"
 
@@ -26,6 +26,11 @@ urlpatterns = [
     path("iot-dashboard/batch/end/", views.end_iot_batch, name="end_iot_batch"),
     # Called by App Engine cron every minute (cron.yaml): store new IoT samples and detect batches.
     path("api/cron/iot-sync/", views.iot_cron_sync, name="iot_cron_sync"),
+    path("iot-dashboard/batches/<int:batch_id>/", iot_views.batch_detail, name="iot_batch_detail"),
+    path("iot-dashboard/batches/<int:batch_id>/compound/", iot_views.assign_batch_compound, name="iot_batch_assign_compound"),
+    path("iot-dashboard/process-groups/", iot_views.process_groups, name="iot_process_groups"),
+    path("iot-dashboard/process-groups/<int:group_id>/", iot_views.process_group_detail, name="iot_process_group_detail"),
+    path("iot-dashboard/process-groups/<int:group_id>/rebuild/", iot_views.rebuild_curve, name="iot_rebuild_curve"),
     path("planning/", views.planning, name="planning"),
     path("board/", views.display, name="display"),
     path("planning/crin/", views.create_crin, name="create_crin"),
