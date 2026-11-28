@@ -561,6 +561,25 @@ def _notify_reply(enquiry_id: str, lead) -> None:
 # Sending
 # ---------------------------------------------------------------------------------------------------------
 
+def _document_number(gmail, quote: Mapping[str, Any]) -> str:
+    """The Voucher No. printed on the quotation / PI PDF of the sent email, or '' when it cannot be read."""
+    from .share_email import voucher_number
+
+    message_id = str(quote.get("id") or "")
+    for attachment in quote.get("attachments") or []:
+        if not str(attachment.get("filename") or "").lower().endswith(".pdf"):
+            continue
+        try:
+            data = gmail.download_attachment(message_id, str(attachment.get("attachment_id") or ""))
+        except Exception as exc:  # the follow-up still goes out without the number
+            logger.warning("Could not read the quotation PDF of message %s: %s", message_id, exc)
+            continue
+        number = voucher_number(data)
+        if number:
+            return number[:64]
+    return ""
+
+
 def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, cycle: Cycle) -> Dict[str, Any]:
     """Verify the thread, render and send (or dry-run) the next email of the sequence, and record it."""
     stage = cycle.stage
@@ -570,6 +589,7 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, cycle: 
     address = (cycle.customer_email if marketing else customer_email(enquiry_id, enquiry, cycle)).lower()
 
     gmail = GmailService(sender)
+    quote_message_sent: Optional[Mapping[str, Any]] = None
     try:
         own = {a.lower() for a in gmail.own_addresses()}
         if not own:
@@ -579,12 +599,22 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, cycle: 
         if marketing:
             thread_id, original, first_subject = marketing_thread(gmail, enquiry_id, cycle, own, address, sender)
         else:
-            thread_id, messages, _quote = enquiry_thread(gmail, enquiry_id, enquiry, cycle, own, address)
+            thread_id, messages, quote_message_sent = enquiry_thread(gmail, enquiry_id, enquiry, cycle, own, address)
             original = gmail.get_message(messages[-1].get("id"))
     except Stop as stop:
         return stop.result
     except GmailAPIError as exc:
         return _result(enquiry_id, FAILED, f"Gmail error: {exc}")
+
+    # The quotation / PI number, read from the PDF we sent (once; then kept on the sequence's start).
+    document_no = ""
+    if not marketing and cycle.start is not None:
+        document_no = cycle.start.document_no
+        if not document_no and quote_message_sent:
+            document_no = _document_number(gmail, quote_message_sent)
+            if document_no:
+                cycle.start.document_no = document_no
+                cycle.start.save(update_fields=["document_no"])
 
     share_url = share_password = ""
     if not marketing and not closing:
@@ -605,7 +635,7 @@ def _send(enquiry_id: str, enquiry: Dict[str, Any], sender, today: date, cycle: 
         body = build_follow_up_body(
             stage, attempt=attempt, reference=enquiry_id, subject=title, user=sender, today=today,
             share_url=share_url, share_password=share_password, customer_name=name,
-            document_number=(cycle.start.document_no if cycle.start is not None and not marketing else ""),
+            document_number=document_no,
             delivery_timeline=str(enquiry.get("delivery_timeline") or ""),
             confirm_by_date=str(enquiry.get("confirm_by_date") or ""), lead_source=source)
     if marketing and attempt == 1:
