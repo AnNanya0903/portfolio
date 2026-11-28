@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+
+{% block title %}Won back - Marketing - MagicWand 2.0{% endblock %}
+
+{% block extra_css %}
+<style>
+  .mk-stat { background: white; border: 1px solid var(--brand-border); border-radius: 12px;
+             padding: 1rem 1.25rem; height: 100%; }
+  .mk-stat-label { font-size: 0.8rem; color: var(--brand-muted, #64748b); }
+  .mk-stat-value { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .mk-muted { font-size: 0.75rem; color: var(--brand-muted, #64748b); }
+  .mk-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 0.72rem; font-weight: 600;
+             padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .mk-chip--revived { background: #eff6ff; color: #1d4ed8; }
+  .mk-chip--accepted { background: #dcfce7; color: #166534; }
+  .mk-chip--lost { background: #f1f5f9; color: #475569; }
+  .mk-row-link { color: inherit; text-decoration: none; }
+  .mk-row-link:hover { text-decoration: underline; }
+  .mk-subject { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'marketing:board' %}" class="mk-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Marketing</a>
+    <h2 class="page-title mt-1"><i class="bi bi-trophy text-success me-1"></i>Won back</h2>
+    <p class="page-subtitle">Customers who came back after marketing's follow-up or negotiation.</p>
+  </div>
+</div>
+
+{% if load_error %}
+  <div class="alert alert-warning">{{ load_error }}</div>
+{% endif %}
+
+<div class="row g-3 mb-4" data-won-back-summary>
+  <div class="col-12 col-md-4">
+    <div class="mk-stat"><div class="mk-stat-label">Won back</div>
+      <div class="mk-stat-value text-success">{{ rows|length }}</div></div>
+  </div>
+  <div class="col-6 col-md-4">
+    <div class="mk-stat" title="The same lost enquiry was set back to Accepted.">
+      <div class="mk-stat-label">Enquiry set to Accepted</div>
+      <div class="mk-stat-value">{{ accepted_count }}</div></div>
+  </div>
+  <div class="col-6 col-md-4">
+    <div class="mk-stat" title="A new enquiry was created for sales.">
+      <div class="mk-stat-label">Revived as a new enquiry</div>
+      <div class="mk-stat-value">{{ revived_count }}</div></div>
+  </div>
+</div>
+
+<div class="card border-0 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-copilot align-middle mb-0" style="border:none; border-radius:0;">
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Lost enquiry</th>
+          <th>Why it was lost</th>
+          <th>How it came back</th>
+          <th>Won back on</th>
+          <th>Enquiry now</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr data-won-back="{{ row.how }}">
+            <td class="fw-semibold">{% if row.customer_name %}{{ row.customer_name }}{% else %}<span class="text-muted fw-normal">Name not recorded</span>{% endif %}</td>
+            <td>
+              <a class="mk-row-link" href="{% url 'marketing:detail' row.enquiry_id %}">{{ row.enquiry_id }}</a>
+              <div class="mk-muted mk-subject" title="{{ row.subject }}">{{ row.subject }}</div>
+              {% if row.price %}<div class="mk-muted">Quoted {{ row.price }}</div>{% endif %}
+            </td>
+            <td>
+              {% if row.lost_as %}<span class="mk-chip mk-chip--lost">{{ row.lost_as }}</span>{% endif %}
+              <div class="small mt-1">{{ row.reason_label|default:"—" }}</div>
+            </td>
+            <td>
+              <span class="mk-chip mk-chip--{{ row.how }}">{% if row.how == 'revived' %}<i class="bi bi-arrow-repeat"></i>{% else %}<i class="bi bi-check-circle-fill"></i>{% endif %} {{ row.how_label }}</span>
+              {% if row.new_enquiry_id %}<div class="mk-muted mt-1"><a href="{% url 'enquiries:detail' row.new_enquiry_id %}">Open {{ row.new_enquiry_id }}</a></div>{% endif %}
+            </td>
+            <td>
+              {{ row.won_on|date:"d M Y"|default:"—" }}
+              {% if row.won_by %}<div class="mk-muted">by {{ row.won_by }}</div>{% endif %}
+            </td>
+            <td>{{ row.status_now|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="6" class="text-center text-muted py-5">No customer has been won back yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

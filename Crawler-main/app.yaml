@@ -1,0 +1,44 @@
+# App Engine Standard Environment configuration for production MagicWand backend
+
+runtime: python311
+service: magicwand-backend
+entrypoint: gunicorn -b :$PORT magicwand.wsgi --workers 2 --threads 8 --timeout 120
+
+instance_class: F2
+
+inbound_services:
+  - warmup
+
+automatic_scaling:
+  min_instances: 2
+  max_instances: 5
+  target_cpu_utilization: 0.6
+  target_throughput_utilization: 0.7
+
+handlers:
+  - url: /static
+    static_dir: staticfiles/
+    secure: always
+
+  - url: /media
+    static_dir: media/
+    secure: always
+
+  - url: /.*
+    script: auto
+    secure: always
+
+beta_settings:
+  cloud_sql_instances: avigiri-techinfra-474213:us-central1:magicwand-prod-sql
+
+env_variables:
+  # Automatic follow-ups are on and really send. Set FOLLOW_UP_AUTO_DRY_RUN to "True" to only log them.
+  FOLLOW_UP_AUTO_ENABLED: "True"
+  FOLLOW_UP_AUTO_DRY_RUN: "False"
+  FOLLOW_UP_AUTO_SENDER: "avigiri"
+  MARKETING_FOLLOW_UP_SENDER: "kumar"
+  DJANGO_SETTINGS_MODULE: magicwand.settings_staging
+  GOOGLE_CLOUD_PROJECT: avigiri-techinfra-474213
+  SETTINGS_NAME: django_settings
+  FOLLOW_UP_DEFAULT_CC: customerservice@avigiri.com
+  ALLOW_SECRET_OVERWRITE: "true"

@@ -63,9 +63,6 @@
                 </a>
 
                 <nav class="copilot-mobile-nav flex-grow-1">
-                    <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or '/quotations/' in request.path or 'cad' in request.path %}open{% endif %}>
-                    <summary class="copilot-mobile-section-title">Core ERP</summary>
-                    <div class="sidebar-section-links">
                     <a href="/" class="nav-pill-custom {% if request.path == '/' %}active{% endif %}">
                         <i class="bi bi-grid-1x2"></i> Dashboard
                     </a>
@@ -94,11 +91,23 @@
                         <i class="bi bi-diagram-3"></i> Design Match
                     </a>
                     {% endif %}
-                    </div>
-                    </details>
+                    {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
+                    <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                        <i class="bi bi-droplet-half"></i> Compounding
+                    </a>
+                    {% elif mw_service_access.compounding_production|default:False %}
+                    <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                        <i class="bi bi-clipboard-plus"></i> Raise CRIN
+                    </a>
+                    {% endif %}
+                    {% if mw_service_access.gmail_ai|default:False %}
+                    <a href="{% url 'gmail_ai' %}" class="nav-pill-custom {% if 'gmail' in request.path %}active{% endif %}">
+                        <i class="bi bi-robot"></i> Gmail AI
+                    </a>
+                    {% endif %}
 
-                    {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board or mw_service_access.compounding_production %}
-                    <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
+                    {% if mw_service_access.mrp %}
+                    <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path %}open{% endif %}>
                     <summary class="copilot-mobile-section-title">Operations</summary>
                     <div class="sidebar-section-links">
                     {% if mw_service_access.mrp|default:False %}
@@ -127,15 +136,6 @@
                         <i class="bi bi-people"></i> HR Lite
                     </a>
                     {% endif %}
-                    {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
-                    <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
-                        <i class="bi bi-droplet-half"></i> Compounding
-                    </a>
-                    {% elif mw_service_access.compounding_production|default:False %}
-                    <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
-                        <i class="bi bi-clipboard-plus"></i> Raise CRIN
-                    </a>
-                    {% endif %}
                     </div>
                     </details>
                     {% endif %}
@@ -152,19 +152,6 @@
                     {% if mw_service_access.mrp|default:False %}
                     <a href="{% url 'mrp:integration_hub' %}" class="nav-pill-custom {% if '/mrp/integrations/' in request.path %}active{% endif %}">
                         <i class="bi bi-plug"></i> Integration Hub
-                    </a>
-                    {% endif %}
-                    </div>
-                    </details>
-                    {% endif %}
-
-                    {% if mw_service_access.gmail_ai %}
-                    <details class="sidebar-section" {% if 'gmail' in request.path %}open{% endif %}>
-                    <summary class="copilot-mobile-section-title">Intelligence</summary>
-                    <div class="sidebar-section-links">
-                    {% if mw_service_access.gmail_ai|default:False %}
-                    <a href="{% url 'gmail_ai' %}" class="nav-pill-custom {% if 'gmail' in request.path %}active{% endif %}">
-                        <i class="bi bi-robot"></i> Gmail AI
                     </a>
                     {% endif %}
                     </div>
@@ -232,9 +219,6 @@
             </a>
 
             <nav class="copilot-sidebar-nav flex-grow-1">
-                <details class="sidebar-section" {% if request.path == '/' or 'enquiries' in request.path or '/marketing/' in request.path or '/kyc/' in request.path or '/quotations/' in request.path or 'cad' in request.path %}open{% endif %}>
-                <summary class="sidebar-section-title">Core ERP</summary>
-                <div class="sidebar-section-links">
                 <a href="/" class="nav-pill-custom {% if request.path == '/' %}active{% endif %}">
                     <i class="bi bi-grid-1x2"></i> Dashboard
                 </a>
@@ -263,11 +247,23 @@
                     <i class="bi bi-diagram-3"></i> Design Match
                 </a>
                 {% endif %}
-                </div>
-                </details>
+                {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
+                <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}" data-ai-context="compounding">
+                    <i class="bi bi-droplet-half"></i> Compounding
+                </a>
+                {% elif mw_service_access.compounding_production|default:False %}
+                <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
+                    <i class="bi bi-clipboard-plus"></i> Raise CRIN
+                </a>
+                {% endif %}
+                {% if mw_service_access.gmail_ai|default:False %}
+                <a href="{% url 'gmail_ai' %}" class="nav-pill-custom {% if 'gmail' in request.path %}active{% endif %}" data-ai-context="gmail">
+                    <i class="bi bi-robot"></i> Gmail AI
+                </a>
+                {% endif %}
 
-                {% if mw_service_access.mrp or mw_service_access.compounding_planning or mw_service_access.compounding_board or mw_service_access.compounding_production %}
-                <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path or 'compounding' in request.path %}open{% endif %}>
+                {% if mw_service_access.mrp %}
+                <details class="sidebar-section" {% if '/mrp/' in request.path and not '/mrp/integrations/' in request.path %}open{% endif %}>
                 <summary class="sidebar-section-title">Operations</summary>
                 <div class="sidebar-section-links">
                 {% if mw_service_access.mrp|default:False %}
@@ -296,15 +292,6 @@
                     <i class="bi bi-people"></i> HR Lite
                 </a>
                 {% endif %}
-                {% if mw_service_access.compounding_planning|default:False or mw_service_access.compounding_board|default:False %}
-                <a href="{% url 'compounding:board' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}" data-ai-context="compounding">
-                    <i class="bi bi-droplet-half"></i> Compounding
-                </a>
-                {% elif mw_service_access.compounding_production|default:False %}
-                <a href="{% url 'compounding:production' %}" class="nav-pill-custom {% if 'compounding' in request.path %}active{% endif %}">
-                    <i class="bi bi-clipboard-plus"></i> Raise CRIN
-                </a>
-                {% endif %}
                 </div>
                 </details>
                 {% endif %}
@@ -321,19 +308,6 @@
                 {% if mw_service_access.mrp|default:False %}
                 <a href="{% url 'mrp:integration_hub' %}" class="nav-pill-custom {% if '/mrp/integrations/' in request.path %}active{% endif %}">
                     <i class="bi bi-plug"></i> Integration Hub
-                </a>
-                {% endif %}
-                </div>
-                </details>
-                {% endif %}
-
-                {% if mw_service_access.gmail_ai %}
-                <details class="sidebar-section" {% if 'gmail' in request.path %}open{% endif %}>
-                <summary class="sidebar-section-title">Intelligence</summary>
-                <div class="sidebar-section-links">
-                {% if mw_service_access.gmail_ai|default:False %}
-                <a href="{% url 'gmail_ai' %}" class="nav-pill-custom {% if 'gmail' in request.path %}active{% endif %}" data-ai-context="gmail">
-                    <i class="bi bi-robot"></i> Gmail AI
                 </a>
                 {% endif %}
                 </div>

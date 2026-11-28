@@ -222,7 +222,7 @@ class MarkAcceptedTests(TestCase):
         self.assertIn("E1 accepted", send.call_args.args[2])
         self.assertContains(response, "Enquiry E1 is now Accepted")
         self.assertEqual(response.redirect_chain[0][0], reverse("marketing:board"))
-        self.assertEqual(response.context["accepted_count"], 1)
+        self.assertEqual(response.context["won_back_count"], 1)
         self.assertTrue(MarketingActivity.objects.filter(text="Priya Sharma was notified by phone and email.").exists())
 
     def test_enquiry_service_error_changes_nothing(self):

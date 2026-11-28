@@ -1,0 +1,30 @@
+{# The audit trail: `events` (QuotationEvent), newest first. `show_quotation` names the quotation on each line. #}
+<style>
+  .qt-tl-chip { display:inline-flex; font-size:.72rem; font-weight:600; padding:2px 8px; border-radius:999px; white-space:nowrap; background:#f1f5f9; color:#475569; }
+  .qt-tl-chip--approved, .qt-tl-chip--accepted { background:#ecfdf5; color:#047857; }
+  .qt-tl-chip--revision, .qt-tl-chip--price_modified, .qt-tl-chip--send_failed, .qt-tl-chip--declined, .qt-tl-chip--password_failed { background:#fef2f2; color:#b91c1c; }
+  .qt-tl-chip--sent, .qt-tl-chip--resent, .qt-tl-chip--email_linked, .qt-tl-chip--password_sent { background:#eff6ff; color:#1d4ed8; }
+  .qt-tl-chip--submitted { background:#fffbeb; color:#b45309; }
+  .qt-tl-chip--enquiry_changed, .qt-tl-chip--enquiry_merged, .qt-tl-chip--links_revoked { background:#f5f3ff; color:#6d28d9; }
+  .qt-tl-row { border-top:1px solid var(--brand-border, #e2e8f0); padding:.7rem 1rem; }
+  .qt-tl-row:first-child { border-top:none; }
+  .qt-tl-muted { font-size:.78rem; color:var(--brand-muted, #64748b); }
+  .qt-tl-text { white-space:pre-line; overflow-wrap:anywhere; font-size:.88rem; }
+</style>
+{% for event in events %}
+  <div class="qt-tl-row" data-timeline-event="{{ event.action }}">
+    <div class="d-flex justify-content-between gap-2 flex-wrap">
+      <span class="qt-tl-chip qt-tl-chip--{{ event.action }}">{{ event.get_action_display }}</span>
+      <span class="qt-tl-muted">{{ event.created_at|date:"d M Y, H:i" }}</span>
+    </div>
+    <div class="qt-tl-muted mt-1">
+      {% if show_quotation and event.quotation %}<a class="text-decoration-none" href="{% url 'quotations:detail' event.quotation.pk %}">{{ event.quotation.number }}</a>{% if event.version %} · {% endif %}{% endif %}{% if event.version %}Version {{ event.version.number }}{% endif %}{% if event.user %} · {{ event.user.get_full_name|default:event.user.username }}{% endif %}
+    </div>
+    {% if event.comment %}{% if sees_workings or not event.has_internal_comment %}<div class="qt-tl-text mt-1">{{ event.comment }}</div>{% endif %}{% endif %}
+    {% if event.details.reference %}<div class="qt-tl-muted mt-1">PO / reference: {{ event.details.reference }}</div>{% endif %}
+    {% if event.details.subject and event.action != 'email_linked' %}<div class="qt-tl-muted mt-1">Subject: {{ event.details.subject }}{% if event.details.new_thread %} (new thread){% endif %}{% if event.details.test_mode %} · test mode, not sent{% endif %}</div>{% endif %}
+    {% if event.file and sees_workings %}<div class="mt-1"><a href="{% url 'quotations:event_file' event.pk %}"><i class="bi bi-file-earmark-spreadsheet"></i> {{ event.file_name|default:"Corrected Excel" }}</a></div>{% endif %}
+  </div>
+{% empty %}
+  <div class="qt-tl-row qt-tl-muted">Nothing yet.</div>
+{% endfor %}

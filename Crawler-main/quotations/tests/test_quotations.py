@@ -1,6 +1,7 @@
 """Tests for the quotation and feasibility portal: versions, approval, the tracker and who sees what."""
 import shutil
 import tempfile
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.files.storage import FileSystemStorage
@@ -33,7 +34,7 @@ class Base(TestCase):
         cls._dir = tempfile.mkdtemp()
         cls._old = {}
         storage = FileSystemStorage(location=cls._dir)
-        for model, names in ((QuotationVersion, ("pdf", "excel")), (QuotationEvent, ("file",))):
+        for model, names in ((QuotationVersion, ("pdf", "excel", "frozen_pdf")), (QuotationEvent, ("file",))):
             for name in names:
                 field = model._meta.get_field(name)
                 cls._old[field] = field.storage
@@ -53,7 +54,7 @@ class Base(TestCase):
         self.cro = users.create_user("naveen", password="x")
         self._allow(self.costing, ["quotations", "quotation_costing"])
         self._allow(self.boss, ["quotations", "quotation_approval"])
-        self._allow(self.cro, ["quotations"])
+        self._allow(self.cro, ["quotations", "quotation_send"])
         self.acme = Customer.objects.create(code="AV-0001", name="Acme Seals")
 
     def _allow(self, user, services):
@@ -134,11 +135,12 @@ class UploadTests(Base):
 
     def test_costing_uploads_a_quotation_for_a_kyc_customer(self):
         self.client.force_login(self.costing)
-        response = self._post(enquiry_id="E77")
+        with mock.patch("enquiries.services.fetch_enquiry", return_value={"enquiry_id": "ENQ-0077"}):
+            response = self._post(enquiry_id="enq-0077", enquiry_reference="AG-QR-ACME-12")
         quotation = Quotation.objects.get()
         self.assertRedirects(response, reverse("quotations:detail", args=[quotation.pk]))
-        self.assertEqual((quotation.customer, quotation.customer_name, quotation.enquiry_id),
-                         (self.acme, "Acme Seals", "E77"))
+        self.assertEqual((quotation.customer, quotation.customer_name, quotation.enquiry_id,
+                          quotation.enquiry_reference), (self.acme, "Acme Seals", "ENQ-0077", "AG-QR-ACME-12"))
         version = quotation.latest_version
         self.assertEqual((version.pdf_name, version.excel_name, version.uploaded_by),
                          ("quote.pdf", "working.xlsx", self.costing))
@@ -196,9 +198,12 @@ class DecisionTests(Base):
         self.assertEqual(self.quotation.status, "approved")
         self.assertContains(response, "approved. It is now the PDF to send")
 
-    def test_a_revision_needs_a_comment_or_a_corrected_excel(self):
+    def test_a_revision_needs_a_reason(self):
         response = self._decide(self.boss, decision="revise")
-        self.assertContains(response, "Say what should change")
+        self.assertContains(response, "Give the reason")
+        self.assertEqual(self.quotation.status, "pending")
+        # A corrected Excel alone is not a reason any more.
+        self._decide(self.boss, decision="revise", corrected_excel=excel("boss.xlsx"))
         self.assertEqual(self.quotation.status, "pending")
         self._decide(self.boss, decision="revise", comment="Reduce by 5%")
         self.assertEqual(self.quotation.status, "revision")
@@ -216,6 +221,14 @@ class DecisionTests(Base):
         self.assertContains(response, "A newer version was uploaded")
         self.assertEqual(self.quotation.status, "pending")
 
+    def test_tracker_times_are_indian_time(self):
+        from datetime import datetime, timezone as dt_timezone
+        self.quotation.events.update(created_at=datetime(2026, 11, 25, 10, 39, tzinfo=dt_timezone.utc))
+        self.client.force_login(self.boss)
+        response = self.client.get(reverse("quotations:detail", args=[self.quotation.pk]))
+        self.assertContains(response, "25 Nov 2026, 16:09")  # 10:39 UTC
+        self.assertNotContains(response, "25 Nov 2026, 10:39")
+
 
 class VisibilityTests(Base):
     def setUp(self):
@@ -230,8 +243,9 @@ class VisibilityTests(Base):
     def test_customer_relations_sees_no_pdf_and_no_workings_before_approval(self):
         page = self._get(self.cro, "quotations:detail", self.quotation.pk)
         self.assertContains(page, "data-no-active-pdf")
-        for hidden in ("data-tracker", "data-decision-card", "data-upload-card", "Rs 42 each", "first price",
-                       "working.xlsx"):
+        # The timeline is open to every department, without the internal pricing comments.
+        self.assertContains(page, "data-tracker")
+        for hidden in ("data-decision-card", "data-upload-card", "Rs 42 each", "first price", "working.xlsx"):
             self.assertNotContains(page, hidden)
         self.assertEqual(self._get(self.cro, "quotations:version_pdf", self.first.pk).status_code, 404)
         self.assertEqual(self._get(self.cro, "quotations:version_excel", self.first.pk).status_code, 404)

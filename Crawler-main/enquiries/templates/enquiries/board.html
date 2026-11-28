@@ -97,6 +97,11 @@
       flex: 1 1 0;
     }
   }
+  .qt-board-status { font-size:.7rem; font-weight:600; padding:1px 6px; border-radius:999px; background:#f1f5f9; color:#475569; }
+  .qt-board-status--approved { background:#ecfdf5; color:#047857; }
+  .qt-board-status--revision, .qt-board-status--declined { background:#fef2f2; color:#b91c1c; }
+  .qt-board-status--pending { background:#fffbeb; color:#b45309; }
+  .qt-board-status--sent, .qt-board-status--accepted { background:#eff6ff; color:#1d4ed8; }
 </style>
 {% endblock %}
 
@@ -118,53 +123,7 @@
 
 <!-- Creation Tools -->
 <div class="row g-4 mb-5">
-  <div class="col-lg-6">
-    <div class="enquiry-action-card">
-        <form
-          method="post"
-          id="createSheetForm"
-          class="d-flex flex-column gap-2"
-          data-endpoint="{% url 'enquiries:create_google_sheet' %}"
-          action="{% url 'enquiries:create_google_sheet' %}"
-          data-loader="false"
-          enctype="multipart/form-data"
-        >
-          {% csrf_token %}
-          <div class="d-flex align-items-center gap-2 mb-2">
-            <div class="icon-box icon-green shadow-sm mb-0" style="width:32px;height:32px;font-size:1rem;"><i class="bi bi-file-earmark-spreadsheet"></i></div>
-            <h5 class="mb-0">New Enquiry Sheet</h5>
-          </div>
-          <p class="text-muted small">Spin up a Google Sheet for a new enquiry.</p>
-          <div class="input-group input-group-sm mb-2">
-            <input
-              type="text"
-              name="title"
-              class="form-control border"
-              placeholder="Enter sheet title (e.g. Project X)"
-            />
-            <button class="btn btn-success" type="submit" data-open-google-sheet="true" disabled>
-              Create
-            </button>
-          </div>
-          <div class="row g-2 mb-2">
-            <div class="col-sm-4">
-              <input type="text" name="customer_code" class="form-control form-control-sm" maxlength="32" placeholder="Customer code" list="kycCustomerOptions" autocomplete="off" aria-label="Customer code (fills in name and email)" data-kyc-code />
-            </div>
-            <div class="col-sm-4">
-              <input type="text" name="customer_name" class="form-control form-control-sm" maxlength="255" placeholder="Customer name (optional)" />
-            </div>
-            <div class="col-sm-4">
-              <input type="email" name="customer_email" class="form-control form-control-sm" placeholder="Customer email 1 (optional)" aria-label="Customer email 1" />
-            </div>
-            <div class="col-sm-4 offset-sm-8">
-              <input type="email" name="other_customer_email" class="form-control form-control-sm" placeholder="Customer email 2 (optional, CC)" aria-label="Customer email 2" />
-            </div>
-          </div>
-          <div id="createSheetResult" class="small text-muted"></div>
-        </form>
-    </div>
-  </div>
-  <div class="col-lg-6">
+  <div class="col-12">
     <div class="enquiry-action-card">
         <form
           method="post"
@@ -378,8 +337,10 @@
             {% if enquiry.customer_email_saved %}<div class="small text-muted text-truncate" style="max-width:180px;">{{ enquiry.customer_email_saved }}</div>{% endif %}
             {% for other in enquiry.other_customer_emails_saved %}<div class="small text-muted text-truncate" style="max-width:180px;" title="Copied (CC) on every email">CC: {{ other }}</div>{% endfor %}
             {% if mw_service_access.quotations|default:False %}
-              <div class="small">{% if enquiry.quotation_count %}<a href="{% url 'quotations:list' %}?q={{ enquiry.enquiry_id|urlencode }}" class="text-decoration-none" title="Quotations of this enquiry"><i class="bi bi-file-earmark-text"></i> Quotations ({{ enquiry.quotation_count }})</a>{% else %}<a href="{% url 'quotations:new' %}?enquiry={{ enquiry.enquiry_id|urlencode }}{% if enquiry.kyc_customer %}&customer={{ enquiry.kyc_customer.code|urlencode }}{% endif %}&customer_name={{ enquiry.customer_name|default:''|urlencode }}" class="text-decoration-none text-muted" title="Upload a quotation for this enquiry"><i class="bi bi-plus-lg"></i> Quotation</a>{% endif %}</div>
+              {% for q in enquiry.quotations %}<div class="small text-nowrap" data-enquiry-quotation="{{ q.number }}"><a href="{% url 'quotations:detail' q.pk %}" class="text-decoration-none" title="{{ q.title }}: {{ q.label }}"><i class="bi bi-file-earmark-text"></i> {{ q.number }} v{{ q.version }}</a> <span class="qt-board-status qt-board-status--{{ q.status }}">{{ q.status_display }}</span></div>{% endfor %}
+              <div class="small"><a href="{% url 'quotations:new' %}?enquiry={{ enquiry.enquiry_id|urlencode }}{% if enquiry.kyc_customer %}&customer={{ enquiry.kyc_customer.code|urlencode }}{% endif %}&customer_name={{ enquiry.customer_name|default:''|urlencode }}" class="text-decoration-none text-muted" title="{% if enquiry.quotation_count %}A quotation for another item or project of this enquiry. A revision is a new version of the quotation above.{% else %}Upload a quotation for this enquiry{% endif %}"><i class="bi bi-plus-lg"></i> Quotation</a></div>
             {% endif %}
+            <div class="small"><a href="{% url 'enquiries:email_link' enquiry.enquiry_id %}?next={{ request.get_full_path|urlencode }}" class="text-decoration-none{% if not enquiry.email_linked %} text-muted{% endif %}" data-email-link title="{% if enquiry.email_linked %}The quotation will reply in the customer's email thread{% else %}Pick the customer's original email so the quotation replies in its thread{% endif %}"><i class="bi bi-{% if enquiry.email_linked %}link-45deg{% else %}envelope-plus{% endif %}"></i> {% if enquiry.email_linked %}Email linked{% else %}Link enquiry email{% endif %}</a></div>
             {% if enquiry.kyc_customer %}
               <div class="small">{% if mw_service_access.kyc|default:False %}<a href="{% url 'kyc:detail' enquiry.kyc_customer.pk %}" class="text-decoration-none" title="Open in KYC">{{ enquiry.kyc_customer.customer_code|default:enquiry.kyc_customer.code }}</a>{% else %}<span class="text-muted">{{ enquiry.kyc_customer.customer_code|default:enquiry.kyc_customer.code }}</span>{% endif %}</div>
             {% elif enquiry.kyc_suggestion %}
@@ -853,106 +814,6 @@
     load({ force: false });
   })();
 
-  (function () {
-    const form = document.getElementById("createSheetForm");
-    if (!form) return;
-
-    const resultEl = document.getElementById("createSheetResult");
-    const titleInput = form.querySelector("input[name='title']");
-    const submitBtn = form.querySelector("button[type='submit']");
-
-    const toggleButtonState = () => {
-      if (!submitBtn) return;
-      const titleValue = titleInput?.value?.trim();
-      submitBtn.disabled = !titleValue;
-    };
-
-    toggleButtonState();
-    titleInput?.addEventListener("input", toggleButtonState);
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      // Avoid sticky global loader for this AJAX flow
-      form.setAttribute("data-loader", "false");
-      if (submitBtn) {
-        submitBtn.disabled = true;
-      }
-      if (resultEl) {
-        resultEl.classList.remove("text-danger");
-        resultEl.textContent = "Creating sheet...";
-      }
-
-      const endpoint = form.dataset.endpoint || form.action || window.location.href;
-      const csrf = form.querySelector("input[name='csrfmiddlewaretoken']")?.value;
-      const formData = new FormData(form);
-
-      try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: csrf ? { "X-CSRFToken": csrf } : {},
-          body: formData,
-        });
-        const payload = await response.json();
-        if (!response.ok || payload.error) {
-          throw new Error(payload.error || "Unable to create sheet.");
-        }
-
-        if (resultEl) {
-          const sheetUrl = payload.sheet_url || "";
-          const title = payload.title || "Google Sheet";
-          const enquiryUrl = payload.enquiry_detail_url || "";
-          const enquiryId = payload.enquiry_id || "";
-          resultEl.textContent = "Created: ";
-          if (sheetUrl) {
-            const link = document.createElement("a");
-            link.href = sheetUrl;
-            link.target = "_blank";
-            link.rel = "noopener";
-            link.textContent = title;
-            resultEl.appendChild(link);
-            try {
-              // Open the sheet immediately for convenience
-              link.click();
-            } catch (e) {
-              // Ignore popup blockers; the link remains clickable.
-            }
-          } else {
-            resultEl.appendChild(document.createTextNode(title));
-          }
-          if (enquiryUrl && enquiryId) {
-            const separator = document.createTextNode(" • Enquiry ");
-            resultEl.appendChild(separator);
-            const enqLink = document.createElement("a");
-            const targetUrl = sheetUrl || enquiryUrl;
-            enqLink.href = targetUrl;
-            if (sheetUrl) {
-              enqLink.target = "_blank";
-              enqLink.rel = "noopener";
-            }
-            enqLink.textContent = `#${enquiryId}`;
-            resultEl.appendChild(enqLink);
-            if (sheetUrl && enquiryUrl) {
-              const appLink = document.createElement("a");
-              appLink.href = enquiryUrl;
-              appLink.textContent = " (open in app)";
-              appLink.classList.add("ms-1");
-              resultEl.appendChild(appLink);
-            }
-          }
-        }
-        form.reset();
-        // Refresh the board so the new enquiry appears in the live list
-          setTimeout(() => window.location.reload(), 400);
-      } catch (err) {
-        if (resultEl) {
-          resultEl.classList.add("text-danger");
-          resultEl.textContent = err?.message || "Unable to create sheet.";
-        }
-      } finally {
-        toggleButtonState();
-      }
-    });
-  })();
 
   (function () {
     const forms = document.querySelectorAll('[data-search-form]');

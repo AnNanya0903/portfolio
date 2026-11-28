@@ -45,19 +45,36 @@ def board(request: HttpRequest) -> HttpResponse:
     context = {
         "rows": rows,
         "summary": lost.summarise(leads),
-        "accepted_count": MarketingLead.objects.filter(accepted_at__isnull=False).count(),
+        "won_back_count": (MarketingLead.objects.filter(accepted_at__isnull=False)
+                           | MarketingLead.objects.exclude(revived_enquiry_id="")).distinct().count(),
         "filtered_count": len(rows),
         "chosen": chosen,
         "has_filters": any(chosen.values()),
         "kind_choices": list(lost.SOURCE_BADGES.items()),
         "stage_choices": list(lost.STAGE_LABELS.items()),
+        "progress_choices": list(lost.PROGRESS_LABELS.items()),
         "reason_choices": list(MarketingLead.REASON_CHOICES),
         "fin_years": sorted({row["fin_year"] for row in leads if row["fin_year"]}, reverse=True),
         "load_error": error,
         # Same filters for a new campaign (its audience is always "Ready to contact").
-        "campaign_query": urlencode({k: v for k, v in chosen.items() if v and k != "stage"}),
+        "campaign_query": urlencode({k: v for k, v in chosen.items() if v and k not in ("stage", "progress")}),
     }
     return render(request, "marketing/board.html", context)
+
+
+@login_required
+def won_back(request: HttpRequest) -> HttpResponse:
+    """Customers who came back after marketing's follow-up or negotiation."""
+    try:
+        enquiries = services.list_enquiries(_api_root(), request=request)
+        error = ""
+    except services.EnquiryServiceError as exc:
+        logger.warning("Marketing: could not load enquiries: %s", exc)
+        enquiries, error = [], f"Could not load enquiries from the enquiry service: {exc}"
+    rows = lost.won_back_rows(enquiries)
+    return render(request, "marketing/won_back.html", {"rows": rows, "load_error": error,
+                                                        "revived_count": sum(r["how"] == lost.WON_REVIVED for r in rows),
+                                                        "accepted_count": sum(r["how"] == lost.WON_ACCEPTED for r in rows)})
 
 
 def _find_lead(request: HttpRequest, enquiry_id: str) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:

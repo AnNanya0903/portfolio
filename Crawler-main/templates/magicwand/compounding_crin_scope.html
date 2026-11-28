@@ -1,0 +1,12 @@
+<div class="d-flex flex-wrap align-items-center gap-2 small mb-2" data-crin-scope>
+  {% if show_all_open %}
+    <span class="text-muted">Showing every open CRIN.</span>
+    <a href="?date={{ plan.plan_date|date:'Y-m-d' }}">Show recent only</a>
+  {% else %}
+    <span class="text-muted">Showing CRINs from {{ since|date:"d M" }} onward.</span>
+    {% if hidden_older %}
+      <span class="text-muted" data-hidden-older="{{ hidden_older }}">{{ hidden_older }} older open CRIN{{ hidden_older|pluralize }} hidden.</span>
+      <a href="?date={{ plan.plan_date|date:'Y-m-d' }}&amp;range=all">Show all open</a>
+    {% endif %}
+  {% endif %}
+</div>

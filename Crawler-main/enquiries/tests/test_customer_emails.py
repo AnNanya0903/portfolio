@@ -100,7 +100,7 @@ class BoardCustomerEmailsTests(TestCase):
 
     def test_create_forms_have_a_second_email_box(self):
         page = self.client.get(reverse("enquiries:board"))
-        self.assertContains(page, 'placeholder="Customer email 2 (optional, CC)"', count=2)
+        self.assertContains(page, 'placeholder="Customer email 2 (optional, CC)"', count=1)  # only the PDF RFQ form now
 
 
 @override_settings(**AUTO_ON)

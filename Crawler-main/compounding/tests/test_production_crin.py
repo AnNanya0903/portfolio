@@ -220,3 +220,60 @@ class ProductionCRINTests(TestCase):
         response = self.client.get(reverse("compounding:production"))
 
         self.assertEqual(response.context["groups"][0]["number"], "CRIN-2026-100")
+
+
+class SharedCRINNumberTests(ProductionCRINTests):
+    """A multi-compound CRIN shows one number, without the internal -1, -2, -3."""
+
+    def test_display_number_hides_the_suffix_only_for_multi_compound(self):
+        self._raise([("7020", "100"), ("6820", "200"), ("EPX 60", "300")])
+        header = CompoundingCRINRequest.objects.get()
+        items = list(header.items.order_by("crin_number"))
+
+        self.assertEqual([item.crin_number for item in items], [f"{header.request_number}-{n}" for n in (1, 2, 3)])
+        self.assertEqual({item.display_number for item in items}, {header.request_number})
+        single = CompoundingCRIN.objects.create(plan=self.sheet_plan, crin_number="CRIN-2026-900", compound_code="7020", quantity=10, created_by=self.user)
+        self.assertEqual(single.display_number, "CRIN-2026-900")
+
+    def test_screens_show_the_shared_number_not_the_suffix(self):
+        self._raise([("7020", "100"), ("6820", "200"), ("EPX 60", "300")])
+        header = CompoundingCRINRequest.objects.get()
+        suffixed = [f"{header.request_number}-{n}" for n in (1, 2, 3)]
+        for name, params in (
+            ("production", {}),
+            ("planning", {"date": self.sheet_plan.plan_date.isoformat()}),
+            ("fb_planning", {"date": self.sheet_plan.plan_date.isoformat()}),
+            ("fb_issue", {}),
+            ("work_queue", {}),
+        ):
+            response = self.client.get(reverse(f"compounding:{name}"), params)
+            self.assertEqual(response.status_code, 200, name)
+            for number in suffixed:
+                self.assertNotContains(response, f">{number}<", msg_prefix=name)
+            self.assertContains(response, header.request_number, msg_prefix=name)
+
+    def test_work_queue_search_accepts_either_number(self):
+        self._raise([("7020", "100"), ("6820", "200")])
+        header = CompoundingCRINRequest.objects.get()
+
+        response = self.client.get(reverse("compounding:work_queue"))
+
+        self.assertContains(response, f"{header.request_number}-1".lower())
+        for stage in response.context["queue"]["stages"]:
+            for item in stage["items"]:
+                self.assertEqual(item["crin_number"], header.request_number)
+
+    def test_messages_use_the_shared_number(self):
+        self._raise([("7020", "100"), ("6820", "200")])
+        header = CompoundingCRINRequest.objects.get()
+        crin = header.items.order_by("crin_number").first()
+
+        response = self.client.post(
+            reverse("compounding:delete_crin", args=[crin.id]),
+            data={"return_to": "planning"},
+            follow=True,
+        )
+
+        text = " ".join(str(message) for message in response.context["messages"])
+        self.assertIn(f"Deleted {header.request_number} (", text)
+        self.assertNotIn(f"{header.request_number}-1", text)

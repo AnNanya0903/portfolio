@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, time, timedelta, timezone as dt_timezone
 
 from django.conf import settings
@@ -206,6 +207,12 @@ class CompoundingCRIN(models.Model):
         super().save(*args, **kwargs)
 
     @property
+    def display_number(self) -> str:
+        """The number people see: a multi-compound CRIN shares one number, without -1, -2, -3."""
+        match = re.fullmatch(r"(CRIN-\d{4}-\d+)-\d+", self.crin_number or "")
+        return match.group(1) if match else self.crin_number
+
+    @property
     def order_quantity(self) -> int:
         return int(self.ordered_quantity if self.ordered_quantity is not None else self.quantity)
 
@@ -327,12 +334,39 @@ class CompoundingIoTRun(models.Model):
         (QUALITY_REJECTED, "Rejected"),
     ]
 
+    BATCH_MB = "mb"
+    BATCH_FB = "fb"
+    BATCH_TYPE_CHOICES = [
+        (BATCH_MB, "MB"),
+        (BATCH_FB, "FB"),
+    ]
+
+    REJECTION_REASON_CHOICES = [
+        ("scorch", "Scorch"),
+        ("poor_dispersion", "Poor dispersion"),
+        ("hardness", "Hardness off"),
+        ("weight", "Weight off"),
+        ("other", "Other"),
+    ]
+
     plan = models.ForeignKey(CompoundingPlan, on_delete=models.CASCADE, related_name="iot_runs")
     machine_id = models.CharField(max_length=64, db_index=True, default="")
     compound_code = models.CharField(max_length=64, db_index=True)
     started_at = models.DateTimeField()
-    ended_at = models.DateTimeField()
-    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, default=QUALITY_GOOD)
+    # Empty while a batch started with "Start batch" is still on the machine.
+    ended_at = models.DateTimeField(null=True, blank=True)
+    # Empty until the batch is ended and graded.
+    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, blank=True, default=QUALITY_GOOD)
+    batch_type = models.CharField(max_length=2, choices=BATCH_TYPE_CHOICES, blank=True, default="")
+    batch_weight_kg = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
+    crin = models.ForeignKey(
+        CompoundingCRIN,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="iot_runs",
+    )
+    rejection_reason = models.CharField(max_length=32, choices=REJECTION_REASON_CHOICES, blank=True, default="")
     notes = models.TextField(blank=True, default="")
 
     created_by = models.ForeignKey(
@@ -354,6 +388,208 @@ class CompoundingIoTRun(models.Model):
 
     def __str__(self) -> str:
         return f"{self.plan.plan_date}: {self.compound_code} ({self.machine_id or 'machine'})"
+
+
+class IoTSample(models.Model):
+    """One telemetry sample from a machine (~every 2 s), kept so any past day or batch can be replayed.
+
+    Only the named electrical and temperature values are stored; the raw register block stays in the IoT
+    bridge's own store and in its raw export.
+    """
+
+    machine_id = models.CharField(max_length=64)
+    ts_ms = models.BigIntegerField(help_text="Sample time, Unix epoch milliseconds")
+    avg_current = models.FloatField(null=True, blank=True)
+    t_watt = models.FloatField(null=True, blank=True)
+    t_kwh_import = models.FloatField(null=True, blank=True)
+    r_irms = models.FloatField(null=True, blank=True)
+    y_irms = models.FloatField(null=True, blank=True)
+    b_irms = models.FloatField(null=True, blank=True)
+    avg_pf = models.FloatField(null=True, blank=True)
+    a_vrms_ll = models.FloatField(null=True, blank=True)
+    frequency = models.FloatField(null=True, blank=True)
+    ch1_temperature = models.FloatField(null=True, blank=True)
+    ch2_temperature = models.FloatField(null=True, blank=True)
+
+    VALUE_FIELDS = (
+        "avg_current",
+        "t_watt",
+        "t_kwh_import",
+        "r_irms",
+        "y_irms",
+        "b_irms",
+        "avg_pf",
+        "a_vrms_ll",
+        "frequency",
+        "ch1_temperature",
+        "ch2_temperature",
+    )
+
+    class Meta:
+        ordering = ["machine_id", "ts_ms"]
+        constraints = [
+            # Also the (machine_id, ts) index every range read uses; it makes re-syncs idempotent.
+            models.UniqueConstraint(fields=["machine_id", "ts_ms"], name="uniq_iot_sample_per_machine_ts"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.machine_id} @ {self.ts_ms}"
+
+
+
+class StandardCurve(models.Model):
+    """A compound's standard current graph, built from its normal batches (versioned).
+
+    `points`: [{"t": seconds after load, "median", "lower", "upper"}] every `step_s` seconds, the band being the
+    5th-95th percentile. `stats`: {"duration_s"|"energy_kwh"|"peak_current"|"time_to_peak_s"|"steady_current":
+    {"median", "low", "high"}} - the standard value and its allowed range.
+    """
+
+    compound_code = models.CharField(max_length=64, db_index=True)
+    version = models.PositiveIntegerField()
+    built_from_n = models.PositiveIntegerField()
+    source_batch_ids = models.JSONField(default=list, blank=True)
+    step_s = models.PositiveIntegerField(default=10)
+    points = models.JSONField(default=list)
+    stats = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["compound_code", "-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["compound_code", "version"], name="uniq_standard_version_per_compound"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.compound_code} v{self.version}"
+
+
+class DetectedBatch(models.Model):
+    """A batch the machine ran, found in the current trace (compounding.iot_segments).
+
+    Kept apart from the operator's log (CompoundingIoTRun): the two are compared in the reconciliation
+    table, and the log is only changed when a supervisor accepts the machine's times.
+    """
+
+    machine_id = models.CharField(max_length=64)
+    start_at = models.DateTimeField()
+    # The start of the next segment; for a batch still on the machine, the latest sample so far.
+    end_at = models.DateTimeField()
+    is_open = models.BooleanField(default=False, help_text="Still running when last detected")
+    load_at = models.DateTimeField(null=True, blank=True, help_text="First sample above the load threshold")
+    load_threshold_a = models.FloatField(null=True, blank=True)
+    duration_s = models.PositiveIntegerField(default=0)
+    energy_kwh = models.FloatField(null=True, blank=True)
+    avg_current = models.FloatField(null=True, blank=True)
+    peak_current = models.FloatField(null=True, blank=True)
+    time_to_peak_s = models.PositiveIntegerField(null=True, blank=True)
+    # avg_current every curve_step_s seconds from load_at (or start_at when no load point was found).
+    curve = models.JSONField(default=list, blank=True)
+    curve_step_s = models.PositiveIntegerField(default=10)
+    # Mean current over 30-60 % of the batch, and how many times the curve dips below 50 A after loading.
+    steady_current = models.FloatField(null=True, blank=True)
+    dips = models.PositiveIntegerField(default=0)
+
+    # The operator's entry with the largest time overlap gives the compound; none means "Not logged".
+    log_run = models.ForeignKey(
+        "CompoundingIoTRun", on_delete=models.SET_NULL, null=True, blank=True, related_name="detected_batches"
+    )
+    log_overlap_s = models.PositiveIntegerField(null=True, blank=True)
+    compound_code = models.CharField(max_length=64, blank=True, default="", db_index=True)
+
+    # An admin can keep a batch out of its compound's standard.
+    excluded = models.BooleanField(default=False)
+    excluded_reason = models.CharField(max_length=200, blank=True, default="")
+    excluded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+
+    # Comparison with the compound's standard.
+    RESULT_OK = "ok"
+    RESULT_VARIATION = "variation"
+    RESULT_MAJOR = "major"
+    RESULT_NO_STANDARD = "no_standard"
+    RESULT_CHOICES = [
+        (RESULT_OK, "OK"),
+        (RESULT_VARIATION, "Variation"),
+        (RESULT_MAJOR, "Major variation"),
+        (RESULT_NO_STANDARD, "No standard"),
+    ]
+    standard = models.ForeignKey(
+        StandardCurve, on_delete=models.SET_NULL, null=True, blank=True, related_name="batches"
+    )
+    match_pct = models.FloatField(null=True, blank=True)
+    duration_dev_s = models.IntegerField(null=True, blank=True)
+    duration_dev_pct = models.FloatField(null=True, blank=True)
+    energy_dev_pct = models.FloatField(null=True, blank=True)
+    peak_dev_a = models.FloatField(null=True, blank=True)
+    peak_time_dev_s = models.IntegerField(null=True, blank=True)
+    steady_dev_a = models.FloatField(null=True, blank=True)
+    result = models.CharField(max_length=12, choices=RESULT_CHOICES, blank=True, default="", db_index=True)
+    reasons = models.JSONField(default=list, blank=True)
+    # [[start_s, end_s], ...] after the load point where the curve was outside the band.
+    out_of_band = models.JSONField(default=list, blank=True)
+    # Another compound whose standard fits much better ("check compound selection").
+    looks_like = models.CharField(max_length=64, blank=True, default="")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    NOT_LOGGED = "Not logged"
+
+    class Meta:
+        ordering = ["machine_id", "start_at"]
+        indexes = [models.Index(fields=["machine_id", "start_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.machine_id} batch @ {self.start_at:%Y-%m-%d %H:%M}"
+
+    @property
+    def compound_label(self) -> str:
+        return self.compound_code or self.NOT_LOGGED
+
+    @property
+    def batch_id(self) -> str:
+        return f"D{self.pk:06d}" if self.pk else ""
+
+
+class MachineSegment(models.Model):
+    """One stretch of a machine's day in a single state; consecutive segments cover the day without gaps."""
+
+    STATE_OFF = "off"
+    STATE_IDLE = "idle"
+    STATE_BATCH = "batch"
+    STATE_NO_DATA = "no_data"
+    STATE_CHOICES = [
+        (STATE_OFF, "Off"),
+        (STATE_IDLE, "Idle"),
+        (STATE_BATCH, "Batch"),
+        (STATE_NO_DATA, "No data"),
+    ]
+
+    machine_id = models.CharField(max_length=64)
+    state = models.CharField(max_length=8, choices=STATE_CHOICES)
+    start_at = models.DateTimeField()
+    end_at = models.DateTimeField()
+    is_open = models.BooleanField(default=False)
+    detected_batch = models.ForeignKey(
+        DetectedBatch, on_delete=models.SET_NULL, null=True, blank=True, related_name="segments"
+    )
+
+    class Meta:
+        ordering = ["machine_id", "start_at"]
+        indexes = [models.Index(fields=["machine_id", "start_at"])]
+
+    def __str__(self) -> str:
+        return f"{self.machine_id} {self.state} {self.start_at:%H:%M}-{self.end_at:%H:%M}"
+
+    @property
+    def duration_s(self) -> int:
+        return max(int((self.end_at - self.start_at).total_seconds()), 0)
 
 
 class CompoundingStockEntry(models.Model):

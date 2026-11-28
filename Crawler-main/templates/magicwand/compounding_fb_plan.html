@@ -22,6 +22,8 @@
 
   {% include "magicwand/compounding_mb_alerts.html" %}
 
+  {% include "magicwand/compounding_crin_scope.html" %}
+
   <div class="card shadow-sm">
     <div class="card-body">
       <div class="table-responsive">
@@ -42,7 +44,7 @@
           <tbody>
             {% for crin in crins %}
               <tr>
-                <td class="fw-semibold">{{ crin.crin_number }}</td>
+                <td><span class="fw-semibold">{{ crin.crin_number }}</span>{% if crin.is_older %}<div class="small text-muted">Raised {{ crin.plan_date|date:"d M" }}</div>{% endif %}</td>
                 <td>{{ crin.compound_code|default:"—" }}</td>
                 <td class="text-center">{{ crin.quantity }}</td>
                 <td class="text-center">
@@ -75,6 +77,22 @@
                     <span class="badge text-bg-secondary">Done</span>
                   {% elif crin.mb_alert %}
                     <span class="badge text-bg-danger me-1">Waiting for MB</span>
+                    {% if crin.partial_batches %}
+                      <form method="post" action="{% url 'compounding:send_to_board' crin.id %}" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="plan_date" value="{{ plan.plan_date|date:'Y-m-d' }}">
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <input type="hidden" name="partial" value="1">
+                        <div class="btn-group btn-group-sm" role="group" aria-label="Send what MB stock covers">
+                          <select class="form-select form-select-sm" name="shift" aria-label="Shift" style="width: 110px;">
+                            <option value="1" selected>1st shift</option>
+                            <option value="2">2nd shift</option>
+                            <option value="3">3rd shift</option>
+                          </select>
+                          <button class="btn btn-outline-primary" type="submit">Send {{ crin.partial_batches }} now</button>
+                        </div>
+                      </form>
+                    {% endif %}
                     <a class="btn btn-sm btn-danger js-mb-first" data-mb-alert="{{ crin.mb_alert }}" href="{% url 'compounding:mb_planning' %}?date={{ plan.plan_date|date:'Y-m-d' }}&amp;compound={{ crin.compound_code|urlencode }}">Plan MB first</a>
                   {% else %}
                     <form method="post" action="{% url 'compounding:send_to_board' crin.id %}" class="d-inline">

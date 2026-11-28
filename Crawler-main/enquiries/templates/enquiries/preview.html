@@ -237,6 +237,24 @@
         {% if share_error == 'pdf' %}
           <div class="alert alert-danger" role="alert">Please upload a valid PDF.</div>
         {% endif %}
+        {% if share_quotations %}
+        {# The enquiry has quotations in the portal: the link always shows the latest APPROVED version. #}
+        <div class="mb-3 p-3 border rounded bg-light" data-share-quotation-choice>
+          <div class="form-label fw-semibold"><i class="bi bi-file-earmark-pdf me-1"></i>Quotation to share</div>
+          {% for item in share_quotations %}
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="share_quotation" id="shareQt{{ item.quotation.pk }}" value="{{ item.quotation.pk }}"
+                     {% if not item.version %}disabled{% elif share_quotations|length == 1 or item.quotation.pk|stringformat:"s" == selected_share_quotation %}checked{% endif %} required>
+              <label class="form-check-label" for="shareQt{{ item.quotation.pk }}">
+                <strong>{{ item.quotation.number }}</strong> · {{ item.quotation.title }}
+                {% if item.version %}<span class="text-success small">· latest approved version v{{ item.version.number }}{% if item.version.number > 1 %} (revised){% endif %}</span>
+                {% else %}<span class="text-danger small" data-share-blocked>· Waiting for management approval – do not send an older version.</span>{% endif %}
+              </label>
+            </div>
+          {% endfor %}
+          <div class="form-text">The customer sees the approved PDF of the quotation you choose. Links to older versions stop working when a newer version is approved.</div>
+        </div>
+        {% else %}
         <div class="mb-3 p-3 border rounded bg-light" data-share-pdf-upload>
           <label class="form-label fw-semibold" for="sharePdfField">
             <i class="bi bi-file-earmark-pdf me-1"></i>Quotation PDF{% if requires_pdf_upload %} <span class="text-danger">*</span>{% endif %}
@@ -250,6 +268,7 @@
             {% endif %}
           </div>
         </div>
+        {% endif %}
         {% if share_error == 'password' %}
           <div class="alert alert-danger" role="alert">Password is required.</div>
         {% endif %}
@@ -269,7 +288,7 @@
       </div>
 
       <div class="d-flex gap-2 mt-3">
-        <button type="submit" class="btn btn-primary">
+        <button type="submit" class="btn btn-primary"{% if share_quotations and not share_quotations_sendable %} disabled title="Waiting for management approval – do not send an older version."{% endif %}>
           <i class="bi bi-link-45deg me-1"></i>Generate Link
         </button>
         <a class="btn btn-outline-secondary" href="{% url 'enquiries:detail' enquiry.enquiry_id %}">Cancel</a>

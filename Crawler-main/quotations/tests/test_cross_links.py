@@ -26,11 +26,11 @@ class CrossLinkTests(TestCase):
                                            title="Gasket quote")
         self.q2 = Quotation.objects.create(customer_name="Other Ltd", enquiry_id="ENQ-8", title="Other quote")
 
-    def test_the_menu_lists_quotations_above_enquiries(self):
+    def test_the_menu_lists_enquiries_kyc_marketing_then_quotations(self):
         html = self.client.get(reverse("quotations:list")).content.decode()
-        self.assertLess(html.index('href="/quotations/"'), html.index('href="/kyc/"'))
-        self.assertLess(html.index('href="/kyc/"'), html.index('href="/enquiries/"'))
-        self.assertLess(html.index('href="/enquiries/"'), html.index('href="/marketing/"'))
+        self.assertLess(html.index('href="/enquiries/"'), html.index('href="/kyc/"'))
+        self.assertLess(html.index('href="/kyc/"'), html.index('href="/marketing/"'))
+        self.assertLess(html.index('href="/marketing/"'), html.index('href="/quotations/"'))
 
     def test_a_quotation_links_to_its_enquiry_and_its_kyc_customer(self):
         page = self.client.get(reverse("quotations:detail", args=[self.q1.pk]))
@@ -47,7 +47,7 @@ class CrossLinkTests(TestCase):
         page = self.client.get(reverse("quotations:detail", args=[self.q1.pk]))
         self.assertNotContains(page, f'href="{reverse("enquiries:detail", args=["ENQ-7"])}"')
         self.assertNotContains(page, f'href="{reverse("kyc:detail", args=[self.customer.pk])}"')
-        self.assertContains(page, "Enquiry #ENQ-7")
+        self.assertContains(page, '<span class="qt-code">ENQ-7</span>')
 
     def test_the_kyc_customer_page_lists_their_quotations(self):
         page = self.client.get(reverse("kyc:detail", args=[self.customer.pk]))
@@ -77,9 +77,12 @@ class CrossLinkTests(TestCase):
         html = page.content.decode()
         rows = {e["enquiry_id"]: e for e in page.context["enquiries"]}
         self.assertEqual((rows["ENQ-7"]["quotation_count"], rows["ENQ-9"]["quotation_count"]), (1, 0))
-        self.assertIn("Quotations (1)", html)
-        self.assertIn(reverse("quotations:list") + "?q=ENQ-7", html)
+        # Each linked quotation, with its version and status, links to the quotation; another one can be added.
+        self.assertIn(f'href="{reverse("quotations:detail", args=[self.q1.pk])}"', html)
+        self.assertIn(f"{self.q1.number} v0", html)
+        self.assertNotIn(self.q2.number, html)
         self.assertIn(reverse("quotations:new") + "?enquiry=ENQ-9", html)
+        self.assertIn(reverse("quotations:new") + "?enquiry=ENQ-7", html)
 
     def test_new_quotation_is_prefilled_from_the_link(self):
         page = self.client.get(reverse("quotations:new") + "?enquiry=ENQ-9&customer=AV-0001&customer_name=New+Co")

@@ -20,7 +20,7 @@ from django.db.models import prefetch_related_objects
 from django.utils import timezone
 
 from dashboard.follow_up_templates import MARKETING_STAGE, PAYMENT_STAGE, follow_up_count
-from enquiries.models import CustomerStatusEmail, EnquiryContact, EnquiryFollowup, FollowUpSent
+from enquiries.models import CustomerStatusEmail, EnquiryContact, EnquiryFollowup, EnquiryStatusLog, FollowUpSent
 from kyc import links as kyc_links
 from kyc.models import CustomerContact
 
@@ -34,6 +34,10 @@ NO_RESPONSE = "no_response"
 KIND_LABELS = {REJECTED: "Rejected", NO_RESPONSE: "No response"}
 # The badge on the board and lead detail.
 SOURCE_BADGES = {REJECTED: "Rejected", NO_RESPONSE: "No response after 5 reminders"}
+# Sales rejected the enquiry with the reason "No response" (they followed up themselves, in person or by phone):
+# it is a No response lead, not a Rejected one.
+SALES_NO_RESPONSE_REASON = "No response"
+SALES_NO_RESPONSE_BADGE = "No response after sales follow-up"
 
 STAGE_READY = "ready"
 STAGE_DO_NOT_CONTACT = "do_not_contact"
@@ -42,6 +46,18 @@ STAGE_LABELS = {
     STAGE_READY: "Ready to contact",
     STAGE_DO_NOT_CONTACT: "Do not contact",
     STAGE_REVIVED: "Revived",
+}
+
+# Is marketing's work on a lead finished? Shown as its own column so done and not-done never look alike.
+PROGRESS_DONE = "done"
+PROGRESS_RUNNING = "running"
+PROGRESS_ACTION = "action"
+PROGRESS_LOST = "lost"  # Do not contact: the order is lost for good, not "completed"
+PROGRESS_LABELS = {
+    PROGRESS_ACTION: "Needs action",
+    PROGRESS_RUNNING: "In progress",
+    PROGRESS_DONE: "Completed",
+    PROGRESS_LOST: "Lost order",
 }
 
 REASON_LABELS = dict(MarketingLead.REASON_CHOICES)
@@ -140,6 +156,37 @@ def auto_follow_up_status(kind: str, lead: Optional[MarketingLead], cycle, repli
             "next_on": cycle.next_on if state == "running" else None}
 
 
+def lead_progress(stage: str, revived_enquiry_id: str, flag: str, auto: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Whether marketing is finished with a lead: {"key": done/running/action/lost, "label", "detail"}.
+
+    Lost order: marked Do not contact.
+    Completed: won back (revived), or every automatic follow-up and the closing email went out.
+    In progress: the automatic follow-ups are still being sent; nothing to do yet.
+    Needs action: the customer replied, the email failed, or nobody has contacted the customer yet.
+    """
+    def out(key: str, detail: str) -> Dict[str, str]:
+        return {"key": key, "label": PROGRESS_LABELS[key], "detail": detail}
+
+    if stage == STAGE_REVIVED:
+        return out(PROGRESS_DONE, f"Won back: new enquiry {revived_enquiry_id}" if revived_enquiry_id else "Won back")
+    if stage == STAGE_DO_NOT_CONTACT:
+        return out(PROGRESS_LOST, "Do not contact")
+    state = (auto or {}).get("state")
+    if state == "replied" or flag == MarketingLead.FLAG_REPLIED:
+        return out(PROGRESS_ACTION, "Customer replied: call or email them")
+    if flag == MarketingLead.FLAG_BOUNCED:
+        return out(PROGRESS_ACTION, "Email bounced: fix the customer email")
+    if flag == MarketingLead.FLAG_THREAD_NOT_FOUND:
+        return out(PROGRESS_ACTION, "Gmail thread not found: check the customer email")
+    if state == "closed":
+        return out(PROGRESS_DONE, "All follow-ups sent, no reply")
+    if state == "stopped":
+        return out(PROGRESS_DONE, auto["label"].replace("Stopped: ", "").capitalize())
+    if state == "running":
+        return out(PROGRESS_RUNNING, f"Follow-ups: {auto['label']}")
+    return out(PROGRESS_ACTION, "Not contacted yet")
+
+
 def is_stop_reply(text: Any) -> bool:
     """True when a customer's reply asks us to stop: it starts with the word STOP (any case)."""
     return bool(re.match(r"^\W*stop(?![a-z])", str(text or ""), re.I))
@@ -233,6 +280,15 @@ def _status_email_dates(enquiry_ids: List[str], kind: str, sent_only: bool) -> D
     return dates
 
 
+def _rejected_for_no_response(enquiry_ids: List[str]) -> set:
+    """Enquiries whose latest rejection was given the reason "No response" by sales."""
+    latest: Dict[str, str] = {}
+    for enquiry_id, reason in (EnquiryStatusLog.objects.filter(enquiry_id__in=enquiry_ids, new_status__iexact="rejected")
+                               .order_by("created_at", "id").values_list("enquiry_id", "lost_reason")):
+        latest[enquiry_id] = reason  # latest wins
+    return {eid for eid, reason in latest.items() if (reason or "").strip().lower() == SALES_NO_RESPONSE_REASON.lower()}
+
+
 def _price_text(enquiry: Mapping[str, Any]) -> str:
     currency = str(enquiry.get("currency") or "").strip()
     for key, unit in (("final_price_per_piece", "pc"), ("final_price_per_meter", "m"),
@@ -259,6 +315,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
     follow_ups = _follow_up_stats(ids)
     closing_sent = _status_email_dates(ids, CustomerStatusEmail.KIND_CLOSING, sent_only=True)
     rejection_seen = _status_email_dates(ids, CustomerStatusEmail.KIND_REJECTION, sent_only=False)
+    sales_no_response = _rejected_for_no_response(ids)
     no_response_closed = dict(EnquiryContact.objects.filter(
         enquiry_id__in=ids, close_reason=EnquiryContact.CLOSE_NO_RESPONSE).exclude(moved_to_marketing_at=None)
         .values_list("enquiry_id", "moved_to_marketing_at"))
@@ -272,7 +329,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         kind = None
         lost_at = None
         if _status(enquiry) == "rejected":
-            kind = REJECTED
+            kind = NO_RESPONSE if enquiry_id in sales_no_response else REJECTED
             lost_at = rejection_seen.get(enquiry_id)
         elif enquiry_id in no_response_closed:
             kind = NO_RESPONSE
@@ -286,7 +343,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             lost_at = stats["last"] + timedelta(days=silent_days)
         if kind is None:
             continue
-        found[enquiry_id] = {"enquiry": enquiry, "kind": kind, "lost_at": lost_at, "follow_ups": stats}
+        badge = SALES_NO_RESPONSE_BADGE if enquiry_id in sales_no_response and kind == NO_RESPONSE else SOURCE_BADGES[kind]
+        found[enquiry_id] = {"enquiry": enquiry, "kind": kind, "lost_at": lost_at, "follow_ups": stats, "badge": badge}
 
     if not found:
         return []
@@ -343,6 +401,8 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
         if kyc_customer is not None and who["source"] in ("", "email"):
             who = {"name": kyc_customer.name, "source": "kyc", "greeting": kyc_customer.name}
 
+        auto = auto_follow_up_status(item["kind"], lead, mk_cycles.get(enquiry_id), enquiry_id in replied_ids)
+        progress = lead_progress(stage, lead.revived_enquiry_id if lead else "", lead.flag if lead else "", auto)
         leads.append({
             "enquiry_id": enquiry_id,
             "customer_name": who["name"],
@@ -357,7 +417,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "other_emails": [a for a in others.get(enquiry_id, []) if a != emails.get(enquiry_id, "").lower()],
             "kind": item["kind"],
             "kind_label": KIND_LABELS[item["kind"]],
-            "source_badge": SOURCE_BADGES[item["kind"]],
+            "source_badge": item["badge"],
             "flag": lead.flag if lead else "",
             "flag_label": lead.get_flag_display() if lead and lead.flag else "",
             "reason_key": reason_key,
@@ -376,8 +436,10 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
             "stage_label": STAGE_LABELS[stage],
             "revived_enquiry_id": lead.revived_enquiry_id if lead else "",
             "lead": lead,
-            "auto_follow_up": auto_follow_up_status(item["kind"], lead, mk_cycles.get(enquiry_id),
-                                                    enquiry_id in replied_ids),
+            "auto_follow_up": auto,
+            "progress": progress["key"],
+            "progress_label": progress["label"],
+            "progress_detail": progress["detail"],
             "kyc_customer": kyc_customer,
             "kyc_code": kyc_customer.code if kyc_customer is not None else "",
         })
@@ -385,7 +447,7 @@ def build_lost_leads(enquiries: Iterable[Mapping[str, Any]], today: Optional[dat
     return leads
 
 
-FILTER_KEYS = ("q", "kind", "reason", "stage", "fin_year")
+FILTER_KEYS = ("q", "kind", "reason", "stage", "progress", "fin_year")
 
 
 def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
@@ -395,12 +457,15 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
         "kind": (params.get("kind") or "").strip(),
         "reason": (params.get("reason") or "").strip(),
         "stage": (params.get("stage") or "").strip(),
+        "progress": (params.get("progress") or "").strip(),
         "fin_year": (params.get("fin_year") or "").strip(),
     }
     if chosen["kind"] not in KIND_LABELS:
         chosen["kind"] = ""
     if chosen["stage"] not in STAGE_LABELS:
         chosen["stage"] = ""
+    if chosen["progress"] not in PROGRESS_LABELS:
+        chosen["progress"] = ""
     if chosen["reason"] not in REASON_LABELS and chosen["reason"] != "none":
         chosen["reason"] = ""
 
@@ -409,7 +474,13 @@ def filter_leads(leads: List[Dict[str, Any]], params) -> tuple:
     for row in leads:
         if chosen["kind"] and row["kind"] != chosen["kind"]:
             continue
+        # Do not contact customers belong only under Do not contact, never under Rejected / No response
+        # (unless that stage is asked for together with the lead source).
+        if chosen["kind"] and row["stage"] == STAGE_DO_NOT_CONTACT and chosen["stage"] != STAGE_DO_NOT_CONTACT:
+            continue
         if chosen["stage"] and row["stage"] != chosen["stage"]:
+            continue
+        if chosen["progress"] and row["progress"] != chosen["progress"]:
             continue
         if chosen["reason"] == "none" and row["reason_key"]:
             continue
@@ -435,11 +506,55 @@ def summarise(leads: List[Dict[str, Any]]) -> Dict[str, Any]:
         by_reason[label] = by_reason.get(label, 0) + 1
     return {
         "total": len(leads),
-        "rejected": sum(1 for r in leads if r["kind"] == REJECTED),
-        "no_response": sum(1 for r in leads if r["kind"] == NO_RESPONSE),
+        # Do not contact customers are counted only in the Do not contact card.
+        "rejected": sum(1 for r in leads if r["kind"] == REJECTED and r["stage"] != STAGE_DO_NOT_CONTACT),
+        "no_response": sum(1 for r in leads if r["kind"] == NO_RESPONSE and r["stage"] != STAGE_DO_NOT_CONTACT),
         "ready": sum(1 for r in leads if r["stage"] == STAGE_READY),
         "revived": sum(1 for r in leads if r["stage"] == STAGE_REVIVED),
         # Same rule as the "Do not contact" stage filter, so the card and the filtered list always agree.
         "do_not_contact": sum(1 for r in leads if r["stage"] == STAGE_DO_NOT_CONTACT),
+        "done": sum(1 for r in leads if r["progress"] == PROGRESS_DONE),
+        "running": sum(1 for r in leads if r["progress"] == PROGRESS_RUNNING),
+        "action": sum(1 for r in leads if r["progress"] == PROGRESS_ACTION),
+        "lost": sum(1 for r in leads if r["progress"] == PROGRESS_LOST),
         "by_reason": sorted(by_reason.items(), key=lambda kv: (-kv[1], kv[0])),
     }
+
+
+WON_ACCEPTED = "accepted"
+WON_REVIVED = "revived"
+
+
+def won_back_rows(enquiries: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Customers marketing won back, newest first: the lost enquiry set back to Accepted, or revived as a new
+    enquiry for sales. `enquiries` is every enquiry (any status), to show names and where each one is now."""
+    by_id = {str(e.get("enquiry_id")): e for e in enquiries if e.get("enquiry_id")}
+    leads = (MarketingLead.objects.filter(accepted_at__isnull=False)
+             | MarketingLead.objects.exclude(revived_enquiry_id="")).select_related("accepted_by", "revived_by")
+    rows: List[Dict[str, Any]] = []
+    for lead in leads.distinct():
+        enquiry = by_id.get(lead.enquiry_id, {})
+        revived = bool(lead.revived_enquiry_id)
+        new_enquiry = by_id.get(lead.revived_enquiry_id, {}) if revived else {}
+        when = (lead.revived_at if revived else lead.accepted_at) or lead.updated_at
+        who = lead.revived_by if revived else lead.accepted_by
+        now = _status(new_enquiry if revived else enquiry)
+        name = customer_display(enquiry.get("customer_name"), enquiry.get("subject"), "", lead.customer_name)["name"]
+        reason_key = lead.lost_reason or ("no_reply" if lead.lead_source == NO_RESPONSE else "")
+        rows.append({
+            "enquiry_id": lead.enquiry_id,
+            "customer_name": name or new_enquiry.get("customer_name") or "",
+            "subject": enquiry.get("subject") or "",
+            "how": WON_REVIVED if revived else WON_ACCEPTED,
+            "how_label": f"New enquiry {lead.revived_enquiry_id}" if revived else "Same enquiry set to Accepted",
+            "new_enquiry_id": lead.revived_enquiry_id,
+            "lost_as": KIND_LABELS.get(lead.lead_source, ""),
+            "reason_label": REASON_LABELS.get(reason_key, "")
+            + (f": {lead.lost_reason_note}" if reason_key == "other" and lead.lost_reason_note else ""),
+            "price": _price_text(enquiry),
+            "won_on": _local_date(when),
+            "won_by": (who.get_full_name() or who.username) if who else "",
+            "status_now": now.capitalize() if now else "",
+        })
+    rows.sort(key=lambda r: (r["won_on"] or date.min, r["enquiry_id"]), reverse=True)
+    return rows

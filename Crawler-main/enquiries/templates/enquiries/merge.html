@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+
+{% block title %}Merge {{ enquiry_id }} - MagicWand 2.0{% endblock %}
+
+{% block auth_content %}
+<div class="page-header">
+  <div>
+    <a href="{% url 'enquiries:detail' enquiry_id %}" class="text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> {{ enquiry_id }}</a>
+    <h2 class="page-title">Merge duplicate enquiry {{ enquiry_id }}</h2>
+    <p class="page-subtitle">Everything of {{ enquiry_id }} moves to the enquiry you keep: its quotations and their tracker, the customer's email thread and email addresses. Then {{ enquiry_id }} is deleted.</p>
+  </div>
+</div>
+<form method="post" class="card border-0 shadow-sm p-4" style="max-width: 640px;" data-merge-form
+      onsubmit="return confirm('Merge {{ enquiry_id|escapejs }} into the enquiry you picked and delete {{ enquiry_id|escapejs }}? This cannot be undone.');">
+  {% csrf_token %}
+  {% if quotations %}
+    <p class="small mb-2">Quotations that will move:</p>
+    <ul class="small">{% for q in quotations %}<li><a href="{% url 'quotations:detail' q.pk %}">{{ q.number }}</a> – {{ q.title }}</li>{% endfor %}</ul>
+  {% else %}
+    <p class="small text-muted">No quotation is linked to {{ enquiry_id }}.</p>
+  {% endif %}
+  <label class="form-label small fw-semibold" for="mergeKeep">Enquiry to keep</label>
+  <input id="mergeKeep" name="keep" class="form-control form-control-sm" required autocomplete="off"
+         list="enquiryOptions" data-enquiry-picker="1" placeholder="Search ENQ number, customer or subject">
+  {% include 'quotations/_enquiry_picker.html' %}
+  <div class="d-flex gap-2 mt-3">
+    <button type="submit" class="btn btn-danger btn-sm">Merge and delete {{ enquiry_id }}</button>
+    <a class="btn btn-outline-secondary btn-sm" href="{% url 'enquiries:detail' enquiry_id %}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

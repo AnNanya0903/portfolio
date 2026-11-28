@@ -15,6 +15,11 @@ class ShareLink(models.Model):
     enq_no = models.CharField(max_length=64)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(null=True, blank=True)
+    # The approved quotation version (quotations.QuotationVersion id) this link shows; empty for links made
+    # before links were tied to versions. When a newer version is approved the link is revoked: it then only says
+    # the quotation was replaced.
+    quotation_version_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "enquiries_sharelink"
@@ -184,6 +189,23 @@ class EnquiryContact(models.Model):
     # The customer responded (reply in the thread, share-link answer, or a logged call / meeting): the
     # automatic quotation / PI sequence stopped for good.
     follow_up_responded_at = models.DateTimeField(null=True, blank=True)
+
+    # The customer's own email thread for this enquiry ("Link enquiry email" on the board), kept up to date after
+    # every email the portal sends in it, so the quotation, the proforma invoice and later emails all reply in
+    # the same thread. Contact addresses are customer_email and other_customer_emails above. Enquiries that came
+    # by phone, WhatsApp or a visit stay unlinked.
+    email_message_id = models.CharField(max_length=255, blank=True, default="")  # latest RFC Message-ID
+    email_references = models.TextField(blank=True, default="")  # References header of that message
+    email_subject = models.CharField(max_length=500, blank=True, default="")  # original subject, without "Re:"
+    gmail_thread_id = models.CharField(max_length=255, blank=True, default="")
+    graph_message_id = models.CharField(max_length=255, blank=True, default="")  # Microsoft Graph, later
+    graph_conversation_id = models.CharField(max_length=255, blank=True, default="")
+    email_linked_at = models.DateTimeField(null=True, blank=True)
+    email_linked_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+
+    @property
+    def has_email_thread(self) -> bool:
+        return bool(self.email_message_id or self.gmail_thread_id or self.graph_message_id)
 
     # Payment for an accepted order; when it is paid the order becomes converted. The amount, due date, paid-on
     # date and reference below are confidential: they are kept but no longer shown or asked for anywhere.

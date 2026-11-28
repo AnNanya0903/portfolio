@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -41,8 +42,8 @@ class WorkQueueTests(TestCase):
     def _crin(self, number="CRIN-1", quantity=1200, **extra):
         return CompoundingCRIN.objects.create(plan=self.plan, crin_number=number, compound_code="7020", quantity=quantity, created_by=self.user, **extra)
 
-    def _queue(self):
-        response = self.client.get(reverse("compounding:work_queue"))
+    def _queue(self, range_key="all"):
+        response = self.client.get(reverse("compounding:work_queue"), {"range": range_key})
         self.assertEqual(response.status_code, 200)
         return {stage["key"]: stage["items"] for stage in response.context["queue"]["stages"]}, response
 
@@ -165,3 +166,90 @@ class WorkQueueTests(TestCase):
         url = reverse("compounding:work_queue")
         for name, params in (("board", {}), ("planning", {"date": OLD_DAY}), ("display", {"date": OLD_DAY})):
             self.assertContains(self.client.get(reverse(f"compounding:{name}"), params), f'href="{url}"')
+
+
+class WorkQueueRecentTests(WorkQueueTests):
+    """The queue shows recent CRINs by default and keeps older ones one click away."""
+
+    def _today_plan(self):
+        plan = CompoundingPlan.objects.create(plan_date=compounding_business_date(), cjc_number=501, created_by=self.user)
+        CompoundingMasterSheet.objects.create(
+            plan=plan,
+            created_by=self.user,
+            headers=["Compound Code", "MB Weight", "Chemicals Weight", "MB & FB Total Weight", "MB Correct Stock Lev", "FB Correct Stock Lev"],
+            rows=[["7020", "100", "20", "120", "5000", "0"]],
+        )
+        return plan
+
+    def test_default_shows_only_today_and_counts_older(self):
+        old = self._crin("CRIN-OLD")
+        recent = CompoundingCRIN.objects.create(plan=self._today_plan(), crin_number="CRIN-NEW", compound_code="7020", quantity=1200, created_by=self.user)
+
+        queue, response = self._queue("today")
+
+        shown = [item["id"] for items in queue.values() for item in items]
+        self.assertEqual(shown, [recent.id])
+        self.assertNotIn(old.id, shown)
+        self.assertEqual(response.context["queue"]["hidden"], 1)
+        self.assertContains(response, "1 older open CRIN hidden")
+
+    def test_no_range_means_today(self):
+        self._crin("CRIN-OLD")
+
+        response = self.client.get(reverse("compounding:work_queue"))
+
+        self.assertEqual(response.context["range_key"], "today")
+        self.assertEqual(response.context["queue"]["total"], 0)
+        self.assertContains(response, "Nothing recent is open")
+
+    def test_week_and_all_ranges(self):
+        self._crin("CRIN-OLD")
+        recent_plan = CompoundingPlan.objects.create(
+            plan_date=compounding_business_date() - timedelta(days=3), cjc_number=502, created_by=self.user
+        )
+        CompoundingCRIN.objects.create(plan=recent_plan, crin_number="CRIN-3D", compound_code="7020", quantity=100, created_by=self.user)
+
+        week = self.client.get(reverse("compounding:work_queue"), {"range": "week"})
+        everything = self.client.get(reverse("compounding:work_queue"), {"range": "all"})
+
+        self.assertEqual(week.context["queue"]["total"], 1)
+        self.assertEqual(week.context["queue"]["hidden"], 1)
+        self.assertEqual(everything.context["queue"]["total"], 2)
+        self.assertEqual(everything.context["queue"]["hidden"], 0)
+
+    def test_unknown_range_falls_back_to_today(self):
+        response = self.client.get(reverse("compounding:work_queue"), {"range": "banana"})
+
+        self.assertEqual(response.context["range_key"], "today")
+
+    def test_older_crins_still_take_mb_first(self):
+        self._sheet("1000")
+        self._crin("CRIN-OLD")  # needs all 1000 MB
+        recent = CompoundingCRIN.objects.create(plan=self._today_plan(), crin_number="CRIN-NEW", compound_code="7020", quantity=1200, created_by=self.user)
+        CompoundingMasterSheet.objects.filter(plan=recent.plan).update(
+            rows=[["7020", "100", "20", "120", "1000", "0"]]
+        )
+
+        queue, _response = self._queue("today")
+
+        self.assertEqual([item["id"] for item in queue["mb"]], [recent.id])
+        self.assertEqual(queue["fb"], [])
+
+    def test_crin_on_todays_board_stays_visible(self):
+        self._sheet("5000")
+        old = self._crin("CRIN-OLD")
+        self.client.post(
+            reverse("compounding:send_to_board", args=[old.id]),
+            {"plan_date": OLD_DAY, "shift": "1"},
+        )
+        CompoundingLine.objects.filter(crin_request=old).update(plan=self._today_plan())
+
+        queue, _response = self._queue("today")
+
+        self.assertEqual([item["id"] for item in queue["board"]], [old.id])
+
+    def test_actions_return_to_the_same_range(self):
+        response = self.client.get(reverse("compounding:work_queue"), {"range": "week"})
+
+        self.assertEqual(response.context["back_url"], f"{reverse('compounding:work_queue')}?range=week")
+        self.assertContains(response, "?range=all")

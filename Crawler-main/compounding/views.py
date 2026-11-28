@@ -21,6 +21,7 @@ from django.http import JsonResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
 
@@ -132,6 +133,43 @@ def _iot_run_compound_options(plan: CompoundingPlan) -> List[Dict[str, str]]:
         seen.add(normalized)
         options.append({"value": normalized, "label": normalized})
     return options
+
+
+def _open_iot_batch(machine_id: str) -> Optional[CompoundingIoTRun]:
+    """The batch started with "Start batch" that has not been ended yet on this machine."""
+    return (
+        CompoundingIoTRun.objects.filter(machine_id=machine_id, ended_at__isnull=True)
+        .select_related("crin")
+        .order_by("-started_at", "-id")
+        .first()
+    )
+
+
+def _iot_batch_crin_options() -> List[Dict[str, str]]:
+    """Open CRINs an operator can tie a batch to."""
+    crins = CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN).order_by("crin_number")
+    return [
+        {
+            "value": str(crin.pk),
+            "label": f"{crin.display_number} · {crin.compound_code}" if crin.compound_code else crin.display_number,
+            "compound_code": crin.compound_code or "",
+        }
+        for crin in crins
+    ]
+
+
+def _parse_batch_weight(value: str) -> tuple[Optional[Decimal], bool]:
+    """Returns (weight, ok). A blank value is fine; a bad or non-positive one is not."""
+    raw = (value or "").strip()
+    if not raw:
+        return None, True
+    try:
+        weight = Decimal(raw)
+    except InvalidOperation:
+        return None, False
+    if not weight.is_finite() or weight <= 0 or weight >= Decimal("10000000"):
+        return None, False
+    return weight.quantize(Decimal("0.001")), True
 
 
 def _iot_run_duration_text(started_at, ended_at) -> str:
@@ -466,6 +504,15 @@ def _seed_rollover_lines_for_display(plan: CompoundingPlan) -> None:
         )
 
         if all(value <= 0 for value in (shift1_mb, shift2_mb, shift3_mb, shift1_fb, shift2_fb, shift3_fb)):
+            continue
+
+        if previous_line.crin_request_id and not previous_line.actuals_saved:
+            # A CRIN's unfinished line moves to the new day with its CRIN link, so saving
+            # it can still send the remaining batches back to that CRIN's planning.
+            previous_line.plan = plan
+            previous_line.position = next_position
+            previous_line.save(update_fields=["plan", "position", "updated_at"])
+            next_position += 1
             continue
 
         CompoundingLine.objects.create(
@@ -1056,7 +1103,7 @@ def _available_mb_batches(*, mb_stock: Optional[Decimal], mb_weight: Optional[De
 
 def _mb_demand_by_compound(plan: CompoundingPlan) -> Dict[str, Dict[str, int]]:
     """
-    Outstanding batches per compound for a plan.
+    Outstanding batches per compound across every date, because MB stock is shared.
 
     - on_board_fb: FB batches on unsaved board lines (these reserve MB stock)
     - incoming_mb: MB batches on unsaved board lines (MB that is yet to be made)
@@ -1068,7 +1115,7 @@ def _mb_demand_by_compound(plan: CompoundingPlan) -> Dict[str, Dict[str, int]]:
         return demand.setdefault(key, {"on_board_fb": 0, "incoming_mb": 0, "waiting_fb": 0})
 
     on_board_crin_ids: set[int] = set()
-    for line in plan.lines.filter(actuals_saved=False):
+    for line in CompoundingLine.objects.filter(actuals_saved=False):
         if line.crin_request_id:
             on_board_crin_ids.add(line.crin_request_id)
         key = _normalize_compound_code(line.compound_code)
@@ -1082,10 +1129,12 @@ def _mb_demand_by_compound(plan: CompoundingPlan) -> Dict[str, Dict[str, int]]:
 
     # A CRIN stays open until issued, but a saved linked line means its batches are made.
     made_crin_ids = set(
-        plan.lines.filter(actuals_saved=True, crin_request__isnull=False).values_list("crin_request_id", flat=True)
+        CompoundingLine.objects.filter(actuals_saved=True, crin_request__isnull=False).values_list(
+            "crin_request_id", flat=True
+        )
     )
     fb_weights: Dict[str, Optional[Decimal]] = {}
-    for crin in plan.crins.filter(status=CompoundingCRIN.STATUS_OPEN):
+    for crin in CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN):
         if crin.id in on_board_crin_ids or crin.id in made_crin_ids:
             continue
         key = _normalize_compound_code(crin.compound_code)
@@ -1278,9 +1327,9 @@ def _mb_shortage_alerts(
     demand = demand if demand is not None else _mb_demand_by_compound(plan)
     negative_stock = _negative_mb_stock(plan)
     codes: Dict[str, str] = {}
-    for code in plan.crins.filter(status=CompoundingCRIN.STATUS_OPEN).values_list("compound_code", flat=True):
+    for code in CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN).values_list("compound_code", flat=True):
         codes.setdefault(_normalize_compound_code(code), code)
-    for code in plan.lines.filter(actuals_saved=False).values_list("compound_code", flat=True):
+    for code in CompoundingLine.objects.filter(actuals_saved=False).values_list("compound_code", flat=True):
         codes.setdefault(_normalize_compound_code(code), code)
 
     alerts: List[Dict[str, Any]] = []
@@ -1893,8 +1942,29 @@ WORK_STAGES = [
 ]
 
 
-def _work_queue() -> Dict[str, Any]:
-    """Every open CRIN in the step it needs next, oldest first."""
+WORK_RANGES = {
+    "today": "Today",
+    "week": "Last 7 days",
+    "all": "All open",
+}
+
+
+def _work_since(range_key: str) -> Optional[date]:
+    today = compounding_business_date()
+    if range_key == "week":
+        return today - timedelta(days=6)
+    if range_key == "all":
+        return None
+    return today
+
+
+def _work_queue(since: Optional[date] = None) -> Dict[str, Any]:
+    """
+    Open CRINs in the step each needs next, oldest first.
+
+    MB is shared out across every open CRIN so older ones are served first, then only
+    the CRINs from `since` onward are shown. Older ones are counted, not lost.
+    """
     crins = list(
         CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN)
         .select_related("plan")
@@ -1978,25 +2048,39 @@ def _work_queue() -> Dict[str, Any]:
             item["suggested_batches"] = int((remaining / mb_weight).to_integral_value(rounding=ROUND_CEILING)) if mb_weight else 0
         groups["mb"].append(item)
 
+    def is_recent(item: Dict[str, Any]) -> bool:
+        if since is None:
+            return True
+        return item["plan_date"] >= since or bool(item.get("board_date") and item["board_date"] >= since)
+
+    all_count = sum(len(items) for items in groups.values())
+    if since is not None:
+        groups = {key: [item for item in items if is_recent(item)] for key, items in groups.items()}
     stages = [
         {"key": key, "title": title, "hint": hint, "color": color, "items": groups[key]}
         for key, title, hint, color in WORK_STAGES
     ]
-    return {"stages": stages, "total": sum(len(items) for items in groups.values())}
+    shown = sum(len(items) for items in groups.values())
+    return {"stages": stages, "total": shown, "hidden": all_count - shown}
 
 
 @login_required
 @require_any_service_access(["compounding_planning", "compounding_board"])
 @require_http_methods(["GET"])
 def work_queue(request):
+    range_key = (request.GET.get("range") or "today").strip().lower()
+    if range_key not in WORK_RANGES:
+        range_key = "today"
     return render(
         request,
         "magicwand/compounding_work.html",
         {
-            "queue": _work_queue(),
+            "queue": _work_queue(_work_since(range_key)),
             "can_planning": user_has_service_access(request.user, "compounding_planning"),
             "today": compounding_business_date(),
-            "back_url": reverse("compounding:work_queue"),
+            "range_key": range_key,
+            "range_options": [{"key": key, "label": label} for key, label in WORK_RANGES.items()],
+            "back_url": f"{reverse('compounding:work_queue')}?range={range_key}",
         },
     )
 
@@ -2048,7 +2132,8 @@ def _crin_status_rows(crin_objs: List[CompoundingCRIN]) -> List[Dict[str, Any]]:
         rows.append(
             {
                 "id": crin.id,
-                "crin_number": crin.crin_number,
+                "crin_number": crin.display_number,
+                "full_number": crin.crin_number,
                 "compound_code": crin.compound_code,
                 "plan_date": crin.plan.plan_date,
                 "stage_label": stage_label,
@@ -2095,7 +2180,7 @@ def _production_request_groups() -> List[Dict[str, Any]]:
             raised_at = header.created_at if header else crin.created_at
             raised_by = header.created_by if header else crin.created_by
             groups[key] = {
-                "number": header.request_number if header else crin.crin_number,
+                "number": header.request_number if header else crin.display_number,
                 "raised_at": raised_at.astimezone(IST_TIMEZONE).strftime("%Y-%m-%d %H:%M"),
                 "raised_by": raised_by.get_username() if raised_by else "—",
                 "note": header.note if header else "",
@@ -2105,7 +2190,7 @@ def _production_request_groups() -> List[Dict[str, Any]]:
 
     result = list(groups.values())
     for group in result:
-        group["items"].sort(key=lambda row: row["crin_number"])
+        group["items"].sort(key=lambda row: row["full_number"])
         group["item_count"] = len(group["items"])
         group["closed_count"] = sum(1 for row in group["items"] if not row["is_open"])
         group["is_complete"] = group["closed_count"] == group["item_count"]
@@ -2251,7 +2336,7 @@ def fb_issue_page(request):
     recent_issues = [
         {
             "created_at": entry.created_at.astimezone(IST_TIMEZONE).strftime("%Y-%m-%d %H:%M"),
-            "crin_number": entry.crin.crin_number if entry.crin else "—",
+            "crin_number": entry.crin.display_number if entry.crin else "—",
             "compound_code": entry.compound_code,
             "quantity": _decimal_text(-entry.quantity),
             "user": entry.created_by.get_username() if entry.created_by else "—",
@@ -2274,7 +2359,7 @@ def issue_fb(request, crin_id: int):
     redirect_url = _safe_next(request) or reverse("compounding:fb_issue")
     crin = get_object_or_404(CompoundingCRIN.objects.select_for_update().select_related("plan"), id=crin_id)
     if crin.status != CompoundingCRIN.STATUS_OPEN:
-        messages.info(request, f"{crin.crin_number} is already closed.")
+        messages.info(request, f"{crin.display_number} is already closed.")
         return redirect(redirect_url)
 
     try:
@@ -2292,7 +2377,7 @@ def issue_fb(request, crin_id: int):
     except InvalidOperation:
         expected_issued = None
     if expected_issued is None or not expected_issued.is_finite() or expected_issued != issued_now:
-        messages.warning(request, f"{crin.crin_number} was just updated. Check the balance and issue again if needed.")
+        messages.warning(request, f"{crin.display_number} was just updated. Check the balance and issue again if needed.")
         return redirect(redirect_url)
 
     spec = _sheet_spec_for_compound(crin.plan, crin.compound_code)
@@ -2311,12 +2396,12 @@ def issue_fb(request, crin_id: int):
     if result["closed"]:
         messages.success(
             request,
-            f"Issued {_decimal_text(quantity)} FB on {crin.crin_number}. The CRIN is now closed.",
+            f"Issued {_decimal_text(quantity)} FB on {crin.display_number}. The CRIN is now closed.",
         )
     else:
         messages.success(
             request,
-            f"Issued {_decimal_text(quantity)} FB on {crin.crin_number}. "
+            f"Issued {_decimal_text(quantity)} FB on {crin.display_number}. "
             f"{_decimal_text(result['remaining'])} is left to issue.",
         )
     return redirect(redirect_url)
@@ -2334,16 +2419,11 @@ def iot_dashboard(request):
     plan = _get_or_create_plan(plan_date, user=request.user)
     machine_id = _iot_dashboard_machine_id()
     compound_options = _iot_run_compound_options(plan)
-    iot_runs = [
-        {
-            "compound_code": run.compound_code,
-            "started_at": run.started_at,
-            "ended_at": run.ended_at,
-            "time_taken": _iot_run_duration_text(run.started_at, run.ended_at),
-            "stock_quality": run.get_stock_quality_display(),
-        }
-        for run in plan.iot_runs.all().order_by("-started_at", "-id")[:50]
-    ]
+    from .iot_views import daily_context
+
+    # The daily batch-variation view (replaces the old "Compounds run" table).
+    daily = daily_context(machine_id, plan.plan_date, request.user)
+    open_batch = _open_iot_batch(machine_id)
     return render(
         request,
         "magicwand/iot_dashboard.html",
@@ -2365,10 +2445,22 @@ def iot_dashboard(request):
             "plan_date": plan.plan_date.isoformat(),
             "iot_machine_id": machine_id,
             "iot_run_compound_options": compound_options,
-            "iot_runs": iot_runs,
+            **daily,
             "iot_run_quality_choices": CompoundingIoTRun.QUALITY_CHOICES,
+            "iot_rejection_reason_choices": CompoundingIoTRun.REJECTION_REASON_CHOICES,
+            "iot_batch_crin_options": _iot_batch_crin_options(),
+            "iot_open_batch": open_batch,
+            "iot_open_batch_weight": (
+                _decimal_text(open_batch.batch_weight_kg) if open_batch and open_batch.batch_weight_kg else ""
+            ),
             "iot_time_zone": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),
             "iot_time_zone_label": getattr(settings, "IOT_DASHBOARD_TIME_ZONE", "Asia/Kolkata"),
+            # A past ?date= opens the chart on that whole day; today stays on the live view.
+            "iot_range_date": (
+                plan.plan_date.isoformat()
+                if request.GET.get("date") and plan.plan_date != compounding_business_date()
+                else ""
+            ),
         },
     )
 
@@ -2424,6 +2516,167 @@ def save_iot_run(request):
 
 
 @login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["POST"])
+def start_iot_batch(request):
+    """Operator taps "Start batch" as the batch goes on the machine; the start time is now."""
+    if not _iot_dashboard_available():
+        raise Http404("Not found")
+
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
+    plan = _get_or_create_plan(plan_date, user=request.user)
+    redirect_url = f"{reverse('compounding:iot_dashboard')}?date={plan.plan_date.isoformat()}"
+    machine_id = _iot_dashboard_machine_id()
+
+    compound_code = (request.POST.get("compound_code") or "").strip()
+    # Batches started from the dashboard are always FB.
+    batch_type = CompoundingIoTRun.BATCH_FB
+    weight, weight_ok = _parse_batch_weight(request.POST.get("batch_weight_kg") or "")
+    crin_id = (request.POST.get("crin_id") or "").strip()
+
+    compound_options = {item["value"] for item in _iot_run_compound_options(plan)}
+    if not compound_code:
+        messages.error(request, "Select the compound going on the machine.")
+        return redirect(redirect_url)
+    if compound_options and compound_code not in compound_options:
+        messages.error(request, "Select a valid compound from MB planning.")
+        return redirect(redirect_url)
+    if not weight_ok:
+        messages.error(request, "Enter the batch weight in kg as a number above 0, or leave it blank.")
+        return redirect(redirect_url)
+
+    crin = None
+    if crin_id:
+        crin = CompoundingCRIN.objects.filter(pk=crin_id, status=CompoundingCRIN.STATUS_OPEN).first() if crin_id.isdigit() else None
+        if crin is None:
+            messages.error(request, "That CRIN is not open any more. Pick another one or leave it blank.")
+            return redirect(redirect_url)
+
+    with transaction.atomic():
+        # Lock this machine's runs so two taps at once can't open two batches.
+        running = (
+            CompoundingIoTRun.objects.select_for_update()
+            .filter(machine_id=machine_id, ended_at__isnull=True)
+            .order_by("-started_at")
+            .first()
+        )
+        if running is not None:
+            messages.error(
+                request,
+                f"{running.compound_code} is still running on the machine. End that batch before starting a new one.",
+            )
+            return redirect(redirect_url)
+        CompoundingIoTRun.objects.create(
+            plan=plan,
+            machine_id=machine_id,
+            compound_code=compound_code,
+            started_at=timezone.now(),
+            ended_at=None,
+            stock_quality="",
+            batch_type=batch_type,
+            batch_weight_kg=weight,
+            crin=crin,
+            created_by=request.user,
+        )
+    messages.success(request, f"Started an FB batch of {compound_code}.")
+    return redirect(redirect_url)
+
+
+@login_required
+@require_any_service_access(["compounding_planning", "compounding_board"])
+@require_http_methods(["POST"])
+def end_iot_batch(request):
+    """Operator taps "End batch" when the batch comes off; the end time is now."""
+    if not _iot_dashboard_available():
+        raise Http404("Not found")
+
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
+    redirect_url = f"{reverse('compounding:iot_dashboard')}?date={plan_date.isoformat()}"
+    machine_id = _iot_dashboard_machine_id()
+
+    run_id = (request.POST.get("run_id") or "").strip()
+    stock_quality = (request.POST.get("stock_quality") or "").strip().lower()
+    rejection_reason = (request.POST.get("rejection_reason") or "").strip().lower()
+    notes = (request.POST.get("notes") or "").strip()
+
+    if stock_quality not in {choice[0] for choice in CompoundingIoTRun.QUALITY_CHOICES}:
+        messages.error(request, "Select the quality of the batch before ending it.")
+        return redirect(redirect_url)
+    if stock_quality == CompoundingIoTRun.QUALITY_REJECTED:
+        if rejection_reason not in {choice[0] for choice in CompoundingIoTRun.REJECTION_REASON_CHOICES}:
+            messages.error(request, "Select why the batch was rejected.")
+            return redirect(redirect_url)
+    else:
+        rejection_reason = ""
+
+    with transaction.atomic():
+        run = (
+            CompoundingIoTRun.objects.select_for_update()
+            .filter(pk=run_id if run_id.isdigit() else None, machine_id=machine_id, ended_at__isnull=True)
+            .first()
+        )
+        if run is None:
+            messages.error(request, "That batch has already been ended. Refresh the page to see the current batch.")
+            return redirect(redirect_url)
+        now = timezone.now()
+        run.ended_at = max(now, run.started_at)
+        run.stock_quality = stock_quality
+        run.rejection_reason = rejection_reason
+        if notes:
+            run.notes = notes[:2000]
+        run.save(update_fields=["ended_at", "stock_quality", "rejection_reason", "notes", "updated_at"])
+    messages.success(
+        request,
+        f"Ended the {run.compound_code} batch after {_iot_run_duration_text(run.started_at, run.ended_at)}.",
+    )
+    return redirect(redirect_url)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def iot_cron_sync(request):
+    """App Engine cron (every minute): copy new samples from the bridge and run batch detection.
+
+    Only App Engine cron sets X-Appengine-Cron; App Engine strips it from outside requests. Problems are
+    reported in the body and the log rather than as an error status, so cron does not pile up retries.
+    """
+    if request.headers.get("X-Appengine-Cron") != "true":
+        return JsonResponse({"error": "only the scheduler may call this"}, status=403)
+    from . import iot_samples
+
+    machine_id = _iot_dashboard_machine_id()
+    result: Dict[str, Any] = {"machineId": machine_id}
+    try:
+        result["sync"] = iot_samples.sync_from_bridge(machine_id) if iot_samples.bridge_enabled() else None
+    except Exception as exc:
+        logger.warning("IoT cron sync failed: %s", exc)
+        result["syncError"] = str(exc)
+    from . import iot_segments
+
+    try:
+        result["detection"] = iot_segments.detect_recent(machine_id)
+    except Exception as exc:
+        logger.exception("IoT batch detection failed")
+        result["detectError"] = str(exc)
+    return JsonResponse(result)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def iot_cron_standards(request):
+    """App Engine cron (weekly): rebuild each compound's standard from its normal batches."""
+    if request.headers.get("X-Appengine-Cron") != "true":
+        return JsonResponse({"error": "only the scheduler may call this"}, status=403)
+    from . import iot_standards
+
+    try:
+        return JsonResponse({"standards": iot_standards.rebuild_all()})
+    except Exception as exc:
+        logger.exception("Weekly standard rebuild failed")
+        return JsonResponse({"error": str(exc)})
+
+
+@login_required
 @require_service_access("compounding_planning")
 @require_http_methods(["GET"])
 def planning(request):
@@ -2435,11 +2688,18 @@ def planning(request):
     compounds_ready = bool(compound_values)
 
     crins: list[dict[str, Any]] = []
-    for crin in plan.crins.all().order_by("-created_at", "-id"):
+    scope = _recent_crin_scope(request, plan)
+    for crin in (
+        CompoundingCRIN.objects.filter(scope["query"])
+        .select_related("plan")
+        .order_by("-created_at", "-id")
+    ):
         crins.append(
             {
                 "id": crin.id,
-                "crin_number": crin.crin_number,
+                "crin_number": crin.display_number,
+                "plan_date": crin.plan.plan_date,
+                "is_older": crin.plan_id != plan.id,
                 "compound_code": crin.compound_code,
                 "quantity": crin.quantity,
                 "mb_planning": crin.mb_planning,
@@ -2482,6 +2742,9 @@ def planning(request):
             "crin_compounds_ready": compounds_ready,
             "master_sheet": master_sheet_context,
             "mb_alerts": _mb_shortage_alerts(plan),
+            "show_all_open": scope["show_all"],
+            "hidden_older": scope["hidden_older"],
+            "since": scope["since"],
             "show_iot_dashboard": _iot_dashboard_available(),
         },
     )
@@ -2655,7 +2918,7 @@ def display(request):
                 "planned_fb_weight": fb_weight_text(planned_fb),
                 "actual_fb_weight": fb_weight_text(actual_fb),
                 "remaining_fb_weight": fb_weight_text(remaining_fb),
-                "crin_number": line.crin_request.crin_number if line.crin_request else "",
+                "crin_number": line.crin_request.display_number if line.crin_request else "",
                 "planned_mb": planned_mb,
                 "planned_fb": planned_fb,
                 "actual_mb": actual_mb,
@@ -2814,7 +3077,7 @@ def set_actuals(request):
             returned_to_same_crin = True
             returned_mb = remaining_mb
             returned_fb = remaining_fb
-            same_crin_number = crin.crin_number
+            same_crin_number = crin.display_number
         elif planned_fb <= 0 and not crin.stock_entries.filter(
             entry_type=CompoundingStockEntry.ENTRY_FB_MADE
         ).exists():
@@ -2936,7 +3199,7 @@ def send_remaining_to_planning(request):
 
     messages.success(
         request,
-        f"Sent remaining batches for {line.compound_code} to planning as {crin.crin_number} (MB {remaining_mb}, FB {remaining_fb}).",
+        f"Sent remaining batches for {line.compound_code} to planning as {crin.display_number} (MB {remaining_mb}, FB {remaining_fb}).",
     )
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
@@ -2945,7 +3208,7 @@ def send_remaining_to_planning(request):
 @require_service_access("compounding_planning")
 @require_http_methods(["POST"])
 def create_crin(request):
-    plan_date = _parse_date(request.POST.get("plan_date") or "") or timezone.localdate()
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
 
     selected_compound = _clean_compound_code(request.POST.get("compound_code") or "")
@@ -3019,6 +3282,31 @@ def create_crin(request):
     return redirect(f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
 
+CRIN_LISTING_START = date(2026, 11, 1)
+
+
+def _recent_crin_scope(request, plan: CompoundingPlan) -> Dict[str, Any]:
+    """
+    Which CRINs a planning screen lists: this day's, plus open ones raised the day before
+    (so yesterday evening's CRINs are still there). Older open CRINs are counted, not listed,
+    unless "All open" is chosen.
+    """
+    # From November 2026 every open CRIN is listed, so nothing raised on or after this date is hidden.
+    show_all = (request.GET.get("range") or "").strip().lower() == "all"
+    since = CRIN_LISTING_START
+    if show_all:
+        query = models.Q(plan=plan) | models.Q(status=CompoundingCRIN.STATUS_OPEN)
+        hidden = 0
+    else:
+        query = models.Q(plan=plan) | (models.Q(status=CompoundingCRIN.STATUS_OPEN) & models.Q(plan__plan_date__gte=since))
+        hidden = (
+            CompoundingCRIN.objects.filter(status=CompoundingCRIN.STATUS_OPEN, plan__plan_date__lt=since)
+            .exclude(plan=plan)
+            .count()
+        )
+    return {"query": query, "show_all": show_all, "hidden_older": hidden, "since": since}
+
+
 def _crin_can_be_deleted(crin: CompoundingCRIN) -> bool:
     """A CRIN can be deleted until production is recorded, so no stock history is lost."""
     if (
@@ -3067,11 +3355,11 @@ def delete_crin(request, crin_id: int):
     if not _crin_can_be_deleted(crin):
         messages.error(
             request,
-            f"{crin.crin_number} cannot be deleted because production has been recorded on it.",
+            f"{crin.display_number} cannot be deleted because production has been recorded on it.",
         )
         return redirect(redirect_url)
 
-    crin_number = crin.crin_number
+    crin_number = crin.display_number
     compound_code = crin.compound_code
     header_id = crin.request_id
     for line in board_lines:
@@ -3098,12 +3386,52 @@ def delete_crin(request, crin_id: int):
 @require_service_access("compounding_planning")
 @require_http_methods(["POST"])
 def apply_crin(request, crin_id: int):
-    plan_date = _parse_date(request.POST.get("plan_date") or "") or timezone.localdate()
+    plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
     crin = get_object_or_404(CompoundingCRIN, id=crin_id, plan=plan)
 
     # Legacy endpoint: keep behaviour but route through the explicit send-to-board logic.
     return send_to_board(request, crin_id=crin.id)
+
+
+def _split_crin_for_stock(crin: CompoundingCRIN, *, send_batches: int, spec: Dict[str, Any]) -> CompoundingCRIN:
+    """
+    Send only the FB batches the MB stock covers.
+
+    The batches that can be made now go to a new part of the same CRIN (same shown number);
+    the rest stays on this CRIN, in FB planning, waiting for MB.
+    """
+    total_batches = int(crin.fb_planning or 0)
+    batch_size = spec.get("fb_total_weight")
+    if batch_size is not None and batch_size > 0:
+        sent_quantity = int(Decimal(send_batches) * batch_size)
+    else:
+        sent_quantity = int(crin.quantity) * send_batches // max(total_batches, 1)
+    sent_quantity = min(max(sent_quantity, 1), max(int(crin.quantity) - 1, 1))
+
+    base = crin.display_number
+    part = 1
+    while CompoundingCRIN.objects.filter(crin_number=f"{base}-{part}").exists():
+        part += 1
+    sibling = CompoundingCRIN.objects.create(
+        plan=crin.plan,
+        request=crin.request,
+        crin_number=f"{base}-{part}",
+        compound_folder=crin.compound_folder,
+        compound_code=crin.compound_code,
+        quantity=sent_quantity,
+        ordered_quantity=sent_quantity,
+        fb_batch_size=crin.fb_batch_size,
+        fb_planning=send_batches,
+        mb_planning=None,
+        mb_msl=crin.mb_msl,
+        created_by=crin.created_by,
+        created_at=crin.created_at,
+    )
+    crin.quantity = max(int(crin.quantity) - sent_quantity, 1)
+    crin.fb_planning = total_batches - send_batches
+    crin.save(update_fields=["quantity", "fb_planning", "updated_at"])
+    return sibling
 
 
 def _ensure_line_for_crin(*, plan: CompoundingPlan, crin: CompoundingCRIN) -> CompoundingLine:
@@ -3170,7 +3498,7 @@ def fb_planning_set(request):
 
     messages.success(
         request,
-        f"FB planning set for {crin.crin_number}: {batches} batches (batch size { _decimal_text(batch_size) }).",
+        f"FB planning set for {crin.display_number}: {batches} batches (batch size { _decimal_text(batch_size) }).",
     )
     return redirect(f"/compounding/planning/fb/?date={plan.plan_date.isoformat()}")
 
@@ -3245,7 +3573,9 @@ def mb_planning_set(request):
 def send_to_board(request, crin_id: int):
     plan_date = _parse_date(request.POST.get("plan_date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
-    crin = get_object_or_404(CompoundingCRIN, id=crin_id, plan=plan)
+    crin = get_object_or_404(CompoundingCRIN, id=crin_id)
+    if crin.plan_id != plan.id and crin.status != CompoundingCRIN.STATUS_OPEN:
+        raise Http404("This CRIN is closed.")
 
     def _redirect_after_send_block(default_path: str = ""):
         next_url = (request.POST.get("next") or "").strip()
@@ -3256,8 +3586,8 @@ def send_to_board(request, crin_id: int):
             return redirect(referer)
         return redirect(default_path or f"/compounding/planning/?date={plan.plan_date.isoformat()}")
 
-    if plan.lines.filter(crin_request=crin).exists():
-        messages.info(request, f"{crin.crin_number} is already on the compounding board.")
+    if CompoundingLine.objects.filter(crin_request=crin).exists():
+        messages.info(request, f"{crin.display_number} is already on the compounding board.")
         return _redirect_after_send_block()
 
     shift = _parse_shift(request.POST.get("shift"))
@@ -3288,15 +3618,22 @@ def send_to_board(request, crin_id: int):
     # Lock the plan so two simultaneous sends cannot reserve the same MB stock.
     with transaction.atomic():
         CompoundingPlan.objects.select_for_update().get(pk=plan.pk)
-        if plan.lines.filter(crin_request=crin).exists():
-            messages.info(request, f"{crin.crin_number} is already on the compounding board.")
+        if CompoundingLine.objects.filter(crin_request=crin).exists():
+            messages.info(request, f"{crin.display_number} is already on the compounding board.")
             return _redirect_after_send_block()
 
         availability = _mb_availability(plan, crin.compound_code, spec=spec)
         free_mb_stock = availability["free"]
-        if fb_batches > 0 and (
+        short = fb_batches > 0 and (
             required_mb_stock is None or free_mb_stock is None or free_mb_stock < required_mb_stock
-        ):
+        )
+        if short and request.POST.get("partial"):
+            free_batches = _available_mb_batches(mb_stock=free_mb_stock, mb_weight=spec.get("mb_weight")) or 0
+            if 0 < free_batches < fb_batches:
+                crin = _split_crin_for_stock(crin, send_batches=free_batches, spec=spec)
+                fb_batches = free_batches
+                short = False
+        if short:
             free_mb_batches = _available_mb_batches(mb_stock=free_mb_stock, mb_weight=spec.get("mb_weight"))
             available_batches_text = str(free_mb_batches) if free_mb_batches is not None else "0"
             required_stock_text = _decimal_text(required_mb_stock, places=3) if required_mb_stock is not None else "unknown"
@@ -3335,7 +3672,7 @@ def send_to_board(request, crin_id: int):
 
         line.save(update_fields=update_fields)
 
-    messages.success(request, f"Sent {crin.crin_number} to the compounding board (shift {shift}).")
+    messages.success(request, f"Sent {crin.display_number} to the compounding board (shift {shift}).")
     next_url = (request.POST.get("next") or "").strip()
     if next_url.startswith("/"):
         return redirect(next_url)
@@ -3351,23 +3688,19 @@ def send_to_board(request, crin_id: int):
 def fb_planning_page(request):
     plan_date = _parse_date(request.GET.get("date") or "") or compounding_business_date()
     plan = _get_or_create_plan(plan_date, user=request.user)
+    scope = _recent_crin_scope(request, plan)
     crin_objs = list(
-        plan.crins.annotate(
+        CompoundingCRIN.objects.filter(scope["query"])
+        .select_related("plan")
+        .annotate(
             has_line=models.Exists(
-                CompoundingLine.objects.filter(
-                    plan=plan,
-                    crin_request=models.OuterRef("pk"),
-                    actuals_saved=False,
-                )
+                CompoundingLine.objects.filter(crin_request=models.OuterRef("pk"), actuals_saved=False)
             ),
             has_done_line=models.Exists(
-                CompoundingLine.objects.filter(
-                    plan=plan,
-                    crin_request=models.OuterRef("pk"),
-                    actuals_saved=True,
-                )
+                CompoundingLine.objects.filter(crin_request=models.OuterRef("pk"), actuals_saved=True)
             ),
-        ).order_by("-created_at", "-id")
+        )
+        .order_by("-created_at", "-id")
     )
     demand = _mb_demand_by_compound(plan)
     crins: list[dict[str, Any]] = []
@@ -3386,7 +3719,7 @@ def fb_planning_page(request):
         crins.append(
             {
                 "id": crin.id,
-                "crin_number": crin.crin_number,
+                "crin_number": crin.display_number,
                 "compound_code": crin.compound_code,
                 "quantity": crin.quantity,
                 "fb_planning": fb_batches,
@@ -3396,6 +3729,8 @@ def fb_planning_page(request):
                 "has_done_line": bool(getattr(crin, "has_done_line", False)),
                 "mb_needed": _decimal_text(mb_needed) if mb_needed is not None else "—",
                 "mb_free": _decimal_text(free_mb) if free_mb is not None else "—",
+                "plan_date": crin.plan.plan_date,
+                "is_older": crin.plan_id != plan.id,
                 "mb_short": "—",
                 "mb_is_short": False,
                 "mb_ready": True,
@@ -3405,6 +3740,8 @@ def fb_planning_page(request):
                 "_key": _normalize_compound_code(crin.compound_code),
                 "_needed": mb_needed,
                 "_free": free_mb,
+                "_mb_weight": spec.get("mb_weight"),
+                "partial_batches": 0,
             }
         )
 
@@ -3428,6 +3765,12 @@ def fb_planning_page(request):
         row["mb_ready"] = False
         row["mb_is_short"] = True
         row["mb_short"] = _decimal_text(needed - left)
+        weight = row["_mb_weight"]
+        if weight and weight > 0 and left > 0:
+            covered = int((left / weight).to_integral_value(rounding=ROUND_FLOOR))
+            if 0 < covered < int(row["fb_planning"] or 0):
+                row["partial_batches"] = covered
+                free_left[row["_key"]] = left - Decimal(covered) * weight
         row["mb_alert"] = (
             f"MB stock is not available for {row['compound_code']}. "
             f"Required {_decimal_text(needed)}, available {_decimal_text(left)}, "
@@ -3436,7 +3779,14 @@ def fb_planning_page(request):
     return render(
         request,
         "magicwand/compounding_fb_plan.html",
-        {"plan": plan, "crins": crins, "mb_alerts": _mb_shortage_alerts(plan, demand=demand)},
+        {
+            "plan": plan,
+            "crins": crins,
+            "mb_alerts": _mb_shortage_alerts(plan, demand=demand),
+            "show_all_open": scope["show_all"],
+            "hidden_older": scope["hidden_older"],
+            "since": scope["since"],
+        },
     )
 
 

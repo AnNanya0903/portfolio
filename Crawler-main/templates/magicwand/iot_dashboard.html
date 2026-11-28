@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load tz %}
 
 {% block title %}IoT Dashboard{% endblock %}
 
@@ -74,7 +75,7 @@
               <div class="col-md-4">
                 <div class="border rounded-3 p-3 h-100">
                   <div class="text-uppercase text-muted small fw-semibold mb-2">Machine ID</div>
-                  <div id="iot-machine-id" class="fs-5 fw-semibold">No data yet</div>
+                  <div id="iot-machine-id" class="fs-5 fw-semibold" data-machine-id="{{ iot_machine_id|default:'' }}">{{ iot_machine_id|default:"No data yet" }}</div>
                 </div>
               </div>
               <div class="col-md-4">
@@ -85,10 +86,32 @@
               </div>
               <div class="col-md-4">
                 <div class="border rounded-3 p-3 h-100">
-                  <div class="text-uppercase text-muted small fw-semibold mb-2">Register Count</div>
+                  <div class="text-uppercase text-muted small fw-semibold mb-2" id="iot-register-count-label">Register Count</div>
                   <div id="iot-register-count" class="fs-5 fw-semibold">0</div>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card shadow-sm border-0 mb-4" id="iot-daily">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+              <h2 class="h4 mb-0">Batches &amp; variations</h2>
+              <div class="d-flex align-items-center flex-wrap gap-2 small">
+                <a class="btn btn-sm btn-outline-secondary" href="?date={{ daily_previous }}#iot-daily" aria-label="Previous day">‹</a>
+                <form method="get" class="m-0"><label class="visually-hidden" for="iotDailyDate">Date</label>
+                  <input id="iotDailyDate" type="date" name="date" value="{{ daily_date }}" class="form-control form-control-sm" onchange="this.form.submit()">
+                </form>
+                <a class="btn btn-sm btn-outline-secondary" href="?date={{ daily_next }}#iot-daily" aria-label="Next day">›</a>
+                {% if daily_is_today %}<span class="badge text-bg-success" id="iotDailyLive">Live</span>{% endif %}
+                <a href="{% url 'compounding:iot_daily_report' 'csv' %}?date={{ daily_date }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+                <a href="{% url 'compounding:iot_daily_report' 'pdf' %}?date={{ daily_date }}"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+                <a href="{% url 'compounding:iot_standards' %}"><i class="bi bi-graph-up me-1"></i>Standards</a>
+              </div>
+            </div>
+            <div id="iotDailyBody" data-url="{% url 'compounding:iot_daily_partial' %}?date={{ daily_date }}" data-live="{% if daily_is_today %}1{% endif %}" data-batch-url="{% url 'compounding:iot_detected_batch' 0 %}">
+              {% include "magicwand/_iot_daily.html" %}
             </div>
           </div>
         </div>
@@ -103,6 +126,98 @@
                   </div>
                   <span class="badge text-bg-light border">Plan {{ plan.plan_date|date:"d M Y" }}</span>
                 </div>
+                <div class="border rounded-3 p-3 mb-4 {% if iot_open_batch %}border-success bg-success-subtle{% endif %}" id="iotBatchPanel">
+                  {% if iot_open_batch %}
+                  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+                    <div>
+                      <div class="text-uppercase text-success small fw-semibold mb-1">Batch running</div>
+                      <div class="fs-5 fw-bold">{{ iot_open_batch.compound_code }} <span class="badge text-bg-success align-middle">{{ iot_open_batch.get_batch_type_display }}</span></div>
+                      <div class="small text-muted">
+                        Started {{ iot_open_batch.started_at|timezone:iot_time_zone|date:"d M, H:i" }}
+                        {% if iot_open_batch_weight %} · {{ iot_open_batch_weight }} kg{% endif %}
+                        {% if iot_open_batch.crin %} · {{ iot_open_batch.crin.display_number }}{% endif %}
+                      </div>
+                    </div>
+                    <div class="text-end">
+                      <div class="text-uppercase text-muted small fw-semibold">Running for</div>
+                      <div class="fs-4 fw-bold font-monospace" id="iotBatchElapsed" data-started="{{ iot_open_batch.started_at|date:'c' }}">—</div>
+                    </div>
+                  </div>
+                  <form method="post" action="{% url 'compounding:end_iot_batch' %}" class="row g-3" id="iotEndBatchForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="plan_date" value="{{ plan_date }}">
+                    <input type="hidden" name="run_id" value="{{ iot_open_batch.pk }}">
+                    <div class="col-md-6">
+                      <label for="iotEndQuality" class="form-label">Quality of this batch</label>
+                      <select id="iotEndQuality" name="stock_quality" class="form-select" required>
+                        <option value="">Select quality...</option>
+                        {% for value, label in iot_run_quality_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-md-6" id="iotEndReasonWrap" hidden>
+                      <label for="iotEndReason" class="form-label">Why was it rejected?</label>
+                      <select id="iotEndReason" name="rejection_reason" class="form-select">
+                        <option value="">Select reason...</option>
+                        {% for value, label in iot_rejection_reason_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-12">
+                      <label for="iotEndNotes" class="form-label">Notes <span class="text-muted">(optional)</span></label>
+                      <input id="iotEndNotes" type="text" name="notes" class="form-control" maxlength="2000" placeholder="Anything unusual about this batch">
+                    </div>
+                    <div class="col-12">
+                      <button type="submit" class="btn btn-danger btn-lg w-100">
+                        <i class="bi bi-stop-circle me-1"></i>End batch
+                      </button>
+                    </div>
+                  </form>
+                  {% else %}
+                  <div class="text-uppercase text-muted small fw-semibold mb-2">No batch on the machine</div>
+                  <form method="post" action="{% url 'compounding:start_iot_batch' %}" class="row g-3" id="iotStartBatchForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="plan_date" value="{{ plan_date }}">
+                    <div class="col-md-6">
+                      <label for="iotStartCompound" class="form-label">Compound going on</label>
+                      <select id="iotStartCompound" name="compound_code" class="form-select" required>
+                        <option value="">Select compound...</option>
+                        {% for option in iot_run_compound_options %}
+                        <option value="{{ option.value }}">{{ option.label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-md-6">
+                      <span class="form-label d-block">Batch type</span>
+                      <div class="form-control-plaintext fw-semibold"><span class="badge text-bg-primary">FB</span></div>
+                    </div>
+                    <div class="col-md-6">
+                      <label for="iotStartWeight" class="form-label">Batch weight (kg) <span class="text-muted">(optional)</span></label>
+                      <input id="iotStartWeight" type="number" name="batch_weight_kg" class="form-control" min="0.001" step="0.001" inputmode="decimal">
+                    </div>
+                    <div class="col-md-6">
+                      <label for="iotStartCrin" class="form-label">CRIN <span class="text-muted">(optional)</span></label>
+                      <select id="iotStartCrin" name="crin_id" class="form-select">
+                        <option value="">No CRIN</option>
+                        {% for option in iot_batch_crin_options %}
+                        <option value="{{ option.value }}" data-compound="{{ option.compound_code }}">{{ option.label }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-12">
+                      <button type="submit" class="btn btn-success btn-lg w-100">
+                        <i class="bi bi-play-circle me-1"></i>Start batch
+                      </button>
+                      <div class="form-text">The start time is taken when you tap the button. Tap <strong>End batch</strong> when the batch comes off.</div>
+                    </div>
+                  </form>
+                  {% endif %}
+                </div>
+
+                <details class="mb-2">
+                  <summary class="small fw-semibold text-muted mb-3">Log a past run by hand</summary>
                 <form method="post" action="{% url 'compounding:save_iot_run' %}" class="row g-3">
                   {% csrf_token %}
                   <input type="hidden" name="plan_date" value="{{ plan_date }}">
@@ -148,40 +263,139 @@
                     </button>
                   </div>
                 </form>
+                </details>
 
-                <h3 class="h6 text-uppercase text-muted fw-semibold mt-4 mb-2">Compounds run on {{ plan.plan_date|date:"d M Y" }}</h3>
-                {% if iot_runs %}
-                <div class="table-responsive">
-                  <table class="table table-sm align-middle mb-0" id="iotRunsTable">
-                    <thead>
-                      <tr>
-                        <th scope="col">Compound</th>
-                        <th scope="col">Time taken</th>
-                        <th scope="col">Start</th>
-                        <th scope="col">End</th>
-                        <th scope="col">Quality</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for run in iot_runs %}
-                      <tr>
-                        <td class="fw-semibold">{{ run.compound_code }}</td>
-                        <td>{{ run.time_taken }}</td>
-                        <td>{{ run.started_at|date:"d M, H:i" }}</td>
-                        <td>{{ run.ended_at|date:"d M, H:i" }}</td>
-                        <td>{{ run.stock_quality }}</td>
-                      </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                </div>
-                {% else %}
-                <p class="text-muted small mb-0">No compounds saved for this date yet.</p>
-                {% endif %}
               </div>
             </div>
           </div>
         </div>
+        <script>
+          (function () {
+            // Live "running for" timer on the open batch.
+            const elapsed = document.getElementById("iotBatchElapsed");
+            if (elapsed) {
+              const started = Date.parse(elapsed.dataset.started || "");
+              const pad = (n) => String(n).padStart(2, "0");
+              const tick = () => {
+                if (Number.isNaN(started)) return;
+                const secs = Math.max(0, Math.floor((Date.now() - started) / 1000));
+                const h = Math.floor(secs / 3600);
+                const m = Math.floor((secs % 3600) / 60);
+                elapsed.textContent = (h ? h + ":" + pad(m) : String(m)) + ":" + pad(secs % 60);
+              };
+              tick();
+              setInterval(tick, 1000);
+            }
+
+            // Rejection reason is only asked for, and required, when the batch is rejected.
+            const endQuality = document.getElementById("iotEndQuality");
+            const reasonWrap = document.getElementById("iotEndReasonWrap");
+            const reason = document.getElementById("iotEndReason");
+            if (endQuality && reasonWrap && reason) {
+              const syncReason = () => {
+                const rejected = endQuality.value === "rejected";
+                reasonWrap.hidden = !rejected;
+                reason.required = rejected;
+                if (!rejected) reason.value = "";
+              };
+              endQuality.addEventListener("change", syncReason);
+              syncReason();
+            }
+
+            // Show only CRINs for the chosen compound (plus "No CRIN").
+            const startCompound = document.getElementById("iotStartCompound");
+            const crinSelect = document.getElementById("iotStartCrin");
+            if (startCompound && crinSelect) {
+              const syncCrins = () => {
+                const code = startCompound.value;
+                Array.from(crinSelect.options).forEach((opt) => {
+                  if (!opt.value) return;
+                  const match = !code || !opt.dataset.compound || opt.dataset.compound === code;
+                  opt.hidden = !match;
+                  if (!match && opt.selected) crinSelect.value = "";
+                });
+              };
+              startCompound.addEventListener("change", syncCrins);
+              syncCrins();
+            }
+
+            // Batches & variations: per-compound overlay charts, refreshed every 30 s while today is shown.
+            const dailyBody = document.getElementById("iotDailyBody");
+            const dailyCharts = [];
+            function drawDailyCharts() {
+              if (!dailyBody || typeof Chart === "undefined") return;
+              dailyCharts.splice(0).forEach((chart) => chart.destroy());
+              const css = getComputedStyle(document.documentElement);
+              const text = css.getPropertyValue("--bs-body-color").trim() || "#212529";
+              const grid = css.getPropertyValue("--bs-border-color").trim() || "#dee2e6";
+              const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+              dailyBody.querySelectorAll("canvas[data-daily-chart]").forEach((canvas) => {
+                const node = document.getElementById(canvas.dataset.dailyChart);
+                if (!node) return;
+                const data = JSON.parse(node.textContent);
+                const datasets = [];
+                if (data.standard.length) {
+                  datasets.push(
+                    { label: "Band", data: data.standard.map((p) => ({ x: p.t, y: p.upper })), borderColor: "rgba(13,110,253,.25)", backgroundColor: "rgba(13,110,253,.12)", borderWidth: 1, pointRadius: 0, fill: "+1", order: 9 },
+                    { label: "Band lower", data: data.standard.map((p) => ({ x: p.t, y: p.lower })), borderColor: "rgba(13,110,253,.25)", borderWidth: 1, pointRadius: 0, fill: false, order: 9 },
+                    { label: "Standard", data: data.standard.map((p) => ({ x: p.t, y: p.median })), borderColor: "rgba(13,110,253,.8)", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false, order: 8 },
+                  );
+                }
+                data.lines.forEach((line) => datasets.push({
+                  label: line.label, batchId: line.id,
+                  data: line.curve.map((y, i) => ({ x: i * line.step, y })),
+                  borderColor: line.colour, borderWidth: line.result === "ok" ? 1 : 1.8, pointRadius: 0, fill: false,
+                  order: line.result === "ok" ? 2 : 1,
+                }));
+                const chart = new Chart(canvas, {
+                  type: "line",
+                  data: { datasets },
+                  options: {
+                    responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+                    interaction: { mode: "nearest", intersect: false },
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: { filter: (item) => item.dataset.batchId, callbacks: { title: (items) => items.length ? fmt(items[0].parsed.x) + " after loading" : "", label: (item) => `${item.dataset.label}: ${item.parsed.y.toFixed(0)} A` } },
+                    },
+                    scales: {
+                      x: { type: "linear", title: { display: true, text: "Time from loading (min:s)", color: text }, ticks: { color: text, callback: (v) => fmt(v) }, grid: { color: grid } },
+                      y: { beginAtZero: true, title: { display: true, text: "A", color: text }, ticks: { color: text }, grid: { color: grid } },
+                    },
+                    onClick: (_event, elements) => {
+                      const hit = elements.find((el) => chart.data.datasets[el.datasetIndex].batchId);
+                      if (hit) window.location.href = dailyBody.dataset.batchUrl.replace(/0\/$/, chart.data.datasets[hit.datasetIndex].batchId + "/");
+                    },
+                  },
+                });
+                dailyCharts.push(chart);
+              });
+            }
+            window.addEventListener("load", drawDailyCharts);
+            if (dailyBody && dailyBody.dataset.live) {
+              setInterval(async () => {
+                if (document.hidden) return;
+                try {
+                  const response = await fetch(dailyBody.dataset.url, { cache: "no-store", skipGlobalLoader: true });
+                  if (!response.ok) return;
+                  dailyBody.innerHTML = await response.text();
+                  drawDailyCharts();
+                } catch (error) {
+                  /* keep the last view */
+                }
+              }, 30000);
+            }
+
+            // Stop double taps from sending the batch form twice.
+            ["iotStartBatchForm", "iotEndBatchForm"].forEach((id) => {
+              const form = document.getElementById(id);
+              if (!form) return;
+              form.addEventListener("submit", () => {
+                const btn = form.querySelector('button[type="submit"]');
+                if (btn) btn.disabled = true;
+              });
+            });
+          })();
+        </script>
         <script>
           (function () {
             const startInput = document.getElementById("iotRunStart");
@@ -203,6 +417,8 @@
           })();
         </script>
 
+        <div id="iot-live-warning" class="alert alert-danger d-none mb-2" role="alert"></div>
+        <div id="iot-live-note" class="small text-muted mb-2 d-none"></div>
         <div id="iot-chart-shell" class="iot-chart-shell">
         <div class="card shadow-sm border-0">
           <div class="card-body">
@@ -384,6 +600,9 @@
   const iotChartMaxPoints = Number("{{ iot_chart_max_points|default:5000 }}") || 5000;
   const iotTimeZoneFeedback = `Times use ${iotTimeZoneLabel} timezone.`;
   let latestHistory = [];
+  // Live view: after one full load, polls ask only for points newer than the last one (sinceTs).
+  let liveHistoryKey = null;
+  let liveWindowMs = 0;
   let latestSignalRows = [];
   let pollTimer = null;
   let fetchInFlight = false;
@@ -402,6 +621,21 @@
     { key: "ch1_temperature", label: "CH-1 Temperature", color: "#ff6b6b", axis: "right", unit: "°C" },
     { key: "ch2_temperature", label: "CH-2 Temperature", color: "#59b6ff", axis: "right", unit: "°C" },
   ];
+
+  function getRequestedMachineId() {
+    return (machineIdNode.dataset.machineId || "").trim();
+  }
+
+  // History points are compact ({ts, avg_current, ...}); older payloads nested values in signalsByKey.
+  function readHistoryValue(entry, key) {
+    if (!entry) {
+      return null;
+    }
+    if (Object.prototype.hasOwnProperty.call(entry, key)) {
+      return entry[key];
+    }
+    return entry.signalsByKey ? entry.signalsByKey[key] : null;
+  }
 
   function buildAxisScale(values) {
     if (!values.length) {
@@ -493,7 +727,7 @@
         values: history
           .map((entry) => ({
             ts: entry.ts,
-            value: entry.signalsByKey ? entry.signalsByKey[series.key] : null,
+            value: readHistoryValue(entry, series.key),
           }))
           .filter((entry) => typeof entry.value === "number" && Number.isFinite(entry.value)),
       }))
@@ -794,10 +1028,28 @@
     };
   }
 
-  function buildDashboardDataUrl() {
+  function getIncrementalSinceTs() {
+    if (selectedRange || !latestHistory.length || liveHistoryKey !== String(getHistoryFetchLimit())) {
+      return null;
+    }
+    const lastTs = Number(latestHistory[latestHistory.length - 1].ts);
+    return Number.isFinite(lastTs) ? lastTs : null;
+  }
+
+  function mergeLiveHistory(freshPoints) {
+    if (!latestHistory.length) {
+      return freshPoints;
+    }
+    const lastTs = Number(latestHistory[latestHistory.length - 1].ts);
+    const merged = latestHistory.concat(freshPoints.filter((point) => Number(point.ts) > lastTs));
+    const newestTs = Number(merged[merged.length - 1].ts);
+    return merged.filter((point) => Number(point.ts) >= newestTs - liveWindowMs);
+  }
+
+  function buildDashboardDataUrl(sinceTs = null) {
     const url = new URL(iotDataUrl, window.location.origin);
-    const machineId = (machineIdNode.textContent || "").trim();
-    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+    const machineId = getRequestedMachineId();
+    if (machineId) {
       url.searchParams.set("machineId", machineId);
     }
     if (selectedRange) {
@@ -807,14 +1059,17 @@
       url.searchParams.set("maxPoints", String(getSelectedRangeMaxPoints()));
     } else {
       url.searchParams.set("limit", String(getHistoryFetchLimit()));
+      if (sinceTs !== null) {
+        url.searchParams.set("sinceTs", String(sinceTs));
+      }
     }
     return url.toString();
   }
 
   function buildHistoryExportUrl() {
     const url = new URL(iotExportUrl, window.location.origin);
-    const machineId = (machineIdNode.textContent || "").trim();
-    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+    const machineId = getRequestedMachineId();
+    if (machineId) {
       url.searchParams.set("machineId", machineId);
     }
     if (selectedRange) {
@@ -825,8 +1080,72 @@
     return url.toString();
   }
 
+  // The running batch's standard band (from /api/iot-dashboard-data/ liveBatch), in clock time.
+  let liveBand = null;
+
+  function bandPointAt(ts) {
+    if (!liveBand || !liveBand.points.length) return null;
+    const points = liveBand.points;
+    let lo = 0;
+    let hi = points.length - 1;
+    if (ts < points[0].ts) return null;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (points[mid].ts <= ts) lo = mid; else hi = mid - 1;
+    }
+    return ts - points[lo].ts <= liveBand.stepMs ? points[lo] : null;
+  }
+
+  function renderLiveBatch(status) {
+    const warning = document.getElementById("iot-live-warning");
+    const note = document.getElementById("iot-live-note");
+    liveBand = status && status.band && status.band.length
+      ? { points: status.band, stepMs: 10000, compound: status.compound, version: status.version }
+      : null;
+    if (warning) {
+      const text = status && status.warning ? status.warning : "";
+      warning.textContent = text;
+      warning.classList.toggle("d-none", !text);
+    }
+    if (note) {
+      let text = "";
+      if (liveBand) text = `Running batch compared live with the ${liveBand.compound} standard v${liveBand.version} (shaded band).`;
+      else if (status && status.note) text = `${status.compound}: ${status.note}.`;
+      note.textContent = text;
+      note.classList.toggle("d-none", !text);
+    }
+  }
+
+  function buildBandDatasets() {
+    if (!liveBand) return [];
+    const common = { yAxisID: "left", pointRadius: 0, borderWidth: 1, tension: 0, isBand: true, order: 10, spanGaps: true };
+    return [
+      { ...common, label: "Standard band", data: liveBand.points.map((p) => ({ x: p.ts, y: p.upper })),
+        borderColor: "rgba(89,182,255,.35)", backgroundColor: "rgba(89,182,255,.16)", fill: "+1" },
+      { ...common, label: "Standard band lower", data: liveBand.points.map((p) => ({ x: p.ts, y: p.lower })),
+        borderColor: "rgba(89,182,255,.35)", fill: false },
+    ];
+  }
+
   function buildChartDatasets(history) {
+    const lines = buildSeriesDatasets(history);
+    if (liveBand) {
+      const current = lines.find((dataset) => dataset.seriesKey === "avg_current");
+      if (current) {
+        current.segment = {
+          borderColor: (ctx) => {
+            const point = bandPointAt(ctx.p1.parsed.x);
+            return point && (ctx.p1.parsed.y > point.upper || ctx.p1.parsed.y < point.lower) ? "#ff3b3b" : current.borderColor;
+          },
+        };
+      }
+    }
+    return buildBandDatasets().concat(lines);
+  }
+
+  function buildSeriesDatasets(history) {
     return chartSeries.map((series) => ({
+      seriesKey: series.key,
       label: series.label,
       yAxisID: series.axis,
       borderColor: series.color,
@@ -835,7 +1154,7 @@
       data: (Array.isArray(history) ? history : [])
         .map((entry) => {
           const ts = Number(entry && entry.ts);
-          const value = entry && entry.signalsByKey ? entry.signalsByKey[series.key] : null;
+          const value = readHistoryValue(entry, series.key);
           if (!Number.isFinite(ts) || typeof value !== "number" || !Number.isFinite(value)) {
             return null;
           }
@@ -1004,6 +1323,7 @@
               display: false,
             },
             tooltip: {
+              filter: (item) => !item.dataset.isBand,
               callbacks: {
                 title(items) {
                   if (!Array.isArray(items) || !items.length) {
@@ -1254,7 +1574,7 @@
 
   function renderPayload(payload) {
     if (!payload) {
-      machineIdNode.textContent = "No data yet";
+      machineIdNode.textContent = getRequestedMachineId() || "No data yet";
       timestampNode.textContent = "—";
       registerCountNode.textContent = "0";
       latestHistory = [];
@@ -1266,9 +1586,19 @@
       return;
     }
 
-    machineIdNode.textContent = payload.machineId || "Unknown";
+    machineIdNode.textContent = payload.machineId || getRequestedMachineId() || "Unknown";
     timestampNode.textContent = payload.ts ? formatDashboardDateTime(payload.ts) : "—";
-    registerCountNode.textContent = Array.isArray(payload.registers) ? String(payload.registers.length) : "0";
+    // The sender posts named values in `raw` and often no register array; count whichever it sent.
+    const registerCount = Array.isArray(payload.registers) ? payload.registers.length : 0;
+    const rawSignalCount = payload.raw && typeof payload.raw === "object" ? Object.keys(payload.raw).length : 0;
+    const countLabelNode = document.getElementById("iot-register-count-label");
+    if (registerCount || !rawSignalCount) {
+      registerCountNode.textContent = String(registerCount);
+      if (countLabelNode) countLabelNode.textContent = "Register Count";
+    } else {
+      registerCountNode.textContent = String(rawSignalCount);
+      if (countLabelNode) countLabelNode.textContent = "Signal Count";
+    }
     latestSignalRows = payload.signalRows || [];
     renderSignals(payload.signalRows || []);
     renderRegisterRows(payload.registerRows || []);
@@ -1284,8 +1614,8 @@
 
   function buildSummaryUrl(force = false) {
     const url = new URL(iotSummaryUrl, window.location.origin);
-    const machineId = (machineIdNode.textContent || "").trim();
-    if (machineId && machineId !== "No data yet" && machineId !== "Unknown") {
+    const machineId = getRequestedMachineId();
+    if (machineId) {
       url.searchParams.set("machineId", machineId);
     }
     if (selectedRange) {
@@ -1315,7 +1645,8 @@
     }
 
     try {
-      const response = await fetch(buildDashboardDataUrl(), {
+      const sinceTs = getIncrementalSinceTs();
+      const response = await fetch(buildDashboardDataUrl(sinceTs), {
         headers: { "Accept": "application/json" },
         cache: "no-store",
         skipGlobalLoader: true,
@@ -1324,8 +1655,24 @@
         throw new Error("HTTP " + response.status);
       }
       const data = await response.json();
-      latestHistory = Array.isArray(data.history) ? data.history : [];
+      const freshHistory = Array.isArray(data.history) ? data.history : [];
+      if (sinceTs !== null) {
+        latestHistory = mergeLiveHistory(freshHistory);
+      } else {
+        latestHistory = freshHistory;
+        if (selectedRange) {
+          liveHistoryKey = null;
+        } else {
+          liveHistoryKey = String(getHistoryFetchLimit());
+          const firstTs = freshHistory.length ? Number(freshHistory[0].ts) : NaN;
+          const lastTs = freshHistory.length ? Number(freshHistory[freshHistory.length - 1].ts) : NaN;
+          liveWindowMs = Number.isFinite(firstTs) && Number.isFinite(lastTs)
+            ? Math.max(lastTs - firstTs, 60 * 1000)
+            : getHistoryFetchLimit() * 2000;
+        }
+      }
       renderPayload(data.latest || null);
+      renderLiveBatch(selectedRange ? null : (data.liveBatch || null));
       drawChart(latestHistory);
       if (selectedRange) {
         const rawCount = Number(data.historyCount);
@@ -1430,7 +1777,15 @@
     }
   });
 
-  fetchLatestPayload();
+  // A past ?date= opens on that whole day (in the dashboard time zone) instead of the live tail.
+  const initialRangeDay = "{{ iot_range_date|default:''|escapejs }}";
+  if (initialRangeDay && rangeStartInput && rangeEndInput) {
+    rangeStartInput.value = `${initialRangeDay}T00:00`;
+    rangeEndInput.value = `${initialRangeDay}T23:59:59`;
+    applySelectedRange();
+  } else {
+    fetchLatestPayload();
+  }
 
   const summaryOpen = document.getElementById("iot-summary-open");
   const summaryModal = document.getElementById("iotSummaryModal");
