@@ -58,3 +58,32 @@ class PreviewPdfUploadTests(TestCase):
         download.assert_not_called()
         data = signing.loads(ShareLink.objects.get().token, salt="enquiry-share")
         self.assertEqual(data["pdf_filename"], "Quotation-ENQ-9.pdf")
+
+    def test_attached_pdf_is_offered_as_an_explicit_choice(self):
+        response = self._preview(WITH_PDF)
+        self.assertContains(response, 'name="use_attached_pdf"')
+        self.assertContains(response, "customer-rfq.pdf")
+        self.assertNotContains(self._preview(WITHOUT_PDF), 'name="use_attached_pdf"')
+
+    def test_ticking_the_attached_pdf_generates_the_link(self):
+        with patch("enquiries.views.services.fetch_enquiry", return_value=dict(WITH_PDF)), \
+             patch("enquiries.views.services.download_attachment",
+                   return_value=(b"%PDF-attached", "attachment", "application/octet-stream")) as download:
+            response = self.client.post(reverse("enquiries:generate_link"), {
+                "mode": "update", "enquiry_id": "ENQ-9", "use_attached_pdf": "1", "subject": "Gaskets",
+                "customer_name": "Acme"})
+        self.assertEqual(response.status_code, 200)
+        download.assert_called_once()
+        data = signing.loads(ShareLink.objects.get().token, salt="enquiry-share")
+        self.assertEqual(data["pdf_filename"], "customer-rfq.pdf")
+        self.assertEqual(data["pdf_content_type"], "application/pdf")
+
+    def test_attached_pdf_that_cannot_be_downloaded_asks_for_an_upload(self):
+        from enquiries import services
+        with patch("enquiries.views.services.fetch_enquiry", return_value=dict(WITH_PDF)), \
+             patch("enquiries.views.services.download_attachment", side_effect=services.EnquiryServiceError("down")):
+            response = self.client.post(reverse("enquiries:generate_link"), {
+                "mode": "update", "enquiry_id": "ENQ-9", "use_attached_pdf": "1", "subject": "Gaskets",
+                "customer_name": "Acme"}, follow=True)
+        self.assertFalse(ShareLink.objects.exists())
+        self.assertContains(response, "could not be downloaded")

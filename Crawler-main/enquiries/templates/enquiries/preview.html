@@ -260,6 +260,16 @@
             <i class="bi bi-file-earmark-pdf me-1"></i>Quotation PDF{% if requires_pdf_upload %} <span class="text-danger">*</span>{% endif %}
           </label>
           <input type="file" class="form-control" id="sharePdfField" name="share_pdf" accept="application/pdf"{% if requires_pdf_upload %} required{% endif %}>
+          {% if attached_pdf_name %}
+          {# Chosen on purpose, never used silently: tick to share the PDF that is on the enquiry instead of uploading. #}
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" name="use_attached_pdf" value="1" id="useAttachedPdf"
+                   onchange="var f=document.getElementById('sharePdfField'); f.required=!this.checked; f.disabled=this.checked;">
+            <label class="form-check-label" for="useAttachedPdf">
+              Share the PDF on the enquiry instead: <strong>{{ attached_pdf_name }}</strong>
+            </label>
+          </div>
+          {% endif %}
           <div class="form-text">
             {% if requires_pdf_upload %}
               Upload the quotation PDF. The customer sees it on the share link, and it is attached to the email.

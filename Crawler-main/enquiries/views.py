@@ -3004,6 +3004,8 @@ def preview(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         # No silent fallback to a PDF attached to the enquiry: the portal's approved quotation, or an upload.
         "requires_pdf_upload": True,
         "existing_pdf_name": "",
+        # Offered as an explicit tick box (never a silent fallback) when the enquiry already carries a PDF.
+        "attached_pdf_name": _first_pdf_name(enquiry),
         "share_error": None,
         **_share_quotation_choices(enquiry_id),
     }
@@ -3141,6 +3143,7 @@ def _render_preview_response(
         "hidden_errors": hidden_error_msgs2,
         "requires_pdf_upload": True,
         "existing_pdf_name": "",
+        "attached_pdf_name": _first_pdf_name(enquiry) if mode != "subdivision" else "",
         "share_error": share_error,
         "selected_share_quotation": request.POST.get("share_quotation") or "",
         **_share_quotation_choices(enquiry.get("enquiry_id") or enquiry_id),
@@ -3388,7 +3391,15 @@ def generate_link(request: HttpRequest) -> HttpResponse:
         )
         if download:
             pdf_bytes, pdf_filename, pdf_content_type = download
-    # No silent fallback to the PDF attached to the enquiry: without a quotation in the portal, upload the PDF.
+    elif request.POST.get("use_attached_pdf") and enquiry_id:
+        # The user ticked "Share the PDF on the enquiry": use the enquiry's attached PDF (never done silently).
+        download = _download_primary_pdf(api_root, enquiry_id, existing_enquiry or {}, request)
+        if not download:
+            return _render_preview_response(
+                request, form, mode, share_error="pdf",
+                error_message="The PDF attached to this enquiry could not be downloaded. Upload the PDF instead.")
+        pdf_bytes, pdf_filename, pdf_content_type = download
+    # Otherwise no fallback to the PDF attached to the enquiry: without a quotation in the portal, upload the PDF.
 
     if not pdf_bytes:
         return _render_preview_response(
