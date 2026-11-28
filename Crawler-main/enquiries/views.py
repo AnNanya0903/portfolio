@@ -36,7 +36,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from . import forms, services
 from . import work_orders
-from .models import CustomerStatusEmail, EnquiryContact, FollowUpSent, FollowUpStart, GmailLeadAnalysis, ShareLink, WorkOrder
+from .models import CustomerStatusEmail, EnquiryAttachment, EnquiryContact, FollowUpSent, FollowUpStart, GmailLeadAnalysis, ShareLink, WorkOrder
 from . import customer_emails, negotiation, payment_terms, share_email, status_emails
 from .constants import (
     COSTING_FIELD_LAYOUT,
@@ -675,6 +675,57 @@ def _first_pdf_name(record: Mapping[str, Any] | None) -> str:
         if attachment_mapping and _attachment_is_pdf(attachment_mapping):
             return str(attachment_mapping.get("file_name") or "PDF attached to this enquiry")
     return ""
+
+
+def _attached_pdf_choices(enquiry_id: str, record: Mapping[str, Any] | None) -> List[Dict[str, str]]:
+    """PDFs already on the enquiry that Generate Link can share when the user picks one: files added on the
+    enquiry's negotiation page (newest first), then PDFs stored with the enquiry in the enquiry service."""
+    choices: List[Dict[str, str]] = []
+    if enquiry_id:
+        for item in EnquiryAttachment.objects.filter(enquiry_id=str(enquiry_id)).order_by("-created_at", "-pk"):
+            if _attachment_is_pdf({"file_name": item.file_name, "content_type": item.content_type}):
+                choices.append({"key": f"file:{item.pk}", "name": item.file_name,
+                                "where": item.get_category_display()})
+    for attachment in (record or {}).get("general_attachments") or (record or {}).get("attachments") or []:
+        try:
+            mapping = dict(attachment)
+        except Exception:
+            continue
+        attachment_id = str(mapping.get("attachment_id") or "")
+        if attachment_id and _attachment_is_pdf(mapping):
+            choices.append({"key": f"svc:{attachment_id}",
+                            "name": str(mapping.get("file_name") or "PDF attached to this enquiry"),
+                            "where": "Enquiry"})
+    return choices
+
+
+def _load_attached_pdf(key: str, enquiry_id: str, record: Mapping[str, Any] | None, api_root: str,
+                       request: HttpRequest) -> Optional[Tuple[bytes, str, str]]:
+    """The bytes, file name and type of the attached PDF the user picked (a key from _attached_pdf_choices)."""
+    kind, _, ident = (key or "").partition(":")
+    if kind == "file" and ident.isdigit():
+        item = EnquiryAttachment.objects.filter(pk=int(ident), enquiry_id=str(enquiry_id)).first()
+        if item is None or not _attachment_is_pdf({"file_name": item.file_name, "content_type": item.content_type}):
+            return None
+        try:
+            with item.file.open("rb") as handle:
+                content = handle.read()
+        except Exception:
+            logger.warning("generate_link: could not read attachment %s of %s", item.pk, enquiry_id, exc_info=True)
+            return None
+        if not content:
+            return None
+        name = share_email.proper_file_name(item.file_name, preferred=item.file_name, content=content)
+        return content, name, share_email.proper_content_type(item.content_type, name, content)
+    if kind == "svc" and ident:
+        for attachment in (record or {}).get("general_attachments") or (record or {}).get("attachments") or []:
+            try:
+                mapping = dict(attachment)
+            except Exception:
+                continue
+            if str(mapping.get("attachment_id") or "") == ident:
+                return _download_primary_pdf(api_root, enquiry_id, {"general_attachments": [mapping]}, request)
+    return None
 
 
 def _record_has_pdf(record: Mapping[str, Any] | None) -> bool:
@@ -3005,7 +3056,7 @@ def preview(request: HttpRequest, enquiry_id: str) -> HttpResponse:
         "requires_pdf_upload": True,
         "existing_pdf_name": "",
         # Offered as an explicit tick box (never a silent fallback) when the enquiry already carries a PDF.
-        "attached_pdf_name": _first_pdf_name(enquiry),
+        "attached_pdfs": _attached_pdf_choices(enquiry_id, enquiry),
         "share_error": None,
         **_share_quotation_choices(enquiry_id),
     }
@@ -3143,7 +3194,9 @@ def _render_preview_response(
         "hidden_errors": hidden_error_msgs2,
         "requires_pdf_upload": True,
         "existing_pdf_name": "",
-        "attached_pdf_name": _first_pdf_name(enquiry) if mode != "subdivision" else "",
+        "attached_pdfs": _attached_pdf_choices(enquiry.get("enquiry_id") or enquiry_id, enquiry)
+        if mode != "subdivision" else [],
+        "selected_attached_pdf": request.POST.get("attached_pdf") or "",
         "share_error": share_error,
         "selected_share_quotation": request.POST.get("share_quotation") or "",
         **_share_quotation_choices(enquiry.get("enquiry_id") or enquiry_id),
@@ -3391,9 +3444,9 @@ def generate_link(request: HttpRequest) -> HttpResponse:
         )
         if download:
             pdf_bytes, pdf_filename, pdf_content_type = download
-    elif request.POST.get("use_attached_pdf") and enquiry_id:
-        # The user ticked "Share the PDF on the enquiry": use the enquiry's attached PDF (never done silently).
-        download = _download_primary_pdf(api_root, enquiry_id, existing_enquiry or {}, request)
+    elif request.POST.get("attached_pdf") and enquiry_id:
+        # The user picked a PDF already on the enquiry (negotiation-page file or enquiry attachment); never silent.
+        download = _load_attached_pdf(request.POST["attached_pdf"], enquiry_id, existing_enquiry, api_root, request)
         if not download:
             return _render_preview_response(
                 request, form, mode, share_error="pdf",
