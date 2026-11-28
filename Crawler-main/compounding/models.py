@@ -356,7 +356,8 @@ class CompoundingIoTRun(models.Model):
     # Empty while a batch started with "Start batch" is still on the machine.
     ended_at = models.DateTimeField(null=True, blank=True)
     # Empty until the batch is ended and graded.
-    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, blank=True, default=QUALITY_GOOD)
+    # Blank is "Pending": never assume a batch was good.
+    stock_quality = models.CharField(max_length=16, choices=QUALITY_CHOICES, blank=True, default="")
     batch_type = models.CharField(max_length=2, choices=BATCH_TYPE_CHOICES, blank=True, default="")
     batch_weight_kg = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
     crin = models.ForeignKey(
@@ -368,6 +369,26 @@ class CompoundingIoTRun(models.Model):
     )
     rejection_reason = models.CharField(max_length=32, choices=REJECTION_REASON_CHOICES, blank=True, default="")
     notes = models.TextField(blank=True, default="")
+
+    SOURCE_OPERATOR = "operator"
+    SOURCE_AUTO = "iot_auto"
+    SOURCE_SPLIT = "split"
+    SOURCE_CORRECTED = "corrected"
+    SOURCE_CHOICES = [
+        (SOURCE_OPERATOR, "Operator"),
+        (SOURCE_AUTO, "IoT auto"),
+        (SOURCE_SPLIT, "Split"),
+        (SOURCE_CORRECTED, "Corrected"),
+    ]
+    FLAG_NO_MACHINE_RUN = "no_machine_run"
+    FLAG_DUPLICATE = "duplicate"
+    FLAG_CHOICES = [(FLAG_NO_MACHINE_RUN, "No machine run"), (FLAG_DUPLICATE, "Duplicate entry")]
+    UNASSIGNED = "Unassigned"
+
+    source = models.CharField(max_length=12, choices=SOURCE_CHOICES, default=SOURCE_OPERATOR)
+    compound_needs_confirm = models.BooleanField(default=False)
+    crin_needs_confirm = models.BooleanField(default=False)
+    flag = models.CharField(max_length=16, choices=FLAG_CHOICES, blank=True, default="")
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -388,6 +409,17 @@ class CompoundingIoTRun(models.Model):
 
     def __str__(self) -> str:
         return f"{self.plan.plan_date}: {self.compound_code} ({self.machine_id or 'machine'})"
+
+    @property
+    def is_confirmed(self) -> bool:
+        """Counts towards the board's Actual: a finished entry with a compound nobody still has to confirm."""
+        return bool(
+            self.ended_at
+            and not self.flag
+            and self.compound_code != self.UNASSIGNED
+            and not self.compound_needs_confirm
+            and not self.crin_needs_confirm
+        )
 
 
 class IoTSample(models.Model):
@@ -495,9 +527,14 @@ class DetectedBatch(models.Model):
     dips = models.PositiveIntegerField(default=0)
 
     # The operator's entry with the largest time overlap gives the compound; none means "Not logged".
-    log_run = models.ForeignKey(
-        "CompoundingIoTRun", on_delete=models.SET_NULL, null=True, blank=True, related_name="detected_batches"
+    # One log entry per detected batch and one batch per entry.
+    log_run = models.OneToOneField(
+        "CompoundingIoTRun", on_delete=models.SET_NULL, null=True, blank=True, related_name="detected_batch"
     )
+    # Already running when the data began: shown, but not logged or used in standards.
+    is_partial = models.BooleanField(default=False)
+    # A supervisor deleted this batch's log entry; do not create it again.
+    log_suppressed = models.BooleanField(default=False)
     log_overlap_s = models.PositiveIntegerField(null=True, blank=True)
     compound_code = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
@@ -590,6 +627,26 @@ class MachineSegment(models.Model):
     @property
     def duration_s(self) -> int:
         return max(int((self.end_at - self.start_at).total_seconds()), 0)
+
+
+class IoTRunAudit(models.Model):
+    """What a log entry looked like before it was split, corrected, edited, confirmed or deleted."""
+
+    run = models.ForeignKey(
+        CompoundingIoTRun, on_delete=models.SET_NULL, null=True, blank=True, related_name="audits"
+    )
+    run_pk = models.PositiveIntegerField(db_index=True)
+    action = models.CharField(max_length=16)
+    before = models.JSONField(default=dict)
+    after = models.JSONField(default=dict, blank=True)
+    # Empty when the auto-log made the change.
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    changed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-changed_at", "-id"]
 
 
 class CompoundingStockEntry(models.Model):

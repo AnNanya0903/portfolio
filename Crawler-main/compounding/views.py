@@ -1250,7 +1250,7 @@ def _board_section_rows(lines: List[Dict[str, Any]], kind: str) -> List[Dict[str
     rows: List[Dict[str, Any]] = []
     for line in lines:
         has_mb = bool(line["planned_mb"] or line["actual_mb"])
-        has_fb = bool(line["planned_fb"] or line["actual_fb"])
+        has_fb = bool(line["planned_fb"] or line["actual_fb"] or line.get("iot_fb"))
         if kind == "fb":
             if not has_fb:
                 continue
@@ -1269,7 +1269,13 @@ def _board_section_rows(lines: List[Dict[str, Any]], kind: str) -> List[Dict[str
                 "shift3": line[f"shift3_{kind}"],
                 "planned": line[f"planned_{kind}"],
                 "planned_weight": line[f"planned_{kind}_weight"],
-                "actual": line[f"actual_{kind}"],
+                # Until the line is saved, FB "Actual" is pre-filled with the confirmed mill batches.
+                "actual": (
+                    line["iot_fb"]
+                    if kind == "fb" and not line["actuals_saved"] and line.get("iot_fb")
+                    else line[f"actual_{kind}"]
+                ),
+                "iot_logged": line.get("iot_fb", 0) if kind == "fb" else 0,
                 "actual_weight": line[f"actual_{kind}_weight"],
                 "remaining": line[f"remaining_{kind}"],
                 "remaining_weight": line[f"remaining_{kind}_weight"],
@@ -2421,7 +2427,9 @@ def iot_dashboard(request):
     compound_options = _iot_run_compound_options(plan)
     from .iot_views import daily_context
 
-    # The daily batch-variation view (replaces the old "Compounds run" table).
+    from .iot_log_views import run_rows
+
+    # The daily batch-variation view.
     daily = daily_context(machine_id, plan.plan_date, request.user)
     open_batch = _open_iot_batch(machine_id)
     return render(
@@ -2446,6 +2454,7 @@ def iot_dashboard(request):
             "iot_machine_id": machine_id,
             "iot_run_compound_options": compound_options,
             **daily,
+            "run_rows": run_rows(machine_id, plan.plan_date),
             "iot_run_quality_choices": CompoundingIoTRun.QUALITY_CHOICES,
             "iot_rejection_reason_choices": CompoundingIoTRun.REJECTION_REASON_CHOICES,
             "iot_batch_crin_options": _iot_batch_crin_options(),
@@ -2880,7 +2889,10 @@ def display(request):
     plan = _get_or_create_plan(plan_date, user=request.user)
     _seed_rollover_lines_for_display(plan)
 
+    from .iot_log_views import board_iot_counts
+
     line_objs = list(plan.lines.select_related("crin_request").order_by("position", "id"))
+    iot_counts = board_iot_counts(plan, line_objs)
     lines: list[dict[str, Any]] = []
     for line in line_objs:
         planned_mb = sum(int(v or 0) for v in (line.shift1_mb, line.shift2_mb, line.shift3_mb))
@@ -2923,6 +2935,7 @@ def display(request):
                 "planned_fb": planned_fb,
                 "actual_mb": actual_mb,
                 "actual_fb": actual_fb,
+                "iot_fb": iot_counts.get(line.id, 0),
                 "actuals_saved": bool(getattr(line, "actuals_saved", False)),
                 "remaining_mb": remaining_mb,
                 "remaining_fb": remaining_fb,

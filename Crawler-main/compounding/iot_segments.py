@@ -1,16 +1,15 @@
 """Machine-state segmentation of a day's current trace, and the DetectedBatch records it produces.
 
-The state machine runs on a centred rolling mean (IOT_SEG_ROLLING_S, default 30 s) of avg_current:
+Rules, on a centred 30 s rolling mean of avg_current (all thresholds in iot_config):
 
-    OFF   rolling mean < IOT_SEG_OFF_BELOW_A (5 A)
-    IDLE  between OFF and IOT_SEG_BATCH_ABOVE_A (45 A) - the rolls turning empty at ~35-40 A
-    BATCH rolling mean >= 45 A for IOT_SEG_BATCH_START_SUSTAIN_S (60 s); it lasts until the mean stays below
-          45 A for IOT_SEG_BATCH_END_SUSTAIN_S (90 s), so shorter dips (cutting/sheeting) stay inside it.
-          One exception: a dip of at least IOT_SEG_RELOAD_DIP_S (40 s) followed by a new loading spike starts
-          a new batch, which separates back-to-back batches with only a minute between them.
+    START  the loading spike: the mean rises above 90 A after having been below 60 A. The batch starts at the
+           last point below 60 A before that rise. This starts a new batch even if the mill never went idle.
+    END    just before the next loading spike (or where the mill began idling right before it), or when the
+           mean stays below 45 A for 120 s (idle / off). Shorter dips stay inside the batch.
+    A spike less than MIN_BATCH_SECONDS (8 min) after a start belongs to the same loading. Shorter stretches
+    are not batches. Work already running when the data begins is "partial - start unknown".
 
-Batch stretches shorter than MIN_BATCH_SECONDS (480 s) count as IDLE. Telemetry gaps longer than
-IOT_SEG_MAX_GAP_S become "no_data" segments. Consecutive segments cover the data without gaps.
+Telemetry gaps become "no_data" segments. Consecutive segments cover the data without gaps.
 """
 from __future__ import annotations
 
@@ -57,6 +56,7 @@ class Segment:
     start_ts: int
     end_ts: int
     is_open: bool = False
+    is_partial: bool = False
 
     @property
     def duration_s(self) -> int:
@@ -81,56 +81,51 @@ def rolling_mean(points: Sequence[Tuple[int, float]], window_s: int) -> List[flo
     return means
 
 
-def _batch_spans(points: Sequence[Tuple[int, float]], means: Sequence[float], machine_id: str) -> List[Tuple[int, int, bool]]:
-    """(start_index, end_index_exclusive, reached_block_end) for each batch stretch in one gap-free block."""
-    above = iot_config.batch_above_a()
-    start_ms = iot_config.batch_start_sustain_s() * 1000
-    end_ms = iot_config.batch_end_sustain_s() * 1000
-    reload_dip_ms = iot_config.reload_dip_s() * 1000
-    reload_within_ms = iot_config.reload_within_s() * 1000
-    min_batch_ms = iot_config.min_batch_seconds() * 1000
-    load_threshold = iot_config.load_threshold_a(machine_id)
+def _batch_spans(points: Sequence[Tuple[int, float]], means: Sequence[float],
+                 machine_id: str) -> List[Tuple[int, int, bool, bool]]:
+    """(start_index, end_index_exclusive, reached_block_end, partial) for each batch in one gap-free block."""
+    idle = iot_config.batch_above_a()
+    low = iot_config.spike_arm_below_a()
+    spike = iot_config.load_threshold_a(machine_id)
+    idle_ms = iot_config.batch_end_sustain_s() * 1000
+    min_ms = iot_config.min_batch_seconds() * 1000
 
-    spans: List[Tuple[int, int, bool]] = []
-    in_batch = False
-    batch_start = above_since = below_since = None
-    n = len(points)
-
-    def spike_follows(index: int) -> bool:
-        limit = points[index][0] + reload_within_ms
-        for j in range(index, n):
-            if points[j][0] > limit:
-                return False
-            if means[j] > load_threshold:
-                return True
-        return False
-
-    for i in range(n):
-        ts = points[i][0]
-        mean = means[i]
-        if not in_batch:
-            if mean >= above:
-                above_since = i if above_since is None else above_since
-                if ts - points[above_since][0] >= start_ms:
-                    in_batch, batch_start, below_since = True, above_since, None
-            else:
-                above_since = None
+    spans: List[Tuple[int, int, bool, bool]] = []
+    start: Optional[int] = 0 if means[0] >= idle else None  # already working: the start was not seen
+    partial = start is not None
+    armed = means[0] < low
+    last_low: Optional[int] = None
+    below_since: Optional[int] = None
+    idle_from = idle_to = None  # the latest stretch below the idle level
+    for i, mean in enumerate(means):
+        if mean < idle:
+            if idle_to != i - 1:
+                idle_from = i
+            idle_to = i
+        if mean < low:
+            armed, last_low = True, i
+        if armed and mean > spike:
+            armed = False
+            rise = last_low if last_low is not None else i
+            if start is None:
+                start, partial, below_since = rise, False, None
+            elif partial or points[rise][0] - points[start][0] >= min_ms:
+                end = rise
+                if idle_to is not None and idle_from > start and points[rise][0] - points[idle_to][0] <= 30_000:
+                    end = idle_from  # the mill idled just before reloading
+                spans.append((start, end, False, partial))
+                start, partial, below_since = rise, False, None
+        if start is None:
             continue
-        if mean < above:
-            below_since = i if below_since is None else below_since
-            if ts - points[below_since][0] >= end_ms:
-                spans.append((batch_start, below_since, False))
-                in_batch, above_since, below_since = False, None, None
-        elif below_since is not None:
-            dip_ms = ts - points[below_since][0]
-            so_far_ms = points[below_since][0] - points[batch_start][0]
-            if dip_ms >= reload_dip_ms and so_far_ms >= min_batch_ms and spike_follows(i):
-                # The mill was emptied and loaded again: close this batch and start the next one here.
-                spans.append((batch_start, below_since, False))
-                batch_start = i
+        if mean >= idle:
             below_since = None
-    if in_batch:
-        spans.append((batch_start, n, True))
+            continue
+        below_since = i if below_since is None else below_since
+        if points[i][0] - points[below_since][0] >= idle_ms:
+            spans.append((start, below_since, False, partial))
+            start, partial, below_since = None, False, None
+    if start is not None:
+        spans.append((start, len(points), True, partial))
     return spans
 
 
@@ -200,16 +195,17 @@ def segment_samples(samples: Sequence[Dict[str, Any]], *, machine_id: str = "",
             segments.append(Segment(NO_DATA, segments[-1].end_ts, block[0][0]))
 
         cursor = 0
-        for span_start, span_end, reached_end in _batch_spans(block, means, machine_id):
+        for span_start, span_end, reached_end, partial in _batch_spans(block, means, machine_id):
             batch_start_ts = block[span_start][0]
             batch_end_ts = block[span_end][0] if span_end < len(block) else block_end_ts
             still_running = reached_end and is_last_block and open_end
-            if batch_end_ts - batch_start_ts < min_batch_ms and not still_running:
+            shortest = iot_config.batch_end_sustain_s() * 1000 if partial else min_batch_ms
+            if batch_end_ts - batch_start_ts < shortest and not still_running:
                 continue  # too short to be a batch: left to the idle/off pass below
             if span_start > cursor:
                 for state, s_ts, e_ts in _idle_off_runs(block, means, cursor, span_start, batch_start_ts):
                     segments.append(Segment(state, s_ts, e_ts))
-            segments.append(Segment(BATCH, batch_start_ts, batch_end_ts, is_open=still_running))
+            segments.append(Segment(BATCH, batch_start_ts, batch_end_ts, is_open=still_running, is_partial=partial))
             cursor = span_end
         if cursor < len(block):
             runs = _idle_off_runs(block, means, cursor, len(block), block_end_ts)
@@ -330,38 +326,6 @@ def _apply_numbers(batch: DetectedBatch, numbers: Dict[str, Any]) -> None:
     batch.dips = numbers["dips"]
 
 
-def link_operator_entry(batch: DetectedBatch) -> None:
-    """The operator's entry (same machine) with the largest time overlap gives the batch its compound.
-
-    Typed times are unreliable (a 16 min batch logged as 1 min still overlaps it), so any overlap counts and
-    the batch keeps the machine's own times. No overlapping entry: compound "" ("Not logged").
-    """
-    from .models import CompoundingIoTRun
-
-    candidates = CompoundingIoTRun.objects.filter(machine_id=batch.machine_id, started_at__lt=batch.end_at).exclude(
-        ended_at__lte=batch.start_at
-    )
-    best, best_s = None, 0.0
-    now = timezone.now()
-    for run in candidates:
-        run_end = run.ended_at or max(now, run.started_at)
-        seconds = (min(run_end, batch.end_at) - max(run.started_at, batch.start_at)).total_seconds()
-        if seconds > best_s:
-            best, best_s = run, seconds
-    batch.log_run = best
-    batch.log_overlap_s = int(best_s) if best else None
-    batch.compound_code = best.compound_code if best else ""
-
-
-def _after_batch_saved(batch: DetectedBatch, samples: Sequence[Dict[str, Any]]) -> None:
-    """Link the operator's entry, then compare the batch with its compound's standard."""
-    from . import iot_compare
-
-    link_operator_entry(batch)
-    batch.save(update_fields=["log_run", "log_overlap_s", "compound_code", "updated_at"])
-    iot_compare.compare_batch(batch)
-
-
 def detect_range(machine_id: str, start_ts: int, end_ts: int, *, now_ms: Optional[int] = None) -> Dict[str, Any]:
     """Segment [start_ts, end_ts), replace its MachineSegment rows and create/update/remove DetectedBatches.
 
@@ -395,6 +359,7 @@ def detect_range(machine_id: str, start_ts: int, end_ts: int, *, now_ms: Optiona
             batch.start_at = ms_to_datetime(segment.start_ts)
             batch.end_at = ms_to_datetime(segment.end_ts)
             batch.is_open = segment.is_open
+            batch.is_partial = segment.is_partial
             _apply_numbers(batch, batch_numbers(samples, segment.start_ts, segment.end_ts, machine_id))
             batch.save()
             used.add(batch.pk)
@@ -416,10 +381,17 @@ def detect_range(machine_id: str, start_ts: int, end_ts: int, *, now_ms: Optiona
             for segment in segments
         ])
 
+    from . import iot_autolog, iot_compare
+
+    try:  # logging and analysis must never lose the detection itself
+        iot_autolog.sync_logs(machine_id, start_dt, end_dt)
+    except Exception:
+        logger.exception("IoT auto-log failed for %s", machine_id)
     for _segment, batch in kept:
         try:
-            _after_batch_saved(batch, samples)
-        except Exception:  # analysis must never lose the detection itself
+            batch.refresh_from_db()
+            iot_compare.compare_batch(batch)
+        except Exception:
             logger.exception("IoT batch analysis failed for %s", batch.pk)
     return {
         "machineId": machine_id,

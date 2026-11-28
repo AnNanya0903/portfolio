@@ -166,7 +166,7 @@ COMPARE_FIELDS = [
 def compare_batch(batch: DetectedBatch, *, save: bool = True) -> DetectedBatch:
     reset(batch)
     standard = iot_standards.active_standard(batch.compound_code)
-    if batch.is_open or not batch.curve:
+    if batch.is_open or batch.is_partial or not batch.curve:
         batch.result = ""
     elif standard is None:
         batch.result = DetectedBatch.RESULT_NO_STANDARD
@@ -175,7 +175,7 @@ def compare_batch(batch: DetectedBatch, *, save: bool = True) -> DetectedBatch:
             batch.reasons = [f"Standard not ready ({min(count, needed)}/{needed})"]
     else:
         evaluate(batch, standard)
-    if not batch.is_open and batch.curve:
+    if not batch.is_open and not batch.is_partial and batch.curve:
         looks_like = pattern_check(batch, batch.match_pct)
         if looks_like:
             batch.looks_like = looks_like

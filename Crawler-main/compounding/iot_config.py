@@ -38,23 +38,14 @@ def batch_above_a() -> float:
     return _number("IOT_SEG_BATCH_ABOVE_A", 45.0)
 
 
-def batch_start_sustain_s() -> int:
-    return _int("IOT_SEG_BATCH_START_SUSTAIN_S", 60)
+def spike_arm_below_a() -> float:
+    """A loading spike only counts after the 30 s mean has been below this."""
+    return _number("IOT_SEG_SPIKE_ARM_BELOW_A", 60.0)
 
 
 def batch_end_sustain_s() -> int:
     """A batch ends once the rolling mean stays below batch_above_a this long; shorter dips stay in the batch."""
-    return _int("IOT_SEG_BATCH_END_SUSTAIN_S", 90)
-
-
-def reload_dip_s() -> int:
-    """A dip at least this long, followed by a new loading spike, starts a new batch even before end_sustain."""
-    return _int("IOT_SEG_RELOAD_DIP_S", 40)
-
-
-def reload_within_s() -> int:
-    """...when the spike (a sample above the load threshold) comes within this long of the current rising again."""
-    return _int("IOT_SEG_RELOAD_WITHIN_S", 180)
+    return _int("IOT_SEG_BATCH_END_SUSTAIN_S", 120)
 
 
 def min_state_s() -> int:
@@ -135,6 +126,22 @@ def min_allowed_range(name: str, median: float) -> float:
     if name == "steady_current":
         return _number("IOT_RANGE_MIN_STEADY_A", 3.0)
     return 0.0
+
+
+# Auto-logging ---------------------------------------------------------------------------------------------
+def log_time_tolerance_s() -> int:
+    """A manual entry further than this from the machine's times is recorded as corrected."""
+    return _int("IOT_LOG_TIME_TOLERANCE_S", 180)
+
+
+def log_cover_ratio() -> float:
+    """A manual entry "covers" a detected batch when it overlaps at least this share of it."""
+    return _number("IOT_LOG_COVER_RATIO", 0.5)
+
+
+def open_entry_max_s() -> int:
+    """A never-ended entry is treated as lasting at most this long."""
+    return _int("IOT_LOG_OPEN_ENTRY_MAX_S", 7200)
 
 
 # Comparing a batch with its standard -------------------------------------------------------------------------

@@ -70,7 +70,10 @@ def batch_row(batch: DetectedBatch, number: int) -> Dict[str, Any]:
         "kwh": round(batch.energy_kwh, 1) if batch.energy_kwh is not None else None,
         "match_pct": batch.match_pct,
         "result": result,
-        "result_label": "Running" if batch.is_open else RESULT_LABELS.get(batch.result, "—"),
+        "result_label": (
+            "Running" if batch.is_open else "Partial – start unknown" if batch.is_partial
+            else RESULT_LABELS.get(batch.result, "—")
+        ),
         "tone": "info" if batch.is_open else RESULT_TONES.get(batch.result, "secondary"),
         "reasons": batch.reasons or [],
         "excluded": batch.excluded,

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import iot_views, views
+from . import iot_log_views, iot_views, views
 
 app_name = "compounding"
 
@@ -33,6 +33,9 @@ urlpatterns = [
     path("iot-dashboard/batches/<int:batch_id>/", iot_views.detected_batch_detail, name="iot_detected_batch"),
     path("iot-dashboard/batches/<int:batch_id>/exclude/", iot_views.exclude_batch, name="iot_exclude_batch"),
     path("iot-dashboard/standards/", iot_views.standards, name="iot_standards"),
+    path("iot-dashboard/log/<int:run_id>/", iot_log_views.edit_run, name="iot_run_edit"),
+    path("iot-dashboard/log/<int:run_id>/confirm/", iot_log_views.confirm_run, name="iot_run_confirm"),
+    path("iot-dashboard/log/<int:run_id>/delete/", iot_log_views.delete_run, name="iot_run_delete"),
     path("planning/", views.planning, name="planning"),
     path("board/", views.display, name="display"),
     path("planning/crin/", views.create_crin, name="create_crin"),

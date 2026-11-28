@@ -265,6 +265,9 @@
                 </form>
                 </details>
 
+                <h3 class="h6 text-uppercase text-muted fw-semibold mt-4 mb-2" id="compounds-run">Compounds run on {{ plan.plan_date|date:"d M Y" }}</h3>
+                {% include "magicwand/_iot_runs.html" %}
+
               </div>
             </div>
           </div>

@@ -63,7 +63,10 @@ class SegmentationTests(SimpleTestCase):
         def with_dip(t: int, duration: int) -> float:
             return 30.0 if 400 <= t < 450 else 73.0  # a 50 s dip, no reload spike after it
 
-        plan = [(idle, "10:00", "10:05"), (with_dip, "10:05", "10:20"), (idle, "10:20", "10:30")]
+        def loaded(t: int, duration: int) -> float:
+            return 40.0 + t * 3 if t < 20 else 105.0 if t < 100 else with_dip(t, duration)
+
+        plan = [(idle, "10:00", "10:05"), (loaded, "10:05", "10:20"), (idle, "10:20", "10:30")]
         segments = iot_segments.segment_samples(as_rows(build_payloads(plan)), machine_id=MACHINE)
         self.assertEqual([s.state for s in segments], ["idle", "batch", "idle"])
 
@@ -196,7 +199,9 @@ class OperatorEntryLinkTests(TestCase):
     def test_compounds_come_from_the_largest_overlap(self) -> None:
         self.assertEqual(self.batches[0].compound_code, "AG-7020")
         self.assertEqual(self.batches[2].compound_code, "AG-7020")  # linked although logged as 1 min
-        self.assertEqual(self.batches[2].log_run.started_at, iot_segments.ms_to_datetime(ist_ms("11:55")))
+        # The mis-tapped 1-2 min entry now carries the machine's times.
+        self.assertEqual(self.batches[2].log_run.started_at, self.batches[2].start_at)
+        self.assertEqual(self.batches[2].log_run.source, "corrected")
         self.assertEqual(self.batches[4].compound_code, "AG-FRC 70")
         self.assertEqual(self.batches[1].compound_code, "")
         self.assertEqual(self.batches[1].compound_label, "Not logged")

@@ -54,6 +54,7 @@
                     {% if row.actuals_saved %}disabled{% endif %}
                   >
                   {% if row.actual_weight %}<div class="text-muted small">{{ row.actual_weight }} qty</div>{% endif %}
+                  {% if row.iot_logged %}<div class="small text-primary">{{ row.iot_logged }} confirmed on the mill{% if not row.actuals_saved %} · press Save{% endif %}</div>{% endif %}
                 </td>
                 <td class="text-center">
                   {{ row.remaining }}

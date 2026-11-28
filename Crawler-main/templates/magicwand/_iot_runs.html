@@ -1,0 +1,37 @@
+{% if run_rows %}
+<div class="table-responsive">
+  <table class="table table-sm align-middle mb-0" id="iotRunsTable">
+    <thead>
+      <tr><th scope="col">Compound</th><th scope="col">CRIN</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Time taken</th><th scope="col">Quality</th><th scope="col">Source</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr>
+    </thead>
+    <tbody>
+      {% for row in run_rows %}
+      <tr class="{% if row.needs_action %}table-warning{% elif row.run.flag %}text-muted{% endif %}">
+        <td class="fw-semibold">
+          {% if row.unassigned %}<span class="text-danger">Unassigned – please select</span>{% else %}{{ row.run.compound_code }}{% endif %}
+          {% if row.run.compound_needs_confirm %}<div class="small fw-normal">from plan – please confirm</div>{% endif %}
+          {% if row.looks_like %}<div class="small fw-normal text-danger">Curve looks like {{ row.looks_like }}</div>{% endif %}
+        </td>
+        <td class="small">{% if row.run.crin %}{{ row.run.crin.display_number }}{% if row.run.crin_needs_confirm %}<div>please confirm</div>{% endif %}{% else %}—{% endif %}</td>
+        <td>{{ row.start }}</td>
+        <td>{{ row.end }}</td>
+        <td>{{ row.time_taken }}</td>
+        <td>{% if row.pending %}<span class="badge text-bg-light border">Pending</span>{% else %}{{ row.quality }}{% endif %}</td>
+        <td>
+          <span class="badge {% if row.run.source == 'iot_auto' %}text-bg-primary{% elif row.run.source == 'split' %}text-bg-info{% elif row.run.source == 'corrected' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">{{ row.run.get_source_display }}</span>
+          {% if row.run.flag %}<span class="badge text-bg-dark">{{ row.run.get_flag_display }}</span>{% endif %}
+        </td>
+        <td class="text-end text-nowrap">
+          {% if row.can_confirm %}
+          <form method="post" action="{% url 'compounding:iot_run_confirm' row.run.pk %}" class="d-inline">{% csrf_token %}<button type="submit" class="btn btn-sm btn-success">Confirm</button></form>
+          {% endif %}
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'compounding:iot_run_edit' row.run.pk %}">Edit</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-muted small mb-0">No batches logged for this date yet.</p>
+{% endif %}

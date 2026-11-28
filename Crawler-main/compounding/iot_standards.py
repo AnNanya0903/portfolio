@@ -39,8 +39,9 @@ def normal_batches(compound_code: str):
         compound_code=compound_code,
         excluded=False,
         is_open=False,
+        is_partial=False,
         load_at__isnull=False,
-    ).exclude(curve=[])
+    ).exclude(curve=[]).exclude(log_run__compound_needs_confirm=True)
 
 
 def readiness(compound_code: str) -> Tuple[int, int]:
