@@ -37,6 +37,8 @@ env_variables:
   FOLLOW_UP_AUTO_DRY_RUN: "False"
   FOLLOW_UP_AUTO_SENDER: "avigiri"
   MARKETING_FOLLOW_UP_SENDER: "kumar"
+  # Site the share links in follow-up emails point to; without it no follow-up can be sent.
+  ENQUIRY_SHARE_BASE_URL: "https://www.magicwand.biz"
   DJANGO_SETTINGS_MODULE: magicwand.settings_staging
   GOOGLE_CLOUD_PROJECT: avigiri-techinfra-474213
   SETTINGS_NAME: django_settings
