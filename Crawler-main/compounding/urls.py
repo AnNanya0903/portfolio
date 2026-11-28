@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import iot_views, views
 
 app_name = "compounding"
 
@@ -28,6 +28,11 @@ urlpatterns = [
     path("api/cron/iot-sync/", views.iot_cron_sync, name="iot_cron_sync"),
     # Weekly (cron.yaml): rebuild each compound's standard curve.
     path("api/cron/iot-standards/", views.iot_cron_standards, name="iot_cron_standards"),
+    path("iot-dashboard/daily/", iot_views.daily_partial, name="iot_daily_partial"),
+    path("iot-dashboard/daily/report.<str:fmt>", iot_views.daily_report, name="iot_daily_report"),
+    path("iot-dashboard/batches/<int:batch_id>/", iot_views.detected_batch_detail, name="iot_detected_batch"),
+    path("iot-dashboard/batches/<int:batch_id>/exclude/", iot_views.exclude_batch, name="iot_exclude_batch"),
+    path("iot-dashboard/standards/", iot_views.standards, name="iot_standards"),
     path("planning/", views.planning, name="planning"),
     path("board/", views.display, name="display"),
     path("planning/crin/", views.create_crin, name="create_crin"),

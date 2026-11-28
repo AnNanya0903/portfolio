@@ -1,0 +1,80 @@
+{% load tz %}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="border rounded-3 p-3 h-100">
+      <div class="text-uppercase text-muted small fw-semibold mb-1">Batches</div>
+      <div class="fs-3 fw-bold">{{ daily.total }}</div>
+      <div class="small text-muted">{{ daily.variations }} with a variation</div>
+    </div>
+  </div>
+  {% for section in daily.sections %}
+  <div class="col-6 col-md-3">
+    <div class="border rounded-3 p-3 h-100" style="border-left: 4px solid {{ section.colour }} !important;">
+      <div class="text-uppercase text-muted small fw-semibold mb-1 text-truncate" title="{{ section.compound }}">{{ section.compound }}</div>
+      <div class="fs-4 fw-bold">{{ section.batch_count }} <span class="fs-6 fw-normal text-muted">batch{{ section.batch_count|pluralize:"es" }}</span></div>
+      <div class="d-flex flex-wrap gap-1 my-1">
+        <span class="badge text-bg-success">{{ section.counts.ok }} OK</span>
+        <span class="badge text-bg-warning">{{ section.counts.variation }} Variation</span>
+        <span class="badge text-bg-danger">{{ section.counts.major }} Major</span>
+      </div>
+      <div class="small text-muted">{% if section.avg_minutes is not None %}avg {{ section.avg_minutes|floatformat:1 }} min{% endif %}{% if section.avg_kwh is not None %} · {{ section.avg_kwh|floatformat:1 }} kWh{% endif %}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if daily.timeline.pieces %}
+<div class="mb-4">
+  <div class="d-flex justify-content-between small text-muted mb-1"><span>{{ daily.timeline.start }}</span><span>Day timeline</span><span>{{ daily.timeline.end }}</span></div>
+  <div class="position-relative rounded-2 overflow-hidden border" style="height: 28px; background: #f8f9fa;" role="img" aria-label="Off, idle and batch periods through the day">
+    {% for piece in daily.timeline.pieces %}
+    {% if piece.batch_id %}<a href="{% url 'compounding:iot_detected_batch' piece.batch_id %}"{% else %}<span{% endif %}
+      class="position-absolute top-0 h-100 d-block" title="{{ piece.title }}"
+      style="left: {{ piece.left }}%; width: {{ piece.width }}%; background: {{ piece.colour }};{% if piece.result == 'major' %} box-shadow: inset 0 -5px 0 #dc3545;{% elif piece.result == 'variation' %} box-shadow: inset 0 -5px 0 #f0a500;{% endif %}">{% if piece.batch_id %}</a>{% else %}</span>{% endif %}
+    {% endfor %}
+  </div>
+  <div class="d-flex flex-wrap gap-3 small text-muted mt-1">
+    <span><span class="d-inline-block align-middle rounded-1" style="width:12px;height:12px;background:#343a40"></span> Off</span>
+    <span><span class="d-inline-block align-middle rounded-1 border" style="width:12px;height:12px;background:#ced4da"></span> Idle</span>
+    {% for section in daily.sections %}<span><span class="d-inline-block align-middle rounded-1" style="width:12px;height:12px;background:{{ section.colour }}"></span> {{ section.compound }}</span>{% endfor %}
+    <span>Underline: <span class="text-warning fw-semibold">variation</span> / <span class="text-danger fw-semibold">major</span></span>
+  </div>
+</div>
+{% endif %}
+
+{% for section in daily.sections %}
+<div class="border rounded-3 p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+    <h4 class="h6 fw-bold mb-0"><span class="d-inline-block rounded-1 me-1 align-middle" style="width:12px;height:12px;background:{{ section.colour }}"></span>{{ section.compound }}</h4>
+    <span class="small text-muted">
+      {% if not section.logged %}No operator entry overlapped these batches
+      {% elif section.standard %}Standard v{{ section.standard.version }} · {{ section.standard.built_from_n }} batches · band 5th–95th percentile
+      {% else %}Standard not ready ({{ section.ready_count }}/{{ section.needed }}){% endif %}
+    </span>
+  </div>
+  {% if section.chart.lines %}
+  <div style="height: 260px;"><canvas data-daily-chart="{{ section.chart_id }}" role="img" aria-label="{{ section.compound }} batches over the standard band"></canvas></div>
+  {{ section.chart|json_script:section.chart_id }}
+  {% endif %}
+  <div class="table-responsive mt-2">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th scope="col">#</th><th scope="col">Start–End</th><th scope="col" class="text-end">Min</th><th scope="col" class="text-end">kWh</th><th scope="col" class="text-end">Match %</th><th scope="col">Result</th><th scope="col">Reasons</th></tr></thead>
+      <tbody>
+        {% for row in section.rows %}
+        <tr>
+          <td>{{ row.number }}</td>
+          <td class="text-nowrap"><a href="{% url 'compounding:iot_detected_batch' row.id %}">{{ row.start }}–{{ row.end }}</a></td>
+          <td class="text-end">{{ row.minutes|floatformat:1 }}</td>
+          <td class="text-end">{% if row.kwh is not None %}{{ row.kwh|floatformat:1 }}{% else %}–{% endif %}</td>
+          <td class="text-end">{% if row.match_pct is not None %}{{ row.match_pct|floatformat:0 }}{% else %}–{% endif %}</td>
+          <td><span class="badge text-bg-{{ row.tone }}">{{ row.result_label }}</span>{% if row.excluded %} <span class="badge text-bg-light border" title="Left out of the standard">excluded</span>{% endif %}</td>
+          <td class="small">{{ row.reasons|join:"; " }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% empty %}
+<p class="text-muted small mb-0">No batches detected on this date.</p>
+{% endfor %}

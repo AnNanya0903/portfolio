@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}IoT Standards{% endblock %}
+
+{% block auth_content %}
+<section class="py-5">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+          <div>
+            <div class="text-uppercase text-muted small fw-semibold mb-2">Compounding · IoT</div>
+            <h1 class="display-6 fw-bold mb-2">Standard graphs</h1>
+            <p class="text-muted mb-0">One standard per compound, built from at least {{ min_batches }} normal batches (30 recommended) and rebuilt automatically every Monday. An admin can leave a batch out from its batch page.</p>
+          </div>
+          <a class="btn btn-outline-primary" href="{{ dashboard_url }}">IoT Dashboard</a>
+        </div>
+        <div class="card shadow-sm border-0">
+          <div class="card-body">
+            {% if rows %}
+            <div class="table-responsive">
+              <table class="table align-middle mb-0">
+                <thead><tr><th scope="col">Compound</th><th scope="col" class="text-end">Normal batches</th><th scope="col">Standard</th><th scope="col">Standard values</th>{% if admin %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
+                <tbody>
+                  {% for row in rows %}
+                  <tr>
+                    <td class="fw-semibold">{{ row.compound }}</td>
+                    <td class="text-end">{{ row.count }}</td>
+                    <td>{% if row.standard %}v{{ row.standard.version }} · n={{ row.standard.built_from_n }} · {{ row.standard.created_at|date:"d M Y" }}{% elif row.ready %}<span class="text-muted">Ready to build</span>{% else %}<span class="text-muted">Standard not ready ({{ row.count }}/{{ row.needed }})</span>{% endif %}</td>
+                    <td class="small">{% if row.standard %}{% with s=row.standard.stats %}{% if s.duration_s %}{% widthratio s.duration_s.median 60 1 %} min{% endif %}{% if s.energy_kwh %} · {{ s.energy_kwh.median|floatformat:1 }} kWh{% endif %}{% if s.peak_current %} · peak {{ s.peak_current.median|floatformat:0 }} A at {{ s.time_to_peak_s.median|floatformat:0 }} s{% endif %}{% if s.steady_current %} · steady {{ s.steady_current.median|floatformat:0 }} A{% endif %}{% endwith %}{% endif %}</td>
+                    {% if admin %}
+                    <td class="text-end">
+                      <form method="post" class="m-0">{% csrf_token %}<input type="hidden" name="compound" value="{{ row.compound }}">
+                        <button type="submit" class="btn btn-sm btn-outline-primary" {% if not row.ready %}disabled{% endif %}>Rebuild</button>
+                      </form>
+                    </td>
+                    {% endif %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">No batches with a compound yet. Batches get their compound from the operator's entry.</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}

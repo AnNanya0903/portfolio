@@ -94,6 +94,28 @@
           </div>
         </div>
 
+        <div class="card shadow-sm border-0 mb-4" id="iot-daily">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+              <h2 class="h4 mb-0">Batches &amp; variations</h2>
+              <div class="d-flex align-items-center flex-wrap gap-2 small">
+                <a class="btn btn-sm btn-outline-secondary" href="?date={{ daily_previous }}#iot-daily" aria-label="Previous day">‹</a>
+                <form method="get" class="m-0"><label class="visually-hidden" for="iotDailyDate">Date</label>
+                  <input id="iotDailyDate" type="date" name="date" value="{{ daily_date }}" class="form-control form-control-sm" onchange="this.form.submit()">
+                </form>
+                <a class="btn btn-sm btn-outline-secondary" href="?date={{ daily_next }}#iot-daily" aria-label="Next day">›</a>
+                {% if daily_is_today %}<span class="badge text-bg-success" id="iotDailyLive">Live</span>{% endif %}
+                <a href="{% url 'compounding:iot_daily_report' 'csv' %}?date={{ daily_date }}"><i class="bi bi-filetype-csv me-1"></i>CSV</a>
+                <a href="{% url 'compounding:iot_daily_report' 'pdf' %}?date={{ daily_date }}"><i class="bi bi-filetype-pdf me-1"></i>PDF</a>
+                <a href="{% url 'compounding:iot_standards' %}"><i class="bi bi-graph-up me-1"></i>Standards</a>
+              </div>
+            </div>
+            <div id="iotDailyBody" data-url="{% url 'compounding:iot_daily_partial' %}?date={{ daily_date }}" data-live="{% if daily_is_today %}1{% endif %}" data-batch-url="{% url 'compounding:iot_detected_batch' 0 %}">
+              {% include "magicwand/_iot_daily.html" %}
+            </div>
+          </div>
+        </div>
+
         <div class="row g-4 mb-4">
           <div class="col-12">
             <div class="card shadow-sm border-0 h-100">
@@ -243,37 +265,6 @@
                 </form>
                 </details>
 
-                <h3 class="h6 text-uppercase text-muted fw-semibold mt-4 mb-2">Compounds run on {{ plan.plan_date|date:"d M Y" }}</h3>
-                {% if iot_runs %}
-                <div class="table-responsive">
-                  <table class="table table-sm align-middle mb-0" id="iotRunsTable">
-                    <thead>
-                      <tr>
-                        <th scope="col">Compound</th>
-                        <th scope="col">Type</th>
-                        <th scope="col">Time taken</th>
-                        <th scope="col">Start</th>
-                        <th scope="col">End</th>
-                        <th scope="col">Quality</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for run in iot_runs %}
-                      <tr>
-                        <td class="fw-semibold">{{ run.compound_code }}</td>
-                        <td>{{ run.batch_type|default:"-" }}</td>
-                        <td>{{ run.time_taken }}</td>
-                        <td>{{ run.started_at|timezone:iot_time_zone|date:"d M, H:i" }}</td>
-                        <td>{% if run.ended_at %}{{ run.ended_at|timezone:iot_time_zone|date:"d M, H:i" }}{% else %}-{% endif %}</td>
-                        <td>{{ run.stock_quality }}{% if run.rejection_reason %} <span class="text-muted small">({{ run.rejection_reason }})</span>{% endif %}</td>
-                      </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                </div>
-                {% else %}
-                <p class="text-muted small mb-0">No compounds saved for this date yet.</p>
-                {% endif %}
               </div>
             </div>
           </div>
@@ -328,6 +319,72 @@
               syncCrins();
             }
 
+            // Batches & variations: per-compound overlay charts, refreshed every 30 s while today is shown.
+            const dailyBody = document.getElementById("iotDailyBody");
+            const dailyCharts = [];
+            function drawDailyCharts() {
+              if (!dailyBody || typeof Chart === "undefined") return;
+              dailyCharts.splice(0).forEach((chart) => chart.destroy());
+              const css = getComputedStyle(document.documentElement);
+              const text = css.getPropertyValue("--bs-body-color").trim() || "#212529";
+              const grid = css.getPropertyValue("--bs-border-color").trim() || "#dee2e6";
+              const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+              dailyBody.querySelectorAll("canvas[data-daily-chart]").forEach((canvas) => {
+                const node = document.getElementById(canvas.dataset.dailyChart);
+                if (!node) return;
+                const data = JSON.parse(node.textContent);
+                const datasets = [];
+                if (data.standard.length) {
+                  datasets.push(
+                    { label: "Band", data: data.standard.map((p) => ({ x: p.t, y: p.upper })), borderColor: "rgba(13,110,253,.25)", backgroundColor: "rgba(13,110,253,.12)", borderWidth: 1, pointRadius: 0, fill: "+1", order: 9 },
+                    { label: "Band lower", data: data.standard.map((p) => ({ x: p.t, y: p.lower })), borderColor: "rgba(13,110,253,.25)", borderWidth: 1, pointRadius: 0, fill: false, order: 9 },
+                    { label: "Standard", data: data.standard.map((p) => ({ x: p.t, y: p.median })), borderColor: "rgba(13,110,253,.8)", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false, order: 8 },
+                  );
+                }
+                data.lines.forEach((line) => datasets.push({
+                  label: line.label, batchId: line.id,
+                  data: line.curve.map((y, i) => ({ x: i * line.step, y })),
+                  borderColor: line.colour, borderWidth: line.result === "ok" ? 1 : 1.8, pointRadius: 0, fill: false,
+                  order: line.result === "ok" ? 2 : 1,
+                }));
+                const chart = new Chart(canvas, {
+                  type: "line",
+                  data: { datasets },
+                  options: {
+                    responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+                    interaction: { mode: "nearest", intersect: false },
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: { filter: (item) => item.dataset.batchId, callbacks: { title: (items) => items.length ? fmt(items[0].parsed.x) + " after loading" : "", label: (item) => `${item.dataset.label}: ${item.parsed.y.toFixed(0)} A` } },
+                    },
+                    scales: {
+                      x: { type: "linear", title: { display: true, text: "Time from loading (min:s)", color: text }, ticks: { color: text, callback: (v) => fmt(v) }, grid: { color: grid } },
+                      y: { beginAtZero: true, title: { display: true, text: "A", color: text }, ticks: { color: text }, grid: { color: grid } },
+                    },
+                    onClick: (_event, elements) => {
+                      const hit = elements.find((el) => chart.data.datasets[el.datasetIndex].batchId);
+                      if (hit) window.location.href = dailyBody.dataset.batchUrl.replace(/0\/$/, chart.data.datasets[hit.datasetIndex].batchId + "/");
+                    },
+                  },
+                });
+                dailyCharts.push(chart);
+              });
+            }
+            window.addEventListener("load", drawDailyCharts);
+            if (dailyBody && dailyBody.dataset.live) {
+              setInterval(async () => {
+                if (document.hidden) return;
+                try {
+                  const response = await fetch(dailyBody.dataset.url, { cache: "no-store", skipGlobalLoader: true });
+                  if (!response.ok) return;
+                  dailyBody.innerHTML = await response.text();
+                  drawDailyCharts();
+                } catch (error) {
+                  /* keep the last view */
+                }
+              }, 30000);
+            }
+
             // Stop double taps from sending the batch form twice.
             ["iotStartBatchForm", "iotEndBatchForm"].forEach((id) => {
               const form = document.getElementById(id);
@@ -360,6 +417,8 @@
           })();
         </script>
 
+        <div id="iot-live-warning" class="alert alert-danger d-none mb-2" role="alert"></div>
+        <div id="iot-live-note" class="small text-muted mb-2 d-none"></div>
         <div id="iot-chart-shell" class="iot-chart-shell">
         <div class="card shadow-sm border-0">
           <div class="card-body">
@@ -1021,8 +1080,72 @@
     return url.toString();
   }
 
+  // The running batch's standard band (from /api/iot-dashboard-data/ liveBatch), in clock time.
+  let liveBand = null;
+
+  function bandPointAt(ts) {
+    if (!liveBand || !liveBand.points.length) return null;
+    const points = liveBand.points;
+    let lo = 0;
+    let hi = points.length - 1;
+    if (ts < points[0].ts) return null;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (points[mid].ts <= ts) lo = mid; else hi = mid - 1;
+    }
+    return ts - points[lo].ts <= liveBand.stepMs ? points[lo] : null;
+  }
+
+  function renderLiveBatch(status) {
+    const warning = document.getElementById("iot-live-warning");
+    const note = document.getElementById("iot-live-note");
+    liveBand = status && status.band && status.band.length
+      ? { points: status.band, stepMs: 10000, compound: status.compound, version: status.version }
+      : null;
+    if (warning) {
+      const text = status && status.warning ? status.warning : "";
+      warning.textContent = text;
+      warning.classList.toggle("d-none", !text);
+    }
+    if (note) {
+      let text = "";
+      if (liveBand) text = `Running batch compared live with the ${liveBand.compound} standard v${liveBand.version} (shaded band).`;
+      else if (status && status.note) text = `${status.compound}: ${status.note}.`;
+      note.textContent = text;
+      note.classList.toggle("d-none", !text);
+    }
+  }
+
+  function buildBandDatasets() {
+    if (!liveBand) return [];
+    const common = { yAxisID: "left", pointRadius: 0, borderWidth: 1, tension: 0, isBand: true, order: 10, spanGaps: true };
+    return [
+      { ...common, label: "Standard band", data: liveBand.points.map((p) => ({ x: p.ts, y: p.upper })),
+        borderColor: "rgba(89,182,255,.35)", backgroundColor: "rgba(89,182,255,.16)", fill: "+1" },
+      { ...common, label: "Standard band lower", data: liveBand.points.map((p) => ({ x: p.ts, y: p.lower })),
+        borderColor: "rgba(89,182,255,.35)", fill: false },
+    ];
+  }
+
   function buildChartDatasets(history) {
+    const lines = buildSeriesDatasets(history);
+    if (liveBand) {
+      const current = lines.find((dataset) => dataset.seriesKey === "avg_current");
+      if (current) {
+        current.segment = {
+          borderColor: (ctx) => {
+            const point = bandPointAt(ctx.p1.parsed.x);
+            return point && (ctx.p1.parsed.y > point.upper || ctx.p1.parsed.y < point.lower) ? "#ff3b3b" : current.borderColor;
+          },
+        };
+      }
+    }
+    return buildBandDatasets().concat(lines);
+  }
+
+  function buildSeriesDatasets(history) {
     return chartSeries.map((series) => ({
+      seriesKey: series.key,
       label: series.label,
       yAxisID: series.axis,
       borderColor: series.color,
@@ -1200,6 +1323,7 @@
               display: false,
             },
             tooltip: {
+              filter: (item) => !item.dataset.isBand,
               callbacks: {
                 title(items) {
                   if (!Array.isArray(items) || !items.length) {
@@ -1548,6 +1672,7 @@
         }
       }
       renderPayload(data.latest || null);
+      renderLiveBatch(selectedRange ? null : (data.liveBatch || null));
       drawChart(latestHistory);
       if (selectedRange) {
         const rawCount = Number(data.historyCount);

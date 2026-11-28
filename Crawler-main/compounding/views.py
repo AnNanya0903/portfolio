@@ -2419,18 +2419,10 @@ def iot_dashboard(request):
     plan = _get_or_create_plan(plan_date, user=request.user)
     machine_id = _iot_dashboard_machine_id()
     compound_options = _iot_run_compound_options(plan)
-    iot_runs = [
-        {
-            "compound_code": run.compound_code,
-            "batch_type": run.get_batch_type_display(),
-            "started_at": run.started_at,
-            "ended_at": run.ended_at,
-            "time_taken": _iot_run_duration_text(run.started_at, run.ended_at),
-            "stock_quality": run.get_stock_quality_display() if run.ended_at else "Running",
-            "rejection_reason": run.get_rejection_reason_display(),
-        }
-        for run in plan.iot_runs.all().order_by("-started_at", "-id")[:50]
-    ]
+    from .iot_views import daily_context
+
+    # The daily batch-variation view (replaces the old "Compounds run" table).
+    daily = daily_context(machine_id, plan.plan_date, request.user)
     open_batch = _open_iot_batch(machine_id)
     return render(
         request,
@@ -2453,7 +2445,7 @@ def iot_dashboard(request):
             "plan_date": plan.plan_date.isoformat(),
             "iot_machine_id": machine_id,
             "iot_run_compound_options": compound_options,
-            "iot_runs": iot_runs,
+            **daily,
             "iot_run_quality_choices": CompoundingIoTRun.QUALITY_CHOICES,
             "iot_rejection_reason_choices": CompoundingIoTRun.REJECTION_REASON_CHOICES,
             "iot_batch_crin_options": _iot_batch_crin_options(),

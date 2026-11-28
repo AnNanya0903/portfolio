@@ -965,6 +965,7 @@ def _build_iot_summary_cache_key(
         "latest": latest,
         "history": history[-30:],
         "production_run": production_run or None,
+        "day_facts": data.get("dayFacts") or [],
     }
     digest = hashlib.sha256(
         json.dumps(snapshot, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
@@ -1027,11 +1028,15 @@ def _build_iot_summary_prompt(data: Dict[str, Any], production_run: Optional[Dic
         "Use only the data below. Do not invent sensor mappings or mechanical faults that are not supported by the telemetry.\n"
         "When production context is provided, use it to explain the compound produced, stock quality, and any note-based caveats together with the telemetry.\n"
         "If the evidence is weak, say 'likely' or 'possibly'. Keep the answer concise and practical.\n\n"
+        "The 'Day batches' facts were computed from the stored samples and each compound's standard. Their RESULT "
+        "(OK / Variation / Major variation) is final: never change it, re-judge it or estimate numbers that are not "
+        "given. Only explain, in plain language, what the numbers and reasons mean.\n\n"
         "Return exactly these sections:\n"
         "Current state:\n"
         "Likely machine behavior:\n"
         "Risks or anomalies:\n"
-        "Recommended checks:\n\n"
+        "Recommended checks:\n"
+        "Day and variations: one short line for the day, then one short line per variation batch\n\n"
         f"Machine: {data.get('machineId') or 'Unknown'}\n"
         f"Data source: {data.get('source') or 'unknown'}\n"
         f"Latest sample timestamp: {_format_iot_summary_ts(latest.get('ts'))}\n"
@@ -1043,7 +1048,9 @@ def _build_iot_summary_prompt(data: Dict[str, Any], production_run: Optional[Dic
         "Recent trends:\n"
         f"{chr(10).join(trend_lines) if trend_lines else '- No recent numeric trend data available.'}\n\n"
         "Derived observations:\n"
-        f"{chr(10).join(derived_lines) if derived_lines else '- No derived observations available.'}"
+        f"{chr(10).join(derived_lines) if derived_lines else '- No derived observations available.'}\n\n"
+        "Day batches (computed, final):\n"
+        f"{chr(10).join('- ' + line for line in data.get('dayFacts') or []) or '- No batches detected for the day.'}"
     )
 
 
@@ -1124,7 +1131,10 @@ def _build_iot_fallback_summary(data: Dict[str, Any], production_run: Optional[D
         "Risks or anomalies:\n"
         f"{chr(10).join(f'- {item}' for item in risks) if risks else '- No obvious anomaly is visible from the current snapshot alone.'}\n\n"
         "Recommended checks:\n"
-        f"{chr(10).join(f'- {item}' for item in checks) if checks else '- Continue monitoring the live trends.'}"
+        f"{chr(10).join(f'- {item}' for item in checks) if checks else '- Continue monitoring the live trends.'}\n\n"
+        "Day and variations:\n"
+        # Without the AI, the computed facts are shown as they are.
+        f"{chr(10).join('- ' + line for line in data.get('dayFacts') or []) or '- No batches detected for the day.'}"
     )
 
 
@@ -1247,18 +1257,52 @@ def iot_dashboard_data(request):
     )
     since_ts = _coerce_iot_timestamp(request.GET.get("sinceTs"))
     try:
-        return JsonResponse(
-            _fetch_iot_dashboard_data(
-                machine_id,
-                limit,
-                start_ts=start_ts,
-                end_ts=end_ts,
-                max_points=max_points,
-                since_ts=since_ts,
-            )
+        data = _fetch_iot_dashboard_data(
+            machine_id,
+            limit,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            max_points=max_points,
+            since_ts=since_ts,
         )
+        # While a batch runs: its compound's standard band and an early warning, for the live chart.
+        data["liveBatch"] = None if has_time_range else _iot_live_batch(_iot_public_machine_id(machine_id) or machine_id)
+        return JsonResponse(data)
     except IoTDashboardFetchError as exc:
         return JsonResponse({"ok": False, "error": str(exc), "machineId": machine_id}, status=exc.status_code)
+
+
+def _iot_live_batch(machine_id: str) -> Optional[Dict[str, Any]]:
+    """compounding.iot_daily.live_status, cached for a few seconds (the chart polls every second)."""
+    cache_key = f"magicwand:iot:live_batch:{machine_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached or None
+    try:
+        from compounding import iot_daily
+
+        status = iot_daily.live_status(machine_id)
+    except DatabaseError:
+        logger.exception("IoT live batch status failed")
+        status = None
+    cache.set(cache_key, status or {}, timeout=5)
+    return status
+
+
+def _iot_day_facts(machine_id: str, start_ts: Optional[int]) -> List[str]:
+    """The day's batch counts and variations, as computed facts for the AI summary."""
+    try:
+        from compounding import iot_daily, iot_segments
+        from compounding.models import IST_TIMEZONE
+
+        if start_ts is not None:
+            day = iot_segments.ms_to_datetime(start_ts).astimezone(IST_TIMEZONE).date()
+        else:
+            day = iot_segments.today_ist()
+        return iot_daily.summary_facts(machine_id, day)
+    except DatabaseError:
+        logger.exception("IoT day facts for the AI summary failed")
+        return []
 
 
 def _stream_local_iot_export(
@@ -1410,6 +1454,7 @@ def iot_dashboard_summary(request):
             return JsonResponse({"ok": False, "error": str(exc), "machineId": machine_id}, status=exc.status_code)
 
         production_run = _build_iot_production_run_context(machine_id, start_ts=start_ts, end_ts=end_ts)
+        data["dayFacts"] = _iot_day_facts(_iot_public_machine_id(machine_id) or machine_id, start_ts)
 
         latest = data.get("latest") if isinstance(data.get("latest"), dict) else None
         history = list(data.get("history") or [])

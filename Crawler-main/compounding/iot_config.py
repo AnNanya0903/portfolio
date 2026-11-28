@@ -121,6 +121,22 @@ def standard_percentiles() -> tuple[float, float]:
     return (_number("IOT_STANDARD_LOW_PCT", 5.0), _number("IOT_STANDARD_HIGH_PCT", 95.0))
 
 
+def min_allowed_range(name: str, median: float) -> float:
+    """The allowed range of a standard value is never narrower than median +/- this, so a very consistent
+    reference set doesn't turn a few seconds' difference into a variation."""
+    if name == "duration_s":
+        return _number("IOT_RANGE_MIN_DURATION_S", 60.0)
+    if name == "energy_kwh":
+        return abs(median) * _number("IOT_RANGE_MIN_ENERGY_PCT", 5.0) / 100.0
+    if name == "peak_current":
+        return _number("IOT_RANGE_MIN_PEAK_A", 5.0)
+    if name == "time_to_peak_s":
+        return _number("IOT_RANGE_MIN_PEAK_TIME_S", 30.0)
+    if name == "steady_current":
+        return _number("IOT_RANGE_MIN_STEADY_A", 3.0)
+    return 0.0
+
+
 # Comparing a batch with its standard -------------------------------------------------------------------------
 def ok_match_pct() -> float:
     """OK needs at least this share of the curve inside the band (and every value in range)."""

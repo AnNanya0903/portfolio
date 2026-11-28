@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% load tz %}
+
+{% block title %}Batch {{ batch.batch_id }}{% endblock %}
+
+{% block auth_content %}
+<section class="py-5">
+  <div class="container">
+    <div class="row justify-content-center">
+      <div class="col-lg-10">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+          <div>
+            <div class="text-uppercase text-muted small fw-semibold mb-2">{{ batch.compound_label }} · {{ batch.machine_id }}</div>
+            <h1 class="display-6 fw-bold mb-2">
+              {{ batch.start_at|timezone:iot_time_zone|date:"H:i" }}–{% if batch.is_open %}now{% else %}{{ batch.end_at|timezone:iot_time_zone|date:"H:i" }}{% endif %}
+              <span class="fs-5 text-muted">{{ batch.start_at|timezone:iot_time_zone|date:"d M Y" }}</span>
+            </h1>
+            <p class="mb-0">
+              <span class="badge text-bg-{{ result_tone }} fs-6">{{ result_label }}</span>
+              {% if batch.match_pct is not None %}<span class="ms-1 fw-semibold">{{ batch.match_pct|floatformat:0 }} % inside the band</span>{% endif %}
+              {% if standard %}<span class="text-muted ms-1">· {{ standard.compound_code }} standard v{{ standard.version }}</span>
+              {% elif batch.compound_code %}<span class="text-muted ms-1">· Standard not ready ({{ ready_count }}/{{ needed }})</span>{% endif %}
+              {% if batch.excluded %}<span class="badge text-bg-light border ms-1" title="{{ batch.excluded_reason }}">Excluded from the standard</span>{% endif %}
+            </p>
+            {% if batch.reasons %}<ul class="mt-2 mb-0">{% for reason in batch.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% endif %}
+          </div>
+          <a class="btn btn-outline-primary" href="{{ dashboard_url }}">Back to the day</a>
+        </div>
+
+        <div class="card shadow-sm border-0 mb-4">
+          <div class="card-body">
+            <h2 class="h5 mb-3">Against the standard</h2>
+            <div class="table-responsive">
+              <table class="table align-middle mb-0">
+                <thead><tr><th scope="col">Value</th><th scope="col" class="text-end">This batch</th><th scope="col" class="text-end">Standard</th><th scope="col" class="text-end">Allowed range</th><th scope="col" class="text-end">Difference</th></tr></thead>
+                <tbody>
+                  {% for kpi in kpis %}
+                  <tr class="{% if kpi.outside %}table-warning{% endif %}">
+                    <td>{{ kpi.label }}</td>
+                    <td class="text-end fw-semibold">{% if kpi.value is not None %}{{ kpi.value|floatformat:"-1" }} {{ kpi.unit }}{% else %}—{% endif %}</td>
+                    <td class="text-end">{% if kpi.standard is not None %}{{ kpi.standard|floatformat:"-1" }} {{ kpi.unit }}{% else %}—{% endif %}</td>
+                    <td class="text-end">{% if kpi.low is not None %}{{ kpi.low|floatformat:"-1" }}–{{ kpi.high|floatformat:"-1" }} {{ kpi.unit }}{% else %}—{% endif %}</td>
+                    <td class="text-end">{% if kpi.deviation is not None %}{% if kpi.deviation > 0 %}+{% endif %}{{ kpi.deviation|floatformat:"-1" }} {{ kpi.deviation_unit }}{% else %}—{% endif %}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <div class="small text-muted mt-2">
+              {{ batch.dips }} dip{{ batch.dips|pluralize }} below 50 A ·
+              {% if batch.log_run %}operator entry {{ batch.log_run.compound_code }} {{ batch.log_run.started_at|timezone:iot_time_zone|date:"H:i" }}–{% if batch.log_run.ended_at %}{{ batch.log_run.ended_at|timezone:iot_time_zone|date:"H:i" }}{% else %}open{% endif %} (machine times shown above){% else %}no operator entry overlaps this batch{% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="card shadow-sm border-0 mb-4">
+          <div class="card-body">
+            <h2 class="h5 mb-3">Current curve over the band</h2>
+            <div style="height: 360px;"><canvas id="batch-curve" role="img" aria-label="The batch's current curve over the standard band"></canvas></div>
+            <p class="small text-muted mt-2 mb-0">{% if chart.aligned %}Time runs from the loading point. Red marks where the batch was outside the band{% if chart.sections %}; shaded stretches are the longer ones listed in the reasons{% endif %}.{% else %}No loading point was found, so the curve runs from the batch start.{% endif %}</p>
+          </div>
+        </div>
+
+        {% if can_admin %}
+        <div class="card shadow-sm border-0">
+          <div class="card-body">
+            <h2 class="h5 mb-3">Standard</h2>
+            <form method="post" action="{% url 'compounding:iot_exclude_batch' batch.pk %}" class="row g-2 align-items-end">
+              {% csrf_token %}
+              <div class="col-md-8">
+                <div class="form-check mb-1">
+                  <input class="form-check-input" type="checkbox" name="excluded" value="1" id="exclude-batch" {% if batch.excluded %}checked{% endif %}>
+                  <label class="form-check-label" for="exclude-batch">Leave this batch out of the {{ batch.compound_label }} standard</label>
+                </div>
+                <input name="excluded_reason" class="form-control form-control-sm" maxlength="200" value="{{ batch.excluded_reason }}" placeholder="Why (optional)" aria-label="Why it is left out">
+              </div>
+              <div class="col-md-4"><button type="submit" class="btn btn-outline-primary w-100">Save</button></div>
+            </form>
+          </div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</section>
+
+{{ chart|json_script:"batch-chart-data" }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+  (function () {
+    const canvas = document.getElementById("batch-curve");
+    if (!canvas || typeof Chart === "undefined") return;
+    const data = JSON.parse(document.getElementById("batch-chart-data").textContent);
+    const css = getComputedStyle(document.documentElement);
+    const text = css.getPropertyValue("--bs-body-color").trim() || "#212529";
+    const grid = css.getPropertyValue("--bs-border-color").trim() || "#dee2e6";
+    const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+    const band = new Map((data.standard || []).map((p) => [p.t, p]));
+    const outside = (t, y) => { const p = band.get(t); return p ? (y > p.upper || y < p.lower) : false; };
+    const datasets = [];
+    if (data.standard.length) {
+      datasets.push(
+        { label: "Band", data: data.standard.map((p) => ({ x: p.t, y: p.upper })), borderColor: "rgba(13,110,253,.3)", backgroundColor: "rgba(13,110,253,.12)", borderWidth: 1, pointRadius: 0, fill: "+1", order: 3 },
+        { label: "Band lower", data: data.standard.map((p) => ({ x: p.t, y: p.lower })), borderColor: "rgba(13,110,253,.3)", borderWidth: 1, pointRadius: 0, fill: false, order: 3 },
+        { label: "Standard median", data: data.standard.map((p) => ({ x: p.t, y: p.median })), borderColor: "rgba(13,110,253,.75)", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false, order: 2 },
+      );
+    }
+    datasets.push({
+      label: "This batch", data: data.curve.map((y, i) => ({ x: i * data.step, y })),
+      borderColor: "#198754", borderWidth: 2.5, pointRadius: 0, fill: false, order: 1,
+      segment: { borderColor: (ctx) => (outside(ctx.p1.parsed.x, ctx.p1.parsed.y) ? "#dc3545" : "#198754") },
+    });
+    // Shade the out-of-band stretches named in the reasons.
+    const shade = {
+      id: "outOfBandShade",
+      beforeDatasetsDraw(chart) {
+        const { ctx, chartArea, scales } = chart;
+        ctx.save();
+        ctx.fillStyle = "rgba(220,53,69,.08)";
+        (data.sections || []).forEach(([start, end]) => {
+          const left = scales.x.getPixelForValue(start);
+          const right = scales.x.getPixelForValue(end);
+          ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+        });
+        ctx.restore();
+      },
+    };
+    new Chart(canvas, {
+      type: "line",
+      data: { datasets },
+      plugins: [shade],
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false, parsing: false,
+        interaction: { mode: "nearest", axis: "x", intersect: false },
+        plugins: {
+          legend: { labels: { color: text, filter: (item) => item.text !== "Band lower" } },
+          tooltip: { callbacks: { title: (items) => items.length ? fmt(items[0].parsed.x) : "", label: (item) => `${item.dataset.label}: ${item.parsed.y.toFixed(1)} A` } },
+        },
+        scales: {
+          x: { type: "linear", title: { display: true, text: data.aligned ? "Time from loading (min:s)" : "Time from start (min:s)", color: text }, ticks: { color: text, callback: (v) => fmt(v) }, grid: { color: grid } },
+          y: { beginAtZero: true, title: { display: true, text: "Average current (A)", color: text }, ticks: { color: text }, grid: { color: grid } },
+        },
+      },
+    });
+  })();
+</script>
+{% endblock %}

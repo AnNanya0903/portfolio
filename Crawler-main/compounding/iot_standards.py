@@ -4,7 +4,7 @@ Normal batches: finished, linked to the compound through the operator's entry, w
 excluded by an admin. A standard needs IOT_STANDARD_MIN_BATCHES (15; 30 recommended). Curves are aligned at
 load_ts and resampled every 10 s; the standard is the median with a 5th-95th percentile band. The standard
 duration, energy, peak, time to peak and steady current are stored as median + allowed range (same
-percentiles). Standards are versioned; rebuilding with an unchanged set of batches keeps the current version.
+percentiles, never narrower than the minimum ranges in iot_config.min_allowed_range). Standards are versioned; rebuilding with an unchanged set of batches keeps the current version.
 """
 from __future__ import annotations
 
@@ -65,11 +65,14 @@ def band(values: Sequence[float]) -> Tuple[float, float, float]:
     return statistics.median(values), percentile(values, low_pct), percentile(values, high_pct)
 
 
-def _stat(values: Iterable[Optional[float]]) -> Optional[Dict[str, float]]:
+def _stat(name: str, values: Iterable[Optional[float]]) -> Optional[Dict[str, float]]:
+    """Median and allowed range (5th-95th percentile, widened to at least the configured minimum)."""
     numbers = [float(value) for value in values if value is not None]
     if not numbers:
         return None
     median, low, high = band(numbers)
+    margin = iot_config.min_allowed_range(name, median)
+    low, high = min(low, median - margin), max(high, median + margin)
     return {"median": round(median, 2), "low": round(low, 2), "high": round(high, 2)}
 
 
@@ -102,7 +105,7 @@ def build_standard(compound_code: str, *, user=None, force: bool = False) -> Sta
         points.append({"t": index * step, "median": round(median, 1), "lower": round(low, 1), "upper": round(high, 1)})
     stats: Dict[str, Any] = {}
     for name in STAT_FIELDS:
-        stat = _stat(getattr(batch, name) for batch in batches)
+        stat = _stat(name, (getattr(batch, name) for batch in batches))
         if stat is not None:
             stats[name] = stat
 
