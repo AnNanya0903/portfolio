@@ -68,7 +68,8 @@ def quotation_list(request: HttpRequest) -> HttpResponse:
             row.ready_version = row.active_version
     return render(request, "quotations/list.html", {
         "page": page, "q": q, "status": status, "customer_code": customer_code, "total": total, "ready": ready,
-        "tabs": [{"key": key, "label": label, "count": counts[key]} for key, label in Quotation.STATUS_CHOICES],
+        "tabs": [{"key": key, "label": label, "count": counts[key]} for key, label in Quotation.STATUS_CHOICES
+                 if key not in (Quotation.STATUS_ACCEPTED, Quotation.STATUS_DECLINED)],
         "can_cost": roles.can_cost(request.user),
         "can_approve": roles.can_approve(request.user),
         "can_send": roles.can_send(request.user),

@@ -56,27 +56,6 @@
         <button type="submit" class="btn btn-link btn-sm p-0 qt-muted">Already sent it from Gmail? Mark as sent</button>
       </form>
     {% endif %}
-    {% if can_send and quotation.status == 'sent' %}
-      <div class="row g-3 mt-1" data-customer-response>
-        <div class="col-md-6">
-          <form method="post" action="{% url 'quotations:respond' quotation.pk %}" class="border rounded p-3 bg-white h-100">{% csrf_token %}
-            <input type="hidden" name="answer" value="accepted">
-            <div class="fw-semibold mb-2 text-success"><i class="bi bi-check2-circle"></i> Customer accepted</div>
-            <input name="reference" maxlength="120" class="form-control form-control-sm mb-2" placeholder="PO / reference number (optional)">
-            <textarea name="note" rows="2" class="form-control form-control-sm mb-2" placeholder="Note (optional)"></textarea>
-            <button type="submit" class="btn btn-sm btn-success">Mark accepted</button>
-          </form>
-        </div>
-        <div class="col-md-6">
-          <form method="post" action="{% url 'quotations:respond' quotation.pk %}" class="border rounded p-3 bg-white h-100">{% csrf_token %}
-            <input type="hidden" name="answer" value="declined">
-            <div class="fw-semibold mb-2 text-danger"><i class="bi bi-x-circle"></i> Customer declined</div>
-            <textarea name="reason" rows="3" class="form-control form-control-sm mb-2" placeholder="Reason (required)" required></textarea>
-            <button type="submit" class="btn btn-sm btn-outline-danger">Mark declined</button>
-          </form>
-        </div>
-      </div>
-    {% endif %}
     {% if quotation.status == 'accepted' or quotation.status == 'declined' %}
       <div class="mt-2 small" data-response-info>
         <strong>{{ quotation.get_status_display }}</strong>{% if quotation.responded_at %} on {{ quotation.responded_at|date:"d M Y" }}{% endif %}{% if quotation.customer_reference %} · PO / reference {{ quotation.customer_reference }}{% endif %}
