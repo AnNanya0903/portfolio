@@ -437,6 +437,37 @@ class IoTSample(models.Model):
 
 
 
+class StandardCurve(models.Model):
+    """A compound's standard current graph, built from its normal batches (versioned).
+
+    `points`: [{"t": seconds after load, "median", "lower", "upper"}] every `step_s` seconds, the band being the
+    5th-95th percentile. `stats`: {"duration_s"|"energy_kwh"|"peak_current"|"time_to_peak_s"|"steady_current":
+    {"median", "low", "high"}} - the standard value and its allowed range.
+    """
+
+    compound_code = models.CharField(max_length=64, db_index=True)
+    version = models.PositiveIntegerField()
+    built_from_n = models.PositiveIntegerField()
+    source_batch_ids = models.JSONField(default=list, blank=True)
+    step_s = models.PositiveIntegerField(default=10)
+    points = models.JSONField(default=list)
+    stats = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["compound_code", "-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["compound_code", "version"], name="uniq_standard_version_per_compound"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.compound_code} v{self.version}"
+
+
 class DetectedBatch(models.Model):
     """A batch the machine ran, found in the current trace (compounding.iot_segments).
 
@@ -476,6 +507,34 @@ class DetectedBatch(models.Model):
     excluded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
+
+    # Comparison with the compound's standard.
+    RESULT_OK = "ok"
+    RESULT_VARIATION = "variation"
+    RESULT_MAJOR = "major"
+    RESULT_NO_STANDARD = "no_standard"
+    RESULT_CHOICES = [
+        (RESULT_OK, "OK"),
+        (RESULT_VARIATION, "Variation"),
+        (RESULT_MAJOR, "Major variation"),
+        (RESULT_NO_STANDARD, "No standard"),
+    ]
+    standard = models.ForeignKey(
+        StandardCurve, on_delete=models.SET_NULL, null=True, blank=True, related_name="batches"
+    )
+    match_pct = models.FloatField(null=True, blank=True)
+    duration_dev_s = models.IntegerField(null=True, blank=True)
+    duration_dev_pct = models.FloatField(null=True, blank=True)
+    energy_dev_pct = models.FloatField(null=True, blank=True)
+    peak_dev_a = models.FloatField(null=True, blank=True)
+    peak_time_dev_s = models.IntegerField(null=True, blank=True)
+    steady_dev_a = models.FloatField(null=True, blank=True)
+    result = models.CharField(max_length=12, choices=RESULT_CHOICES, blank=True, default="", db_index=True)
+    reasons = models.JSONField(default=list, blank=True)
+    # [[start_s, end_s], ...] after the load point where the curve was outside the band.
+    out_of_band = models.JSONField(default=list, blank=True)
+    # Another compound whose standard fits much better ("check compound selection").
+    looks_like = models.CharField(max_length=64, blank=True, default="")
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

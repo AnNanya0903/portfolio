@@ -355,8 +355,11 @@ def link_operator_entry(batch: DetectedBatch) -> None:
 
 def _after_batch_saved(batch: DetectedBatch, samples: Sequence[Dict[str, Any]]) -> None:
     """Link the operator's entry, then compare the batch with its compound's standard."""
+    from . import iot_compare
+
     link_operator_entry(batch)
     batch.save(update_fields=["log_run", "log_overlap_s", "compound_code", "updated_at"])
+    iot_compare.compare_batch(batch)
 
 
 def detect_range(machine_id: str, start_ts: int, end_ts: int, *, now_ms: Optional[int] = None) -> Dict[str, Any]:

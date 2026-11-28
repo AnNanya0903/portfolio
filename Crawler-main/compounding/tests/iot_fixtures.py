@@ -98,14 +98,15 @@ KWH_PER_AMP_SECOND = 10.25 / _AG7020_AMP_SECONDS
 
 
 def build_payloads(plan: Sequence[Tuple[Profile, str, str]] = DAY_PLAN, kwh_start: float = 5000.0,
-                   day: date = DAY) -> List[Dict]:
+                   day: date = DAY, scale: float = 1.0) -> List[Dict]:
+    """Samples every 2 s for the plan; `scale` multiplies the current (and so the energy)."""
     payloads: List[Dict] = []
     kwh = kwh_start
     for profile, start, end in plan:
         start_ms, end_ms = ist_ms(start, day), ist_ms(end, day)
         duration = (end_ms - start_ms) // 1000
         for t in range(0, duration, 2):
-            current = round(max(profile(t, duration), 0.0), 2)
+            current = round(max(profile(t, duration), 0.0) * scale, 2)
             payloads.append({
                 "machineId": SOURCE_MACHINE,
                 "ts": start_ms + t * 1000,
@@ -128,3 +129,40 @@ def as_rows(payloads: Sequence[Dict]) -> List[Dict]:
         {"ts_ms": item["ts"], "avg_current": item["raw"]["avg_current"], "t_kwh_import": item["raw"]["t_kwh_import"]}
         for item in payloads
     ]
+
+
+def make_detected_batch(profile: Profile, start: str, end: str, *, day: date = DAY, scale: float = 1.0,
+                        compound: str = "", machine_id: str = "mixing-mill-2", compare: bool = True):
+    """A finished DetectedBatch built straight from a profile (no stored samples), with `compound` as if the
+    operator's entry had linked it."""
+    from compounding import iot_compare, iot_segments
+    from compounding.models import DetectedBatch
+
+    payloads = build_payloads([(profile, start, end)], day=day, scale=scale)
+    start_ts, end_ts = ist_ms(start, day), ist_ms(end, day)
+    numbers = iot_segments.batch_numbers(as_rows(payloads), start_ts, end_ts, machine_id)
+    batch = DetectedBatch(
+        machine_id=machine_id,
+        start_at=iot_segments.ms_to_datetime(start_ts),
+        end_at=iot_segments.ms_to_datetime(end_ts),
+        compound_code=compound,
+    )
+    iot_segments._apply_numbers(batch, numbers)
+    batch.save()
+    if compare:
+        iot_compare.compare_batch(batch)
+    return batch
+
+
+def ag7020_long(t: int, duration: int) -> float:
+    """AG-7020 whose steady mixing runs 4 minutes longer than usual."""
+    if t < 500:
+        return ag7020(t, duration)
+    if t < 740:
+        return 73.0 + _wiggle(t, 1.5)
+    return ag7020(t - 240, duration - 240)
+
+
+def ag7020_late(t: int, duration: int) -> float:
+    """AG-7020 whose loading peak comes 2 minutes late (the mill turned near-empty first)."""
+    return 52.0 if t < 120 else ag7020(t - 120, duration - 120)
